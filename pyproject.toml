@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 # TODO(you): update this to reflect the project's name & description
-name='workflow_name'
+name='dragen_align_pa'
 description='Template workflow'
 readme = "README.md"
 # currently cpg-flow is pinned to this version
@@ -27,7 +27,7 @@ dependencies=[
 
 [project.urls]
 # TODO(you): update this to reflect the project's official homepage
-Repository = "https://github.com/populationgenomics/workflow_name"
+Repository = "https://github.com/populationgenomics/dragen_align_pa"
 
 [project.optional-dependencies]
 # various requirements when running cpg-flow/analysis-runner
@@ -47,10 +47,10 @@ test = [
 # >> Hello, World!
 # $ say_hello cpg-flow
 # >> Hello, cpg-flow!
-say_hello = 'workflow_name.scripts.hello_world:cli_main'
+say_hello = 'dragen_align_pa.scripts.hello_world:cli_main'
 
 # the workflow runner script - entrypoint for the pipeline
-run_workflow = 'workflow_name.run_workflow:cli_main'
+run_workflow = 'dragen_align_pa.run_workflow:cli_main'
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -59,7 +59,7 @@ package-dir = {"" = "src"}
 include_package_data = true
 
 [options.package_data]
-'workflow_name'=  ['config_template.toml']
+'dragen_align_pa'=  ['config_template.toml']
 
 [tool.black]
 line-length = 120

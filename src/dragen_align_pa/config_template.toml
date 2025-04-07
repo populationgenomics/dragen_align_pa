@@ -3,7 +3,7 @@
 [workflow]
 
 # TODO(you): update this to reflect the workflow's name
-name = 'workflow_name'
+name = 'dragen_align_pa'
 
 # mandatory fields for cpg-flow, not populated by analysis-runner
 # TODO(you): update this to contain a real cohort for the given sequencing type

@@ -30,7 +30,7 @@ jobs:
       BUILDKIT_PROGRESS: plain
       CLOUDSDK_CORE_DISABLE_PROMPTS: 1
       # TODO(you) choose the name for your image
-      IMAGE_NAME: workflow_name
+      IMAGE_NAME: dragen_align_pa
       DOCKER_TMP: australia-southeast1-docker.pkg.dev/cpg-common/images-tmp
       DOCKER_MAIN: australia-southeast1-docker.pkg.dev/cpg-common/images
     steps:

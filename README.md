@@ -8,7 +8,7 @@ sensible directory structure, and some suggested conventions for naming and plac
 
 ```commandline
 src
-├── workflow_name
+├── dragen_align_pa
 │   ├── __init__.py
 │   ├── config_template.toml
 │   ├── jobs
@@ -18,7 +18,7 @@ src
 │   └── utils.py
 ```
 
-`workflow_name` occurs in a number of places ([pyproject.toml](pyproject.toml), [src](src), and the workflow name in the
+`dragen_align_pa` occurs in a number of places ([pyproject.toml](pyproject.toml), [src](src), and the workflow name in the
 template config file). It is intended that you remove this generic placeholder name, and replace it with the name of
 your workflow.
 
