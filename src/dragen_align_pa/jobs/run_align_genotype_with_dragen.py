@@ -3,6 +3,7 @@ import logging
 from typing import Any, Literal
 
 import coloredlogs
+import cpg_utils
 import icasdk
 from icasdk.apis.tags import project_analysis_api
 from icasdk.model.analysis_data_input import AnalysisDataInput
@@ -11,8 +12,7 @@ from icasdk.model.analysis_tag import AnalysisTag
 from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
 
-import cpg_utils
-from cpg_workflows.stages.dragen_ica import ica_utils
+from src.dragen_align_pa import utils
 
 
 def submit_dragen_run(
@@ -72,12 +72,12 @@ def submit_dragen_run(
         ),
     )
     try:
-        api_response = api_instance.create_nextflow_analysis(
+        api_response = api_instance.create_nextflow_analysis(  # type: ignore  # noqa: PGH003
             path_params=project_id,
             header_params=header_params,
             body=body,
         )
-        return api_response.body['id']
+        return api_response.body['id']  # type: ignore  # noqa: PGH003
     except icasdk.ApiException as e:
         raise icasdk.ApiException(f'Exception when calling ProjectAnalysisApi->create_nextflow_analysis: {e}') from e
 
@@ -114,18 +114,18 @@ def run(
         output_path (str): The path to write the pipeline ID to
     """
 
-    SECRETS: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
-    project_id: str = SECRETS['projectID']
-    api_key: str = SECRETS['apiKey']
+    secrets: dict[Literal['projectID', 'apiKey'], str] = utils.get_ica_secrets()
+    project_id: str = secrets['projectID']
+    api_key: str = secrets['apiKey']
 
     coloredlogs.install(level=logging.INFO)
     configuration = icasdk.Configuration(host=api_root)
     configuration.api_key['ApiKeyAuth'] = api_key
 
-    with open(cpg_utils.to_path(ica_fids_path), 'rt') as ica_fids_handle:
+    with open(cpg_utils.to_path(ica_fids_path)) as ica_fids_handle:
         ica_fids: dict[str, str] = json.load(ica_fids_handle)
 
-    with open(cpg_utils.to_path(analysis_output_fid_path), 'rt') as analysis_outputs_fid_handle:
+    with open(cpg_utils.to_path(analysis_output_fid_path)) as analysis_outputs_fid_handle:
         analysis_output_fid: dict[str, str] = json.load(analysis_outputs_fid_handle)
 
     with icasdk.ApiClient(configuration=configuration) as api_client:

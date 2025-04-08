@@ -1,3 +1,6 @@
+import logging
+
+import coloredlogs
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve
@@ -22,6 +25,8 @@ def upload_data_to_ica(job: BashJob, sequencing_group: SequencingGroup, ica_cli_
     upload_folder = config_retrieve(['ica', 'data_prep', 'upload_folder'])
     bucket: str = get_path_components_from_gcp_path(str(sequencing_group.cram))['bucket']
     authenticate_cloud_credentials_in_job(job)
+    coloredlogs.install(level=logging.INFO)
+    logging.info(f'Uploading CRAM and CRAI for {sequencing_group.name}')
 
     # Check if the CRAM and CRAI already exists in ICA before uploading. If they exist, just return the ID for the CRAM and CRAI
     # The internal `command` method is a wrapper from cpg_utils.hail_batch that extends the normal hail batch command

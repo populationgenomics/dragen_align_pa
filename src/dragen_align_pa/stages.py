@@ -11,9 +11,9 @@ from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import Batch, authenticate_cloud_credentials_in_job, command, get_batch
 from hailtop.batch.job import BashJob
 
+from dragen_align_pa.jobs import monitor_dragen_pipeline
 from src.dragen_align_pa.jobs import (
     cancel_ica_pipeline_run,
-    monitor_align_genotype_with_dragen,
     prepare_ica_for_analysis,
     run_align_genotype_with_dragen,
     upload_data_to_ica,
@@ -66,11 +66,9 @@ class PrepareIcaForDragenAnalysis(SequencingGroupStage):
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
         bucket_name: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
 
-        prepare_ica_job: PythonJob = prepare_ica_for_analysis.initalise_ica_prep_job(sequencing_group=sequencing_group)
-
         outputs = self.expected_outputs(sequencing_group=sequencing_group)
-        prepare_ica_for_analysis.run_ica_prep_job(
-            ica_prep_job=prepare_ica_job,
+        prepare_ica_job = prepare_ica_for_analysis.run_ica_prep_job(
+            ica_prep_job=prepare_ica_for_analysis.initalise_ica_prep_job(sequencing_group=sequencing_group),
             output=str(outputs),
             ica_analysis_output_folder=config_retrieve(['ica', 'data_prep', 'output_folder']),
             api_root=ICA_REST_ENDPOINT,
@@ -108,7 +106,9 @@ class UploadDataToIca(SequencingGroupStage):
         )
 
 
-# I think that this can be refactored into a CohortStage, which would make running the pipeline a LOT cheaper.
+# As a SequencingGroupStage, this is expensive for large cohorts. The choices are either
+# - Refactor into CohortStage -> no downloads can start until the entire cohort has finished
+# - Wait for throttling to become a feature (if possible) and throttle this stage
 @stage(
     required_stages=[PrepareIcaForDragenAnalysis, UploadDataToIca],
     analysis_type='dragen_align_genotype',
@@ -252,7 +252,7 @@ class ManageDragenPipeline(SequencingGroupStage):
 
         monitor_pipeline_run.image(image=config_retrieve(['workflow', 'driver_image']))
         pipeline_run_results = monitor_pipeline_run.call(
-            monitor_align_genotype_with_dragen.run,
+            monitor_dragen_pipeline.run,
             ica_pipeline_id=align_genotype_job_result,
             pipeline_id_file=str(outputs['pipeline_id']),
             api_root=ICA_REST_ENDPOINT,

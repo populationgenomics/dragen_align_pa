@@ -1,5 +1,4 @@
 import logging
-import subprocess
 import time
 from random import randint
 from typing import Literal
@@ -8,14 +7,13 @@ import coloredlogs
 import icasdk
 from icasdk.apis.tags import project_analysis_api
 
-from cpg_workflows.stages.dragen_ica import ica_utils
+from src.dragen_align_pa import utils
 
 
 def run(
     ica_pipeline_id: str | dict[str, str],
-    pipeline_id_file: str,
     api_root: str,
-) -> dict[str, str]:
+) -> str:
     """Monitor a pipeline running in ICA
 
     Args:
@@ -27,11 +25,11 @@ def run(
         Exception: Any other exception if the pipeline gets into a FAILED state
 
     Returns:
-        dict[str, str]: A dict noting success of the pipeline run.
+        str: The pipeline status
     """
-    SECRETS: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
-    project_id: str = SECRETS['projectID']
-    api_key: str = SECRETS['apiKey']
+    secrets: dict[Literal['projectID', 'apiKey'], str] = utils.get_ica_secrets()
+    project_id: str = secrets['projectID']
+    api_key: str = secrets['apiKey']
 
     coloredlogs.install(level=logging.INFO)
 
@@ -44,25 +42,15 @@ def run(
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         path_params: dict[str, str] = {'projectId': project_id}
 
-        pipeline_status: str = ica_utils.check_ica_pipeline_status(
+        pipeline_status: str = utils.check_ica_pipeline_status(
             api_instance=api_instance,
             path_params=path_params | {'analysisId': pipeline_id},
         )
         # Other running statuses are REQUESTED AWAITINGINPUT INPROGRESS
         while pipeline_status not in ['SUCCEEDED', 'FAILED', 'FAILEDFINAL', 'ABORTED']:
-            time.sleep(600 + randint(-60, 60))
-            pipeline_status = ica_utils.check_ica_pipeline_status(
+            time.sleep(600 + randint(-60, 60))  # noqa: S311
+            pipeline_status = utils.check_ica_pipeline_status(
                 api_instance=api_instance,
                 path_params=path_params | {'analysisId': pipeline_id},
             )
-        if pipeline_status == 'SUCCEEDED':
-            logging.info(f'Pipeline run {pipeline_id} has succeeded')
-            return {'pipeline': pipeline_id, 'status': 'success'}
-        elif pipeline_status in ['ABORTING', 'ABORTED']:
-            raise Exception(f'Pipeline run {pipeline_id} has been cancelled.')
-        else:
-            # Log failed ICA pipeline to a file somewhere
-            # Delete the pipeline ID file
-            logging.info(f'Deleting the pipeline run ID file {pipeline_id_file}')
-            subprocess.run(['gcloud', 'storage', 'rm', pipeline_id_file])
-            raise Exception(f'The pipeline run {pipeline_id} has failed, please check ICA for more info.')
+        return pipeline_status

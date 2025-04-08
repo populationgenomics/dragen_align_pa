@@ -14,6 +14,7 @@ def initalise_ica_prep_job(sequencing_group: SequencingGroup) -> PythonJob:
         attributes=(sequencing_group.get_job_attrs(sequencing_group) or {}) | {'tool': 'ICA'},
     )
     prepare_ica_job.image(image=config_retrieve(['workflow', 'driver_image']))
+
     return prepare_ica_job
 
 
@@ -21,7 +22,7 @@ def run_ica_prep_job(
     ica_prep_job: PythonJob, output: str, ica_analysis_output_folder: str, api_root: str, sg_name: str, bucket_name: str
 ) -> None:
     output_fids = ica_prep_job.call(
-        run,
+        _run,
         ica_analysis_output_folder=ica_analysis_output_folder,
         api_root=api_root,
         sg_name=sg_name,
@@ -31,7 +32,7 @@ def run_ica_prep_job(
     get_batch().write_output(output_fids, output)
 
 
-def run(
+def _run(
     ica_analysis_output_folder: str,
     api_root: str,
     sg_name: str,
