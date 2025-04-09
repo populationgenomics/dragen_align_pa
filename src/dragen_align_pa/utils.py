@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Final, Literal
 import coloredlogs
 import cpg_utils
 import icasdk
-from google.cloud import secretmanager
+from google.cloud import secretmanager, storage
 from icasdk.apis.tags import project_analysis_api, project_data_api
 from icasdk.model.create_data import CreateData
 
@@ -15,10 +15,17 @@ if TYPE_CHECKING:
 
 
 SECRET_CLIENT = secretmanager.SecretManagerServiceClient()
-SECRET_PROJECT: Final = 'cpg-common'
-SECRET_NAME: Final = 'illumina_cpg_workbench_api'
-SECRET_VERSION: Final = 'latest'
+SECRET_PROJECT: Final = 'cpg-common'  # noqa: S105
+SECRET_NAME: Final = 'illumina_cpg_workbench_api'  # noqa: S105
+SECRET_VERSION: Final = 'latest'  # noqa: S105
 coloredlogs.install(level=logging.INFO)
+
+
+def create_object_in_gcp(bucket: str, object_path: str, contents: str) -> None:
+    storage_client = storage.Client()
+    storage_bucket = storage_client.get_bucket(bucket)
+    new_blob = storage_bucket.blob(object_path)
+    new_blob.upload_from_string(contents)
 
 
 def calculate_needed_storage(

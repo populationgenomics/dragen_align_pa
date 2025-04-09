@@ -1,3 +1,4 @@
+import json
 import logging
 import subprocess
 
@@ -9,6 +10,7 @@ from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 
 from src.dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline, run_align_genotype_with_dragen
+from src.dragen_align_pa.utils import create_object_in_gcp
 
 
 def initalise_management_job(sequencing_group: SequencingGroup, pipeline_id_file: str) -> PythonJob:
@@ -37,57 +39,106 @@ def _delete_pipeline_id_file(pipeline_id_file: str) -> None:
 
 
 def manage_ica_pipeline(
-    management_job: PythonJob,
+    job: PythonJob,
     sequencing_group: SequencingGroup,
     pipeline_id_file: str,
+    ica_fids_path: str,
+    analysis_output_fid_path: str,
     api_root: str,
     output: str,
 ) -> None:
     coloredlogs.install(level=logging.INFO)
     logging.info(f'Starting management job for {sequencing_group.name}')
-    management_output = management_job.call(
-        _run,
-        sequencing_group=sequencing_group,
-        pipeline_id_file=pipeline_id_file,
-        api_root=api_root,
-    ).as_json()
+    has_succeeded: bool = False
+    try_counter = 1
+    while not has_succeeded and try_counter <= 2:  # noqa: PLR2004
+        management_output = job.call(
+            _run,
+            sequencing_group=sequencing_group,
+            pipeline_id_file=pipeline_id_file,
+            ica_fids_path=ica_fids_path,
+            analysis_output_fid_path=analysis_output_fid_path,
+            api_root=api_root,
+        ).as_str()
 
-    get_batch().write_output(management_output, output)
+        if management_output == 'SUCCEEDED':
+            with open(to_path(pipeline_id_file)) as pipeline_fid_handle:
+                ica_pipeline_id: str = pipeline_fid_handle.read().rstrip()
+            bucket, object_path = output.split('/', maxsplit=1)
+            create_object_in_gcp(
+                bucket=bucket,
+                object_path=object_path,
+                contents=json.dumps({'pipeline': ica_pipeline_id, 'status': 'success'}),
+            )
+            has_succeeded = True
+        else:
+            try_counter += 1
+        if try_counter == 2:  # noqa: PLR2004
+            if management_output == 'ABORTED':
+                raise Exception(f'The pipeline run for sequencing group {sequencing_group.name} has been cancelled.')
+            raise Exception(
+                f'The pipeline run for sequencing group {sequencing_group.name} has failed after 2 retries, please check ICA for more info.'
+            )
 
 
-def _run(sequencing_group: SequencingGroup, pipeline_id_file: str, api_root: str, output: str) -> dict[str, str]:
-    # Get an existing pipeline ID
-    with open(to_path(pipeline_id_file)) as pipeline_fid_handle:
-        ica_pipeline_id: str = pipeline_fid_handle.read().rstrip()
-    # Cancel a running job in ICA
-    if (
-        config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False)
-        and to_path(pipeline_id_file).exists()
-    ):
-        logging.info(f'Cancelling pipeline run: {ica_pipeline_id} for sequencing group {sequencing_group.name}')
-        cancel_ica_pipeline_run.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
-        _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)
+def _run(
+    sequencing_group: SequencingGroup,
+    pipeline_id_file: str,
+    ica_fids_path: str,
+    analysis_output_fid_path: str,
+    api_root: str,
+    output: str,
+) -> str:
+    # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
+    if not to_path(pipeline_id_file).exists():
+        ica_pipeline_id = _submit_new_ica_pipeline(
+            sg_name=sequencing_group.name,
+            ica_fids_path=ica_fids_path,
+            analysis_output_fid_path=analysis_output_fid_path,
+            api_root=api_root,
+            output=output,
+        )
+        # Create the pipeline ID in GCP
+        bucket: str = output.split('/')[0]
+        object_path: str = output.rsplit('/')[0] + '_pipeline_id.json'
+        create_object_in_gcp(bucket=bucket, object_path=object_path, contents=ica_pipeline_id)
+    else:
+        # Get an existing pipeline ID
+        with open(to_path(pipeline_id_file)) as pipeline_fid_handle:
+            ica_pipeline_id: str = pipeline_fid_handle.read().rstrip()
+        # Cancel a running job in ICA
+        if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False):
+            logging.info(f'Cancelling pipeline run: {ica_pipeline_id} for sequencing group {sequencing_group.name}')
+            cancel_ica_pipeline_run.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
+            _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)
+            return 'ABORTED'
 
     # Monitor an existing ICA pipeline run
-    if config_retrieve(['ica', 'management', 'monitor_previous'], False) and to_path(pipeline_id_file).exists():
-        pipeline_status = monitor_dragen_pipeline.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
-        if pipeline_status == 'SUCCEEDED':
-            logging.info(f'Pipeline run {ica_pipeline_id} has succeeded')
-            return {'pipeline': ica_pipeline_id, 'status': 'success'}
-        if pipeline_status in ['ABORTING', 'ABORTED']:
-            logging.info(f'The pipeline run {ica_pipeline_id} has been cancelled for sample {sequencing_group.name}.')
-            _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)
-            raise Exception(f'Pipeline run {ica_pipeline_id} has been cancelled.')
-        # Log failed ICA pipeline to a file somewhere
-        # Delete the pipeline ID file
-        _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)
-        raise Exception(f'The pipeline run {ica_pipeline_id} has failed, please check ICA for more info.')
+    pipeline_status = monitor_dragen_pipeline.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
 
-    # Write ICA pipeline ID to file manually, rather than getting Hail Batch to do it?
-    # Submit a new ICA pipeline run
-    ica_pipeline_id = run_align_genotype_with_dragen.run(
-        ica_fids_path='x',
-        analysis_output_fid_path='x',
+    if pipeline_status == 'SUCCEEDED':
+        logging.info(f'Pipeline run {ica_pipeline_id} has succeeded')
+        return 'SUCCEEDED'
+    if pipeline_status in ['ABORTING', 'ABORTED']:
+        logging.info(f'The pipeline run {ica_pipeline_id} has been cancelled for sample {sequencing_group.name}.')
+        _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)
+        return 'ABORTED'
+    # Log failed ICA pipeline to a file somewhere
+    # Delete the pipeline ID file
+    _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)
+    return 'FAILED'
+
+
+def _submit_new_ica_pipeline(
+    sg_name: str,
+    ica_fids_path: str,
+    analysis_output_fid_path: str,
+    api_root: str,
+    output: str,
+) -> str:
+    ica_pipeline_id: str = run_align_genotype_with_dragen.run(
+        ica_fids_path=ica_fids_path,
+        analysis_output_fid_path=analysis_output_fid_path,
         dragen_ht_id=config_retrieve(['ica', 'pipelines', 'dragen_ht_id']),
         cram_reference_id=config_retrieve(
             ['ica', 'cram_references', config_retrieve(['ica', 'cram_references', 'old_cram_reference'])]
@@ -99,11 +150,8 @@ def _run(sequencing_group: SequencingGroup, pipeline_id_file: str, api_root: str
         user_tags=config_retrieve(['ica', 'tags', 'user_tags']),
         technical_tags=config_retrieve(['ica', 'tags', 'technical_tags']),
         reference_tags=config_retrieve(['ica', 'tags', 'reference_tags']),
-        user_reference=sequencing_group.name,
+        user_reference=sg_name,
         api_root=api_root,
         output_path=output,
     )
-
-    monitor_dragen_pipeline.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
-
-    return {'x': 'x'}
+    return ica_pipeline_id

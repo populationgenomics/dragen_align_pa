@@ -1,5 +1,6 @@
 import logging
 from math import ceil
+from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 import coloredlogs
@@ -11,16 +12,14 @@ from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import Batch, authenticate_cloud_credentials_in_job, command, get_batch
 from hailtop.batch.job import BashJob
 
-from dragen_align_pa.jobs import monitor_dragen_pipeline
+from dragen_align_pa.jobs import manage_dragen_pipeline
 from src.dragen_align_pa.jobs import (
-    cancel_ica_pipeline_run,
     prepare_ica_for_analysis,
-    run_align_genotype_with_dragen,
     upload_data_to_ica,
 )
 
 if TYPE_CHECKING:
-    from hailtop.batch.job import BashJob, PythonJob
+    from hailtop.batch.job import BashJob
 
 DRAGEN_VERSION: Final = config_retrieve(['ica', 'pipelines', 'dragen_version'])
 GCP_FOLDER_FOR_ICA_PREP: Final = f'ica/{DRAGEN_VERSION}/prepare'
@@ -133,142 +132,30 @@ class ManageDragenPipeline(SequencingGroupStage):
     ) -> dict[str, cpg_utils.Path]:
         sg_bucket: cpg_utils.Path = sequencing_group.dataset.prefix()
         return {
-            'output': sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE / f'{sequencing_group.name}_pipeline_success.json',
-            'pipeline_id': sequencing_group.dataset.prefix()
-            / GCP_FOLDER_FOR_RUNNING_PIPELINE
-            / f'{sequencing_group.name}_pipeline_id.json',
+            'success': sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE / f'{sequencing_group.name}_pipeline_success.json',
+            'pipeline_id': sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE / f'{sequencing_group.name}_pipeline_id.json',
         }
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
-        sg_bucket: cpg_utils.Path = sequencing_group.dataset.prefix()
+        outputs: dict[str, cpg_utils.Path | Path] = self.expected_outputs(sequencing_group=sequencing_group)
 
-        outputs = self.expected_outputs(sequencing_group=sequencing_group)
-
-        stage_jobs: list[BashJob | PythonJob] = []
-
-        if (
-            config_retrieve(['ica', 'management', 'cancel_cohort_run'], False)
-            and cpg_utils.to_path(outputs['pipeline_id']).exists()
-        ):
-            # Can only cancel a pipeline if the pipeline ID JSON exists
-            with open(cpg_utils.to_path(outputs['pipeline_id'])) as pipeline_fid_handle:
-                pipeline_id: str = pipeline_fid_handle.read().rstrip()
-            # Cancel if requested
-            logging.info('Cancelling pipeline run')
-            cancel_job = get_batch().new_python_job(
-                name='CancelIcaPipelineRun',
-                attributes=(self.get_job_attrs(sequencing_group) or {}) | {'tool': 'Dragen'},
-            )
-            cancel_job.image(image=config_retrieve(['workflow', 'driver_image']))
-            cancel_pipeline_result = cancel_job.call(
-                cancel_ica_pipeline_run.run,
-                ica_pipeline_id_path=str(outputs['pipeline_id']),
-                api_root=ICA_REST_ENDPOINT,
-            ).as_json()
-            get_batch().write_output(
-                cancel_pipeline_result,
-                str(
-                    sg_bucket
-                    / GCP_FOLDER_FOR_RUNNING_PIPELINE
-                    / f'{sequencing_group.name}_pipeline_{pipeline_id}_cancelled.json',
-                ),
-            )
-            stage_jobs.append(cancel_job)
-
-            return self.make_outputs(
-                target=sequencing_group,
-                data=outputs,
-                jobs=stage_jobs,
-            )
-
-        # Test if a previous pipeline should be re-monitored. Used for when monitor stage on batch crashes and we want to resume
-        if (
-            config_retrieve(['ica', 'management', 'monitor_previous'], False)
-            and cpg_utils.to_path(
-                outputs['pipeline_id'],
-            ).exists()
-        ):
-            logging.info(f'Previous pipeline found for {sequencing_group.name}, not setting off a new one')
-            with open(cpg_utils.to_path(outputs['pipeline_id'])) as pipeline_fid_handle:
-                align_genotype_job_result: str = pipeline_fid_handle.read().rstrip()
-        # We shouldn't actually want to catch this case, either we have a running pipeline in ICA with a pipeline ID registered in GCP, or we don't. We need both peices of information in order to resume.
-        # elif resume:
-        #     logging.warning(f'No previous pipeline found for {sequencing_group.name}, but resume flag set.')
-        #     return self.make_outputs(target=sequencing_group)
-        else:
-            dragen_pipeline_id = config_retrieve(['ica', 'pipelines', 'dragen_3_7_8'])
-            dragen_ht_id: str = config_retrieve(['ica', 'pipelines', 'dragen_ht_id'])
-
-            # Get the correct CRAM reference ID based off the choice made in the config
-            cram_reference_id: str = config_retrieve(
-                ['ica', 'cram_references', config_retrieve(['ica', 'cram_references', 'old_cram_reference'])],
-            )
-
-            user_tags: list[str] = config_retrieve(['ica', 'tags', 'user_tags'])
-            technical_tags: list[str] = config_retrieve(['ica', 'tags', 'technical_tags'])
-            reference_tags: list[str] = config_retrieve(['ica', 'tags', 'reference_tags'])
-            user_reference: str = sequencing_group.name
-
-            qc_cross_cont_vcf_id: str = config_retrieve(['ica', 'qc', 'cross_cont_vcf'])
-            qc_cov_region_1_id: str = config_retrieve(['ica', 'qc', 'coverage_region_1'])
-            qc_cov_region_2_id: str = config_retrieve(['ica', 'qc', 'coverage_region_2'])
-            gvcf_gq_bands: str = config_retrieve(['ica', 'dragen_extra_options', 'gvcf_gq_bands'])
-            qc_coverage_filters: str = config_retrieve(['ica', 'dragen_extra_options', 'qc_coverage_filters'])
-            vc_hard_filter: str = config_retrieve(['ica', 'dragen_extra_options', 'vc_hard_filter'])
-
-            align_genotype_job: PythonJob = get_batch().new_python_job(
-                name='AlignGenotypeWithDragen',
-                attributes=(self.get_job_attrs(sequencing_group) or {}) | {'tool': 'Dragen'},
-            )
-            align_genotype_job.image(image=config_retrieve(['workflow', 'driver_image']))
-
-            align_genotype_job_result = align_genotype_job.call(
-                run_align_genotype_with_dragen.run,
-                ica_fids_path=inputs.as_path(target=sequencing_group, stage=UploadDataToIca),
-                analysis_output_fid_path=inputs.as_path(target=sequencing_group, stage=PrepareIcaForDragenAnalysis),
-                dragen_ht_id=dragen_ht_id,
-                cram_reference_id=cram_reference_id,
-                qc_cross_cont_vcf_id=qc_cross_cont_vcf_id,
-                qc_cov_region_1_id=qc_cov_region_1_id,
-                qc_cov_region_2_id=qc_cov_region_2_id,
-                gvcf_gq_bands=gvcf_gq_bands,
-                qc_coverage_filters=qc_coverage_filters,
-                vc_hard_filter=vc_hard_filter,
-                dragen_pipeline_id=dragen_pipeline_id,
-                user_tags=user_tags,
-                technical_tags=technical_tags,
-                reference_tags=reference_tags,
-                user_reference=user_reference,
-                api_root=ICA_REST_ENDPOINT,
-                output_path=outputs['pipeline_id'],
-            )
-            stage_jobs.append(align_genotype_job)
-
-        # now monitor that job
-        monitor_pipeline_run: PythonJob = get_batch().new_python_job(
-            name='MonitorAlignGenotypeWithDragen',
-            attributes=(self.get_job_attrs(sequencing_group) or {}) | {'tool': 'Dragen'},
-        )
-
-        monitor_pipeline_run.image(image=config_retrieve(['workflow', 'driver_image']))
-        pipeline_run_results = monitor_pipeline_run.call(
-            monitor_dragen_pipeline.run,
-            ica_pipeline_id=align_genotype_job_result,
+        management_job = manage_dragen_pipeline.manage_ica_pipeline(
+            job=manage_dragen_pipeline.initalise_management_job(
+                sequencing_group=sequencing_group,
+                pipeline_id_file=str(outputs['pipeline_id']),
+            ),
+            sequencing_group=sequencing_group,
             pipeline_id_file=str(outputs['pipeline_id']),
+            ica_fids_path=str(inputs.as_path(target=sequencing_group, stage=UploadDataToIca)),
+            analysis_output_fid_path=str(inputs.as_path(target=sequencing_group, stage=PrepareIcaForDragenAnalysis)),
             api_root=ICA_REST_ENDPOINT,
-        ).as_json()
-
-        get_batch().write_output(
-            pipeline_run_results,
-            str(outputs['output']),
+            output=str(outputs['success']),
         )
-
-        stage_jobs.append(monitor_pipeline_run)
 
         return self.make_outputs(
             target=sequencing_group,
             data=outputs,
-            jobs=stage_jobs,
+            jobs=management_job,
         )
 
 
