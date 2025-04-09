@@ -255,7 +255,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         Download gVCF and gVCF TBI files from ICA separately. This is to allow registrations of the gVCF files
         in metamist to be done via stage decorators. The pipeline ID needs to be read within the Hail BashJob to get the current
         pipeline ID. If read outside the job, it will get the pipeline ID from the previous pipeline run.
-        """
+        """  # noqa: E501
         ica_download_job = download_specific_files_from_ica.download_data_from_ica(
             job=download_specific_files_from_ica.initalise_download_job(
                 sequencing_group=sequencing_group,
