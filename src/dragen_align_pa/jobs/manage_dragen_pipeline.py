@@ -4,7 +4,7 @@ import subprocess
 
 import coloredlogs
 from cpg_flow.targets import SequencingGroup
-from cpg_utils import to_path
+from cpg_utils import to_path  # type: ignore  # noqa: PGH003
 from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
@@ -27,7 +27,7 @@ def initalise_management_job(sequencing_group: SequencingGroup, pipeline_id_file
         name = 'AlignGenotypeWithDragen'
     management_job: PythonJob = get_batch().new_python_job(
         name=name,
-        attributes=sequencing_group.get_job_attrs(sequencing_group) or {} | {'tool': 'Dragen'},  # type: ignore
+        attributes=sequencing_group.get_job_attrs(sequencing_group) or {} | {'tool': 'Dragen'},  # type: ignore  # noqa: PGH003
     )
     management_job.image(image=config_retrieve(['workflow', 'driver_image']))
     return management_job
@@ -77,7 +77,7 @@ def manage_ica_pipeline(
             if management_output == 'ABORTED':
                 raise Exception(f'The pipeline run for sequencing group {sequencing_group.name} has been cancelled.')
             raise Exception(
-                f'The pipeline run for sequencing group {sequencing_group.name} has failed after 2 retries, please check ICA for more info.'
+                f'The pipeline run for sequencing group {sequencing_group.name} has failed after 2 retries, please check ICA for more info.'  # noqa: E501
             )
 
 

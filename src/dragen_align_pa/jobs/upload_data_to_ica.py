@@ -12,7 +12,7 @@ from utils import calculate_needed_storage
 def initalise_upload_job(sequencing_group: SequencingGroup) -> BashJob:
     upload_job: BashJob = get_batch().new_bash_job(
         name='UploadDataToIca',
-        attributes=(sequencing_group.get_job_attrs(sequencing_group) or {}) | {'tool': 'ICA'},
+        attributes=(sequencing_group.get_job_attrs(sequencing_group) or {}) | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
     )
 
     upload_job.image(image=config_retrieve(['workflow', 'driver_image']))
@@ -28,7 +28,7 @@ def upload_data_to_ica(job: BashJob, sequencing_group: SequencingGroup, ica_cli_
     coloredlogs.install(level=logging.INFO)
     logging.info(f'Uploading CRAM and CRAI for {sequencing_group.name}')
 
-    # Check if the CRAM and CRAI already exists in ICA before uploading. If they exist, just return the ID for the CRAM and CRAI
+    # Check if the CRAM and CRAI already exists in ICA before uploading. If they exist, just return the ID for the CRAM and CRAI  # noqa: E501
     # The internal `command` method is a wrapper from cpg_utils.hail_batch that extends the normal hail batch command
     job.command(
         command(
@@ -51,7 +51,7 @@ def upload_data_to_ica(job: BashJob, sequencing_group: SequencingGroup, ica_cli_
                 icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram --match-mode EXACT -o json | jq -r '.items[].id' > cram_id
                 icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram.crai --match-mode EXACT -o json | jq -r '.items[].id' > crai_id
 
-                jq -n --arg cram_id $(cat cram_id) --arg crai_id $(cat crai_id) '{{cram_fid: $cram_id, crai_fid: $crai_id}}' > {upload_job.ofile}
+                jq -n --arg cram_id $(cat cram_id) --arg crai_id $(cat crai_id) '{{cram_fid: $cram_id, crai_fid: $crai_id}}' > {job.ofile}
             }}
 
             {ica_cli_setup}
@@ -85,7 +85,7 @@ def upload_data_to_ica(job: BashJob, sequencing_group: SequencingGroup, ica_cli_
                 fi
                 counter=$((counter+1))
             done
-            """,
+            """,  # noqa: E501
             define_retry_function=True,
         ),
     )

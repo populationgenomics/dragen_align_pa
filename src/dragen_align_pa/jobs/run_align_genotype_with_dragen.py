@@ -65,7 +65,7 @@ def submit_dragen_run(
                 AnalysisParameterInput(code='repeat_genotype_enable', value='false'),
                 AnalysisParameterInput(
                     code='additional_args',
-                    value="--read-trimmers polyg --soft-read-trimmers none --vc-hard-filter 'DRAGENHardQUAL:all:QUAL<5.0;LowDepth:all:DP<=1' --vc-frd-max-effective-depth 40 --vc-enable-joint-detection true --qc-coverage-ignore-overlaps true --qc-coverage-count-soft-clipped-bases true --qc-coverage-reports-1 cov_report,cov_report --qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0'",
+                    value="--read-trimmers polyg --soft-read-trimmers none --vc-hard-filter 'DRAGENHardQUAL:all:QUAL<5.0;LowDepth:all:DP<=1' --vc-frd-max-effective-depth 40 --vc-enable-joint-detection true --qc-coverage-ignore-overlaps true --qc-coverage-count-soft-clipped-bases true --qc-coverage-reports-1 cov_report,cov_report --qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0'",  # noqa: E501
                 ),
                 AnalysisParameterInput(code='dragen_reports', value='false'),
             ],
@@ -112,7 +112,7 @@ def run(
         user_reference (str): A reference name for the pipeline run
         api_root (str): The ICA API root
         output_path (str): The path to write the pipeline ID to
-    """
+    """  # noqa: E501
 
     secrets: dict[Literal['projectID', 'apiKey'], str] = utils.get_ica_secrets()
     project_id: str = secrets['projectID']
