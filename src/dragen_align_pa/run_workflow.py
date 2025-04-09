@@ -11,10 +11,9 @@ This is re-implemented as a simpler form, only knowing how to build a single wor
 
 from argparse import ArgumentParser
 
-from cpg_flow.workflow import run_workflow
+from cpg_flow.workflow import run_workflow  # type: ignore  # noqa: PGH003
 
-# TODO(you) import your own Stages
-from workflow_name.stages import DoSomethingGenericWithBash, PrintPreviousJobOutputInAPythonJob
+from src.dragen_align_pa.stages import DownloadDataFromIca  # type: ignore  # noqa: PGH003
 
 
 def cli_main():
@@ -32,9 +31,9 @@ def cli_main():
     # Otherwise all configuration should be done by providing all relevant configs to analysis-runner
     # https://github.com/populationgenomics/team-docs/blob/main/cpg_utils_config.md#config-in-analysis-runner-jobs
 
-    stages = [DoSomethingGenericWithBash, PrintPreviousJobOutputInAPythonJob]
+    stages = [DownloadDataFromIca]  # type: ignore  # noqa: PGH003
 
-    run_workflow(stages=stages, dry_run=args.dry_run)
+    run_workflow(stages=stages, dry_run=args.dry_run)  # type: ignore  # noqa: PGH003
 
 
 if __name__ == '__main__':
