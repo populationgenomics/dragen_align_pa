@@ -22,7 +22,7 @@ def download_bulk_data_from_ica(
     gcp_folder_for_ica_download: str,
     pipeline_id_path: str,
     ica_cli_setup: str,
-) -> None:
+) -> BashJob:
     authenticate_cloud_credentials_in_job(job=job)
     ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
     bucket: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
@@ -53,3 +53,4 @@ def download_bulk_data_from_ica(
             define_retry_function=True,
         ),
     )
+    return job

@@ -91,7 +91,7 @@ def _run(
 ) -> str:
     # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
     if not to_path(pipeline_id_file).exists():
-        ica_pipeline_id = _submit_new_ica_pipeline(
+        ica_pipeline_id: str = _submit_new_ica_pipeline(
             sg_name=sequencing_group.name,
             ica_fids_path=ica_fids_path,
             analysis_output_fid_path=analysis_output_fid_path,
@@ -105,7 +105,7 @@ def _run(
     else:
         # Get an existing pipeline ID
         with open(to_path(pipeline_id_file)) as pipeline_fid_handle:
-            ica_pipeline_id: str = pipeline_fid_handle.read().rstrip()
+            ica_pipeline_id = pipeline_fid_handle.read().rstrip()
         # Cancel a running job in ICA
         if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False):
             logging.info(f'Cancelling pipeline run: {ica_pipeline_id} for sequencing group {sequencing_group.name}')

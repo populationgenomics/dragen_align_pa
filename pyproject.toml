@@ -112,6 +112,7 @@ ignore = [
     "C901", # method is too complex (> 10 conditions)
     "N999", # invalid module name (not lower-case and potholes)
     "I001", # Import block is un-sorted or un-formatted (to remove soon)
+    "S105", # Possible hardcoded secrets
 ]
 
 [tool.ruff.lint.isort]

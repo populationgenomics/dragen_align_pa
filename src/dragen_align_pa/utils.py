@@ -15,9 +15,9 @@ if TYPE_CHECKING:
 
 
 SECRET_CLIENT = secretmanager.SecretManagerServiceClient()
-SECRET_PROJECT: Final = 'cpg-common'  # noqa: S105
-SECRET_NAME: Final = 'illumina_cpg_workbench_api'  # noqa: S105
-SECRET_VERSION: Final = 'latest'  # noqa: S105
+SECRET_PROJECT: Final = 'cpg-common'
+SECRET_NAME: Final = 'illumina_cpg_workbench_api'
+SECRET_VERSION: Final = 'latest'
 coloredlogs.install(level=logging.INFO)
 
 
@@ -39,24 +39,18 @@ def calculate_needed_storage(
 def get_ica_secrets() -> dict[Literal['projectID', 'apiKey'], str]:
     """Gets the project ID and API key used to interact with ICA
 
-    Raises:
-        Exception: Any exception, as we want to fail if we can't get the credentials for any reason
-
     Returns:
         dict[str, str]: A dictionary with the keys projectId and apiKey
     """
-    try:
-        secret_path: str = SECRET_CLIENT.secret_version_path(
-            project=SECRET_PROJECT,
-            secret=SECRET_NAME,
-            secret_version=SECRET_VERSION,
-        )
-        response: secretmanager.AccessSecretVersionResponse = SECRET_CLIENT.access_secret_version(
-            request={'name': secret_path},
-        )
-        return json.loads(response.payload.data.decode('UTF-8'))
-    except Exception as e:
-        raise Exception(f'Could not obtain ICA credentials: {e}') from e
+    secret_path: str = SECRET_CLIENT.secret_version_path(
+        project=SECRET_PROJECT,
+        secret=SECRET_NAME,
+        secret_version=SECRET_VERSION,
+    )
+    response: secretmanager.AccessSecretVersionResponse = SECRET_CLIENT.access_secret_version(
+        request={'name': secret_path},
+    )
+    return json.loads(response.payload.data.decode('UTF-8'))
 
 
 def check_ica_pipeline_status(

@@ -30,7 +30,7 @@ def download_data_from_ica(
     ica_cli_setup: str,
     gcp_folder_for_ica_download: str,
     pipeline_id_path: str,
-) -> None:
+) -> BashJob:
     authenticate_cloud_credentials_in_job(job=job)
     coloredlogs.install(level=logging.INFO)
     logging.info(f'Downloading {filetype} and {filetype} index for {sequencing_group.name}')
@@ -87,3 +87,4 @@ def download_data_from_ica(
             define_retry_function=True,
         )
     )
+    return job
