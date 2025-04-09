@@ -19,7 +19,12 @@ def initalise_ica_prep_job(sequencing_group: SequencingGroup) -> PythonJob:
 
 
 def run_ica_prep_job(
-    ica_prep_job: PythonJob, output: str, ica_analysis_output_folder: str, api_root: str, sg_name: str, bucket_name: str
+    ica_prep_job: PythonJob,
+    output: str,
+    ica_analysis_output_folder: str,
+    api_root: str,
+    sg_name: str,
+    bucket_name: str,
 ) -> None:
     output_fids = ica_prep_job.call(
         _run,

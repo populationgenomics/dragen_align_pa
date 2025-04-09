@@ -1,24 +1,24 @@
 import logging
 from math import ceil
-from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 import coloredlogs
 import cpg_utils
-from cpg_flow.stage import SequencingGroupStage, StageInput, StageOutput, stage
+from cpg_flow.stage import SequencingGroupStage, StageInput, StageOutput, stage  # type: ignore  # noqa: PGH003
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve
-from cpg_utils.hail_batch import Batch, authenticate_cloud_credentials_in_job, command, get_batch
 from hailtop.batch.job import BashJob
 
-from dragen_align_pa.jobs import manage_dragen_pipeline
+from dragen_align_pa.jobs import download_ica_pipeline_outputs, download_specific_files_from_ica, manage_dragen_pipeline
 from src.dragen_align_pa.jobs import (
     prepare_ica_for_analysis,
     upload_data_to_ica,
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from hailtop.batch.job import BashJob
 
 DRAGEN_VERSION: Final = config_retrieve(['ica', 'pipelines', 'dragen_version'])
@@ -36,7 +36,7 @@ gcloud secrets versions access latest --secret=illumina_cpg_workbench_api --proj
 echo "x-api-key: $(cat key)" >> $HOME/.icav2/config.yaml
 icav2 projects enter $(cat projectID)
 set -x
-"""
+"""  # noqa: E501
 
 
 coloredlogs.install(level=logging.INFO)
@@ -62,7 +62,7 @@ class PrepareIcaForDragenAnalysis(SequencingGroupStage):
         sg_bucket: cpg_utils.Path = sequencing_group.dataset.prefix()
         return sg_bucket / GCP_FOLDER_FOR_ICA_PREP / f'{sequencing_group.name}_output_fid.json'
 
-    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         bucket_name: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
 
         outputs = self.expected_outputs(sequencing_group=sequencing_group)
@@ -88,7 +88,7 @@ class UploadDataToIca(SequencingGroupStage):
         sg_bucket: cpg_utils.Path = sequencing_group.dataset.prefix()
         return sg_bucket / GCP_FOLDER_FOR_ICA_PREP / f'{sequencing_group.name}_fids.json'
 
-    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         output = self.expected_outputs(sequencing_group=sequencing_group)
 
         upload_job: BashJob = upload_data_to_ica.upload_data_to_ica(
@@ -109,7 +109,7 @@ class UploadDataToIca(SequencingGroupStage):
 # - Refactor into CohortStage -> no downloads can start until the entire cohort has finished
 # - Wait for throttling to become a feature (if possible) and throttle this stage
 @stage(
-    required_stages=[PrepareIcaForDragenAnalysis, UploadDataToIca],
+    required_stages=[PrepareIcaForDragenAnalysis, UploadDataToIca],  # type: ignore  # noqa: PGH003
     analysis_type='dragen_align_genotype',
     analysis_keys=['pipeline_id'],
 )
@@ -124,7 +124,7 @@ class ManageDragenPipeline(SequencingGroupStage):
         - Set the `monitor_previous` flag to `true` in the config. This will read the pipeline ID from the JSON file and monitor it.
     3. Initiates a new Dragen pipeline run if no previous run is found or if resuming is not requested.
     4. Monitors the progress of the Dragen pipeline run.
-    """
+    """  # noqa: E501
 
     def expected_outputs(
         self,
@@ -146,8 +146,8 @@ class ManageDragenPipeline(SequencingGroupStage):
             ),
             sequencing_group=sequencing_group,
             pipeline_id_file=str(outputs['pipeline_id']),
-            ica_fids_path=str(inputs.as_path(target=sequencing_group, stage=UploadDataToIca)),
-            analysis_output_fid_path=str(inputs.as_path(target=sequencing_group, stage=PrepareIcaForDragenAnalysis)),
+            ica_fids_path=str(inputs.as_path(target=sequencing_group, stage=UploadDataToIca)),  # type: ignore  # noqa: PGH003
+            analysis_output_fid_path=str(inputs.as_path(target=sequencing_group, stage=PrepareIcaForDragenAnalysis)),  # type: ignore  # noqa: PGH003
             api_root=ICA_REST_ENDPOINT,
             output=str(outputs['success']),
         )
@@ -159,7 +159,7 @@ class ManageDragenPipeline(SequencingGroupStage):
         )
 
 
-@stage(analysis_type='dragen_mlr', required_stages=[ManageDragenPipeline])
+@stage(analysis_type='dragen_mlr', required_stages=[ManageDragenPipeline])  # type: ignore  # noqa: PGH003
 class GvcfMlrWithDragen(SequencingGroupStage):
     def expected_outputs(
         self,
@@ -171,7 +171,7 @@ class GvcfMlrWithDragen(SequencingGroupStage):
         pass
 
 
-@stage(required_stages=[GvcfMlrWithDragen])
+@stage(required_stages=[GvcfMlrWithDragen])  # type: ignore  # noqa: PGH003
 class MonitorGvcfMlrWithDragen(SequencingGroupStage):
     def expected_outputs(
         self,
@@ -186,19 +186,19 @@ class MonitorGvcfMlrWithDragen(SequencingGroupStage):
 @stage(
     analysis_type='cram',
     analysis_keys=['cram'],
-    required_stages=[PrepareIcaForDragenAnalysis, ManageDragenPipeline],
+    required_stages=[ManageDragenPipeline],  # type: ignore  # noqa: PGH003
 )
 class DownloadCramFromIca(SequencingGroupStage):
     """
     Download cram and crai files from ICA separately. This is to allow registrations of the cram files
     in metamist to be done via stage decorators. The pipeline ID needs to be read within the Hail BashJob to get the current
     pipeline ID. If read outside the job, it will get the pipeline ID from the previous pipeline run.
-    """
+    """  # noqa: E501
 
     def expected_outputs(
         self,
         sequencing_group: SequencingGroup,
-    ) -> cpg_utils.Path:
+    ) -> dict[str, cpg_utils.Path]:
         bucket_name: cpg_utils.Path = sequencing_group.dataset.prefix()
         return {
             'cram': bucket_name / GCP_FOLDER_FOR_ICA_DOWNLOAD / 'cram' / f'{sequencing_group.name}.cram',
@@ -206,68 +206,18 @@ class DownloadCramFromIca(SequencingGroupStage):
         }
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
-        bucket_name: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
-        ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
-
-        batch_instance: Batch = get_batch()
-        ica_download_job: BashJob = batch_instance.new_bash_job(
-            name='DownloadCramFromIca',
-            attributes=(self.get_job_attrs(sequencing_group) or {}) | {'tool': 'ICA'},
-        )
-
-        pipeline_id_path: cpg_utils.Path = inputs.as_path(
-            target=sequencing_group,
-            stage=ManageDragenPipeline,
-            key='pipeline_id',
-        )
-
-        ica_download_job.storage(storage=calculate_needed_storage(cram=str(sequencing_group.cram)))
-        ica_download_job.memory('8Gi')
-        ica_download_job.image(image=config_retrieve(['workflow', 'driver_image']))
-
-        # Download just the CRAM and CRAI files  with ICA. Don't log projectId or API key
-        authenticate_cloud_credentials_in_job(ica_download_job)
-        ica_download_job.command(
-            command(
-                f"""
-                function download_cram {{
-                cram_id=$(icav2 projectdata list --parent-folder /{bucket_name}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}-$pipeline_id/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram --match-mode EXACT -o json | jq -r '.items[].id')
-                crai_id=$(icav2 projectdata list --parent-folder /{bucket_name}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}-$pipeline_id/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram.crai --match-mode EXACT -o json | jq -r '.items[].id')
-                cram_md5=$(icav2 projectdata list --parent-folder /{bucket_name}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}-$pipeline_id/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram.md5sum --match-mode EXACT -o json | jq -r '.items[].id')
-                icav2 projectdata download $cram_id $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.cram --exclude-source-path
-                icav2 projectdata download $crai_id $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.cram.crai --exclude-source-path
-                icav2 projectdata download $cram_md5 $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.cram.md5sum --exclude-source-path
-
-                # Get md5sum of the downloaded CRAM file and compare it with the ICA md5sum
-                # Checking here because using icav2 package to download which doesn't automatically perform checksum matching
-                ica_md5_hash=$(cat $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.cram.md5sum)
-                cram_md5=$(cat $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.cram | md5sum | cut -d " " -f1)
-                if [ "$cram_md5" != "$ica_md5_hash" ]; then
-                    echo "Error: MD5 checksums do not match!"
-                    echo "ICA MD5: $ica_md5_hash"
-                    echo "Cram MD5: $cram_md5"
-                    exit 1
-                else
-                    echo "MD5 checksums match."
-                fi
-
-                # Copy the CRAM and CRAI files to the bucket
-                # Checksums are already checked by `gcloud storage cp`
-                gcloud storage cp $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.cram gs://{bucket_name}/{GCP_FOLDER_FOR_ICA_DOWNLOAD}/cram/
-                gcloud storage cp $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.cram.crai gs://{bucket_name}/{GCP_FOLDER_FOR_ICA_DOWNLOAD}/cram/
-                gcloud storage cp $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.cram.md5sum gs://{bucket_name}/{GCP_FOLDER_FOR_ICA_DOWNLOAD}/cram/
-                }}
-
-                {ICA_CLI_SETUP}
-                mkdir -p $BATCH_TMPDIR/{sequencing_group.name}
-                pipeline_id_filename=$(basename {pipeline_id_path})
-                gcloud storage cp {pipeline_id_path} .
-                pipeline_id=$(cat $pipeline_id_filename)
-                echo "Pipeline ID: $pipeline_id"
-
-                retry download_cram
-                """,
-                define_retry_function=True,
+        ica_download_job = download_specific_files_from_ica.download_data_from_ica(
+            job=download_specific_files_from_ica.initalise_download_job(
+                sequencing_group=sequencing_group,
+                job_name='DownloadCramFromIca',
+            ),
+            sequencing_group=sequencing_group,
+            filetype='cram',
+            bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
+            ica_cli_setup=ICA_CLI_SETUP,
+            gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
+            pipeline_id_path=str(
+                inputs.as_path(target=sequencing_group, stage=ManageDragenPipeline, key='pipeline_id')  # type: ignore  # noqa: PGH003
             ),
         )
 
@@ -281,13 +231,13 @@ class DownloadCramFromIca(SequencingGroupStage):
 @stage(
     analysis_type='gvcf',
     analysis_keys=['gvcf'],
-    required_stages=[ManageDragenPipeline],
+    required_stages=[ManageDragenPipeline],  # type: ignore  # noqa: PGH003
 )
 class DownloadGvcfFromIca(SequencingGroupStage):
     def expected_outputs(
         self,
         sequencing_group: SequencingGroup,
-    ) -> cpg_utils.Path:
+    ) -> dict[str, cpg_utils.Path]:
         bucket_name: cpg_utils.Path = sequencing_group.dataset.prefix()
         return {
             'gvcf': bucket_name
@@ -306,68 +256,18 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         in metamist to be done via stage decorators. The pipeline ID needs to be read within the Hail BashJob to get the current
         pipeline ID. If read outside the job, it will get the pipeline ID from the previous pipeline run.
         """
-        bucket_name: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
-        ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
-
-        batch_instance: Batch = get_batch()
-        ica_download_job: BashJob = batch_instance.new_bash_job(
-            name='DownloadGvcfFromIca',
-            attributes=(self.get_job_attrs(sequencing_group) or {}) | {'tool': 'ICA'},
-        )
-
-        pipeline_id_path: cpg_utils.Path = inputs.as_path(
-            target=sequencing_group,
-            stage=ManageDragenPipeline,
-            key='pipeline_id',
-        )
-
-        ica_download_job.storage(storage=calculate_needed_storage(cram=str(sequencing_group.cram)))
-        ica_download_job.memory('8Gi')
-        ica_download_job.image(image=config_retrieve(['workflow', 'driver_image']))
-
-        # Download just the CRAM and CRAI files  with ICA. Don't log projectId or API key
-        authenticate_cloud_credentials_in_job(ica_download_job)
-        ica_download_job.command(
-            command(
-                f"""
-                function download_gvcf {{
-                gvcf_id=$(icav2 projectdata list --parent-folder /{bucket_name}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}-$pipeline_id/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.hard-filtered.gvcf.gz --match-mode EXACT -o json | jq -r '.items[].id')
-                gvcf_tbi_id=$(icav2 projectdata list --parent-folder /{bucket_name}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}-$pipeline_id/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.hard-filtered.gvcf.gz.tbi --match-mode EXACT -o json | jq -r '.items[].id')
-                gvcf_md5_id=$(icav2 projectdata list --parent-folder /{bucket_name}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}-$pipeline_id/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.hard-filtered.gvcf.gz.md5sum --match-mode EXACT -o json | jq -r '.items[].id')
-                icav2 projectdata download $gvcf_id $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.hard-filtered.gvcf.gz --exclude-source-path
-                icav2 projectdata download $gvcf_tbi_id $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.hard-filtered.gvcf.gz.tbi --exclude-source-path
-                icav2 projectdata download $gvcf_md5_id $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.hard-filtered.gvcf.gz.md5sum --exclude-source-path
-
-                # Get md5sum of the downloaded gVCF file and compare it with the ICA md5sum
-                # Checking here because using icav2 package to download which doesn't automatically perform checksum matching
-                ica_md5_hash=$(cat $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.hard-filtered.gvcf.gz.md5sum)
-                gvcf_md5=$(cat $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.hard-filtered.gvcf.gz | md5sum | cut -d " " -f1)
-                if [ "$gvcf_md5" != "$ica_md5_hash" ]; then
-                    echo "Error: MD5 checksums do not match!"
-                    echo "ICA MD5: $ica_md5_hash"
-                    echo "Gvcf MD5: $gvcf_md5"
-                    exit 1
-                else
-                    echo "MD5 checksums match."
-                fi
-
-                # Copy the gVCF and gVCF TBI files to the bucket
-                # Checksums are already checked by `gcloud storage cp`
-                gcloud storage cp $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.hard-filtered.gvcf.gz gs://{bucket_name}/{GCP_FOLDER_FOR_ICA_DOWNLOAD}/base_gvcf/
-                gcloud storage cp $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.hard-filtered.gvcf.gz.tbi gs://{bucket_name}/{GCP_FOLDER_FOR_ICA_DOWNLOAD}/base_gvcf/
-                gcloud storage cp $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.hard-filtered.gvcf.gz.md5sum gs://{bucket_name}/{GCP_FOLDER_FOR_ICA_DOWNLOAD}/base_gvcf/
-                }}
-
-                {ICA_CLI_SETUP}
-                mkdir -p $BATCH_TMPDIR/{sequencing_group.name}
-                pipeline_id_filename=$(basename {pipeline_id_path})
-                gcloud storage cp {pipeline_id_path} .
-                pipeline_id=$(cat $pipeline_id_filename)
-                echo "Pipeline ID: $pipeline_id"
-
-                retry download_gvcf
-                """,
-                define_retry_function=True,
+        ica_download_job = download_specific_files_from_ica.download_data_from_ica(
+            job=download_specific_files_from_ica.initalise_download_job(
+                sequencing_group=sequencing_group,
+                job_name='DownloadGvcfFromIca',
+            ),
+            sequencing_group=sequencing_group,
+            filetype='gvcf',
+            bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
+            ica_cli_setup=ICA_CLI_SETUP,
+            gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
+            pipeline_id_path=str(
+                inputs.as_path(target=sequencing_group, stage=ManageDragenPipeline, key='pipeline_id')  # type: ignore  # noqa: PGH003
             ),
         )
 
@@ -380,7 +280,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
 
 @stage(
     analysis_type='ica_data_download',
-    required_stages=[ManageDragenPipeline, DownloadCramFromIca, DownloadGvcfFromIca],
+    required_stages=[ManageDragenPipeline, DownloadCramFromIca, DownloadGvcfFromIca],  # type: ignore  # noqa: PGH003
 )
 class DownloadDataFromIca(SequencingGroupStage):
     """
@@ -397,52 +297,18 @@ class DownloadDataFromIca(SequencingGroupStage):
         return bucket_name / GCP_FOLDER_FOR_ICA_DOWNLOAD / 'dragen_metrics' / f'{sequencing_group.name}'
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
-        bucket_name: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
-        ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
-        pipeline_id_path: cpg_utils.Path = inputs.as_path(
-            target=sequencing_group,
-            stage=ManageDragenPipeline,
-            key='pipeline_id',
-        )
-
-        batch_instance: Batch = get_batch()
-        ica_download_job: BashJob = batch_instance.new_bash_job(
-            name='DownloadDataFromIca',
-            attributes=(self.get_job_attrs(sequencing_group) or {}) | {'tool': 'ICA'},
-        )
-
-        ica_download_job.storage(storage=calculate_needed_storage(cram=str(sequencing_group.cram)))
-        ica_download_job.memory('8Gi')
-        ica_download_job.image(image=config_retrieve(['workflow', 'driver_image']))
-
-        # Download an entire folder (except crams and gvcfs) with ICA. Don't log projectId or API key
-        authenticate_cloud_credentials_in_job(ica_download_job)
-        ica_download_job.command(
-            command(
-                rf"""
-                function download_extra_data {{
-                files_and_ids=$(icav2 projectdata list --parent-folder /{bucket_name}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}-$pipeline_id/{sequencing_group.name}/ -o json | jq -r '.items[] | select(.details.name | test(".cram|.gvcf") | not) | "\(.details.name) \(.id)"')
-                while IFS= read -r line; do
-                    name=$(echo "$line" | awk '{{print $1}}')
-                    id=$(echo "$line" | awk '{{print $2}}')
-                    echo "Downloading $name with ID $id"
-                    icav2 projectdata download $id $BATCH_TMPDIR/{sequencing_group.name}/$name --exclude-source-path
-                done <<< "$files_and_ids"
-                gcloud storage cp --recursive $BATCH_TMPDIR/{sequencing_group.name}/* gs://{bucket_name}/{GCP_FOLDER_FOR_ICA_DOWNLOAD}/dragen_metrics/{sequencing_group.name}/
-                }}
-
-                {ICA_CLI_SETUP}
-                # List all files in the folder except crams and gvcf and download them
-                mkdir -p $BATCH_TMPDIR/{sequencing_group.name}
-                pipeline_id_filename=$(basename {pipeline_id_path})
-                gcloud storage cp {pipeline_id_path} .
-                pipeline_id=$(cat $pipeline_id_filename)
-                echo "Pipeline ID: $pipeline_id"
-
-                retry download_extra_data
-                """,
-                define_retry_function=True,
+        ica_download_job: None = download_ica_pipeline_outputs.download_bulk_data_from_ica(
+            job=download_ica_pipeline_outputs.initalise_bulk_download_job(sequencing_group=sequencing_group),
+            sequencing_group=sequencing_group,
+            gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
+            pipeline_id_path=str(
+                inputs.as_path(
+                    target=sequencing_group,
+                    stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+                    key='pipeline_id',
+                )
             ),
+            ica_cli_setup=ICA_CLI_SETUP,
         )
 
         return self.make_outputs(
