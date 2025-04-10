@@ -4,6 +4,7 @@ ARG ICA_CLI_VERSION=${ICA_CLI_VERSION:-2.31.0}
 
 RUN apt update && apt install -y \
     unzip \
+    git \
     jq && \
     rm -r /var/lib/apt/lists/* && \
     rm -r /var/cache/apt/* && \
