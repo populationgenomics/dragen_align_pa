@@ -3,6 +3,7 @@ FROM australia-southeast1-docker.pkg.dev/cpg-common/images/cpg_hail_gcloud:0.2.1
 ARG ICA_CLI_VERSION=${ICA_CLI_VERSION:-2.31.0}
 
 RUN apt update && apt install -y \
+    unzip \
     jq && \
     rm -r /var/lib/apt/lists/* && \
     rm -r /var/cache/apt/* && \
