@@ -71,11 +71,11 @@ def manage_ica_pipeline(
                 contents=json.dumps({'pipeline': ica_pipeline_id, 'status': 'success'}),
             )
             has_succeeded = True
+        elif management_output == 'ABORTED':
+            raise Exception(f'The pipeline run for sequencing group {sequencing_group.name} has been cancelled.')
         else:
             try_counter += 1
         if try_counter == 2:  # noqa: PLR2004
-            if management_output == 'ABORTED':
-                raise Exception(f'The pipeline run for sequencing group {sequencing_group.name} has been cancelled.')
             raise Exception(
                 f'The pipeline run for sequencing group {sequencing_group.name} has failed after 2 retries, please check ICA for more info.'  # noqa: E501
             )
