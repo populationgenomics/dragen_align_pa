@@ -1,6 +1,7 @@
 FROM australia-southeast1-docker.pkg.dev/cpg-common/images/cpg_hail_gcloud:0.2.134.cpg1
 
 ARG ICA_CLI_VERSION=${ICA_CLI_VERSION:-2.31.0}
+ENV VERSION=1.0.0
 
 RUN apt update && apt install -y \
     unzip \
@@ -20,4 +21,5 @@ RUN apt update && apt install -y \
 
 RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
     && pip install typing-extensions --upgrade \
-    && pip install dill
+    && pip install dill \
+    && pip install cpg_flow
