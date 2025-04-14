@@ -10,7 +10,7 @@ from hailtop.batch.job import BashJob
 def initalise_bulk_download_job(sequencing_group: SequencingGroup) -> BashJob:
     bulk_download_job = get_batch().new_bash_job(
         name='DownloadDataFromIca',
-        attributes=(sequencing_group.get_job_attrs(sequencing_group) or {}) | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
+        attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
     )
     bulk_download_job.image(image=config_retrieve(['workflow', 'driver_image']))
     return bulk_download_job

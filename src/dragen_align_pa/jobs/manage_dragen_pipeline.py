@@ -27,7 +27,7 @@ def initalise_management_job(sequencing_group: SequencingGroup, pipeline_id_file
         name = 'AlignGenotypeWithDragen'
     management_job: PythonJob = get_batch().new_python_job(
         name=name,
-        attributes=sequencing_group.get_job_attrs(sequencing_group) or {} | {'tool': 'Dragen'},  # type: ignore  # noqa: PGH003
+        attributes=sequencing_group.get_job_attrs() or {} | {'tool': 'Dragen'},  # type: ignore  # noqa: PGH003
     )
     management_job.image(image=config_retrieve(['workflow', 'driver_image']))
     return management_job

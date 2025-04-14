@@ -6,13 +6,14 @@ from cpg_flow.targets import SequencingGroup
 from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command, get_batch
 from hailtop.batch.job import BashJob
+
 from dragen_align_pa.utils import calculate_needed_storage
 
 
 def initalise_download_job(sequencing_group: SequencingGroup, job_name: str) -> BashJob:
     download_job: BashJob = get_batch().new_bash_job(
         name=job_name,
-        attributes=(sequencing_group.get_job_attrs(sequencing_group) or {}) | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
+        attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
     )
 
     download_job.image(image=config_retrieve(['workflow', 'driver_image']))
