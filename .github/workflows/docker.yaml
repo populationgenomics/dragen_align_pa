@@ -9,9 +9,6 @@ on:
   push:
     branches-ignore:
       - main
-    inputs:
-      tag:
-        default: "test"
 
 permissions:
   id-token: write
@@ -82,5 +79,5 @@ jobs:
       - name: Test build for development
         if: ${{ github.event_name == 'push' && github.ref_name != 'main '}}
         run: |
-          docker tag ${{env.IMAGE_NAME}}:${{ github.sha }} ${{env.DOCKER_DEV}}/${{env.IMAGE_NAME}}:${{github.event.inputs.tag}}
-          docker push ${{env.DOCKER_DEV}}/${{env.IMAGE_NAME}}:${{github.event.inputs.tag}}
+          docker tag ${{env.IMAGE_NAME}}:${{ github.sha }} ${{env.DOCKER_DEV}}/${{env.IMAGE_NAME}}:test
+          docker push ${{env.DOCKER_DEV}}/${{env.IMAGE_NAME}}:test
