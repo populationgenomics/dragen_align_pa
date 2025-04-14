@@ -47,7 +47,7 @@ run_workflow = 'dragen_align_pa.run_workflow:cli_main'
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
-where = 'src'
+where = ['src']
 
 [tool.setuptools.package_data]
 dragen_align_pa = ['*.py']
