@@ -21,6 +21,7 @@ RUN apt update && apt install -y \
 
 COPY pyproject.toml .
 COPY README.md .
+COPY LICENSE .
 
 RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
     && pip install typing-extensions --upgrade \
