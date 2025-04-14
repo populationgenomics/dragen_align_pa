@@ -20,6 +20,7 @@ RUN apt update && apt install -y \
     rm -rf /tmp/ica-linux-amd64.sha256 /tmp/ica-linux-amd64.zip /tmp/linux-amd64
 
 COPY pyproject.toml .
+COPY README.md .
 
 RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
     && pip install typing-extensions --upgrade \
