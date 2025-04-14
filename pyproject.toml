@@ -45,8 +45,9 @@ test = [
 [project.scripts]
 dragen_align_pa = 'dragen_align_pa.run_workflow:cli_main'
 
-[tool.setuptools]
-package-dir = {"" = "src"}
+[tool.hatch.build.targets.wheel]
+# package-dir = {"" = "src"}
+packages = "src/dragen_align_pa"
 
 [tool.black]
 line-length = 120
