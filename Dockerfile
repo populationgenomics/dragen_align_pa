@@ -22,4 +22,4 @@ RUN apt update && apt install -y \
 RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
     && pip install typing-extensions --upgrade \
     && pip install dill \
-    && pip install cpg_flow
+    && pip install .
