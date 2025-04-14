@@ -46,12 +46,6 @@ run_workflow = 'dragen_align_pa.run_workflow:cli_main'
 [tool.setuptools]
 package-dir = {"" = "src"}
 
-# [options]
-# include_package_data = true
-
-# [options.package_data]
-# 'dragen_align_pa'=  ['config_template.toml']
-
 [tool.black]
 line-length = 120
 skip-string-normalization = true
