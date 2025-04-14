@@ -25,5 +25,5 @@ COPY LICENSE .
 
 RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
     && pip install typing-extensions --upgrade \
-    && pip install dill \
-    && pip install .
+    && pip install . \
+    && pip show dragen_align_pa
