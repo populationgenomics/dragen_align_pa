@@ -6,7 +6,8 @@ from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command, get_batch
 from hailtop.batch.job import BashJob
-from utils import calculate_needed_storage
+
+from dragen_align_pa.utils import calculate_needed_storage
 
 
 def initalise_upload_job(sequencing_group: SequencingGroup) -> BashJob:
