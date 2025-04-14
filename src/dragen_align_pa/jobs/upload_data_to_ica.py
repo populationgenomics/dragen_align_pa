@@ -40,25 +40,25 @@ def upload_data_to_ica(job: BashJob, sequencing_group: SequencingGroup, ica_cli_
                 gcloud storage cp {sequencing_group.cram}.crai $BATCH_TMPDIR/{sequencing_group.name}/
             }}
             function upload_cram {{
-                icav2 projectdata upload $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.cram /{bucket}/{upload_folder}/{sequencing_group.name}/
+                icav2 projectdata upload $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.cram} /{bucket}/{upload_folder}/{sequencing_group.name}/
             }}
             function upload_crai {{
-                icav2 projectdata upload $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.cram.crai /{bucket}/{upload_folder}/{sequencing_group.name}/
+                icav2 projectdata upload $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.cram}.crai /{bucket}/{upload_folder}/{sequencing_group.name}/
             }}
 
             function get_fids {{
                 # Add a random delay before calling the ICA API to hopefully stop empty JSON files from being written to GCP
                 sleep $(shuf -i 1-30 -n 1)
-                icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram --match-mode EXACT -o json | jq -r '.items[].id' > cram_id
-                icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram.crai --match-mode EXACT -o json | jq -r '.items[].id' > crai_id
+                icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.cram} --match-mode EXACT -o json | jq -r '.items[].id' > cram_id
+                icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.cram}.crai --match-mode EXACT -o json | jq -r '.items[].id' > crai_id
 
                 jq -n --arg cram_id $(cat cram_id) --arg crai_id $(cat crai_id) '{{cram_fid: $cram_id, crai_fid: $crai_id}}' > {job.ofile}
             }}
 
             {ica_cli_setup}
             copy_from_gcp
-            cram_status=$(icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram --match-mode EXACT -o json | jq -r '.items[].details.status')
-            crai_status=$(icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram.crai --match-mode EXACT -o json | jq -r '.items[].details.status')
+            cram_status=$(icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.cram} --match-mode EXACT -o json | jq -r '.items[].details.status')
+            crai_status=$(icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.cram}.crai --match-mode EXACT -o json | jq -r '.items[].details.status')
 
             if [[ $cram_status != "AVAILABLE" ]]
             then
