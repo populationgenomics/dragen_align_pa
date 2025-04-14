@@ -11,7 +11,7 @@ from hailtop.batch.job import PythonJob
 def initalise_ica_prep_job(sequencing_group: SequencingGroup) -> PythonJob:
     prepare_ica_job: PythonJob = get_batch().new_python_job(
         name='PrepareIcaForDragenAnalysis',
-        attributes=(sequencing_group.get_job_attrs(sequencing_group) or {}) | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
+        attributes=sequencing_group.get_job_attrs(sequencing_group) or {} | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
     )
     prepare_ica_job.image(image=config_retrieve(['workflow', 'driver_image']))
 
