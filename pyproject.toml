@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -49,8 +49,8 @@ package-dir = {"" = "src"}
 # [tool.setuptools.packages.find]
 # where = ['src']
 
-[tool.setuptools.package_data]
-dragen_align_pa = ['*.py']
+# [tool.setuptools.package_data]
+# dragen_align_pa = ['*.py']
 
 # [options]
 # include_package_data = true
