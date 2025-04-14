@@ -81,5 +81,5 @@ jobs:
       - name: Test build for development
         if: ${{ github.event_name == 'push' && github.ref_name != 'main '}}
         run: |
-          docker tag ${{env.IMAGE_NAME}}:${{ github.sha }} ${{env.DOCKER_DEV}}/${{env.IMAGE_NAME}}:${{github.event.inputs.tag}}
+          docker tag ${{env.IMAGE_NAME}}:${{ github.sha }} ${{env.DOCKER_DEV}}/${{env.IMAGE_NAME}}:${{github.event.inputs.image_tag}}
           docker push ${{env.DOCKER_DEV}}/${{env.IMAGE_NAME}}:PR_${{github.event.number}}

@@ -62,6 +62,8 @@ def manage_ica_pipeline(
             output=output,
         ).as_str()
 
+        logging.info(f'{management_output}')
+
         if management_output == 'SUCCEEDED':
             with open(to_path(pipeline_id_file)) as pipeline_fid_handle:
                 ica_pipeline_id: str = pipeline_fid_handle.read().rstrip()
