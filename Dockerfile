@@ -19,6 +19,8 @@ RUN apt update && apt install -y \
     chmod a+x /usr/local/bin/icav2 && \
     rm -rf /tmp/ica-linux-amd64.sha256 /tmp/ica-linux-amd64.zip /tmp/linux-amd64
 
+COPY pyproject.toml .
+
 RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
     && pip install typing-extensions --upgrade \
     && pip install dill \
