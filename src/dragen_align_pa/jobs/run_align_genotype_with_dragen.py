@@ -12,7 +12,7 @@ from icasdk.model.analysis_tag import AnalysisTag
 from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
 
-from src.dragen_align_pa import utils
+from dragen_align_pa import utils
 
 
 def submit_dragen_run(

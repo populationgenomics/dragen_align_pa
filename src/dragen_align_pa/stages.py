@@ -9,7 +9,7 @@ from cpg_flow.targets import SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve
 
-from src.dragen_align_pa.jobs import (
+from dragen_align_pa.jobs import (
     download_ica_pipeline_outputs,
     download_specific_files_from_ica,
     manage_dragen_pipeline,

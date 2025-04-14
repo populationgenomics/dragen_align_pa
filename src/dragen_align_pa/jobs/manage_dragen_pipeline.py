@@ -9,8 +9,8 @@ from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 
-from src.dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline, run_align_genotype_with_dragen
-from src.dragen_align_pa.utils import create_object_in_gcp
+from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline, run_align_genotype_with_dragen
+from dragen_align_pa.utils import create_object_in_gcp
 
 
 def initalise_management_job(sequencing_group: SequencingGroup, pipeline_id_file: str) -> PythonJob:

@@ -5,7 +5,7 @@ import coloredlogs
 import icasdk
 from icasdk.apis.tags import project_analysis_api
 
-from src.dragen_align_pa import utils
+from dragen_align_pa import utils
 
 
 def run(ica_pipeline_id: str, api_root: str) -> dict[str, str]:

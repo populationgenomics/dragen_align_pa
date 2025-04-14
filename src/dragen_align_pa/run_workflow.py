@@ -13,7 +13,7 @@ from argparse import ArgumentParser
 
 from cpg_flow.workflow import run_workflow  # type: ignore  # noqa: PGH003
 
-from src.dragen_align_pa.stages import DownloadDataFromIca  # type: ignore  # noqa: PGH003
+from dragen_align_pa.stages import DownloadDataFromIca  # type: ignore  # noqa: PGH003
 
 
 def cli_main():

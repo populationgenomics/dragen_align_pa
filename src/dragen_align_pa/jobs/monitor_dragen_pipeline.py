@@ -7,7 +7,7 @@ import coloredlogs
 import icasdk
 from icasdk.apis.tags import project_analysis_api
 
-from src.dragen_align_pa import utils
+from dragen_align_pa import utils
 
 
 def run(

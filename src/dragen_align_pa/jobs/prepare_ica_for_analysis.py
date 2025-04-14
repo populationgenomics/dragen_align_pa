@@ -58,7 +58,7 @@ def _run(
     import icasdk
     from icasdk.apis.tags import project_data_api
 
-    from src.dragen_align_pa.utils import create_upload_object_id, get_ica_secrets
+    from dragen_align_pa.utils import create_upload_object_id, get_ica_secrets
 
     secrets: dict[Literal['projectID', 'apiKey'], str] = get_ica_secrets()
     project_id: str = secrets['projectID']
