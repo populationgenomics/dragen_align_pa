@@ -26,7 +26,6 @@ dependencies=[
 ]
 
 [project.urls]
-# TODO(you): update this to reflect the project's official homepage
 Repository = "https://github.com/populationgenomics/dragen_align_pa"
 
 [project.optional-dependencies]
@@ -41,7 +40,7 @@ test = [
 ]
 
 # the workflow runner script - entrypoint for the pipeline
-run_workflow = 'dragen_align_pa.run_workflow:cli_main'
+run_workflow = ['dragen_align_pa.run_workflow:cli_main']
 
 [tool.setuptools]
 package-dir = {"" = "src"}
