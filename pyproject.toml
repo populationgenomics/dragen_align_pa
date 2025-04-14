@@ -1,8 +1,8 @@
 [build-system]
 # requires = ["setuptools"]
 # build-backend = "setuptools.build_meta"
-requires = ["flit_core >= 3.12, <4"]
-build-backend = "flit_core.buildapi"
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
 
 [project]
 # # TODO(you): update this to reflect the project's name & description
@@ -43,7 +43,7 @@ test = [
 
 # # the workflow runner script - entrypoint for the pipeline
 [project.scripts]
-run_workflow = 'dragen_align_pa.run_workflow:cli_main'
+dragen_align_pa = 'dragen_align_pa.run_workflow:cli_main'
 
 [tool.setuptools]
 package-dir = {"" = "src"}
