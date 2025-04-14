@@ -1,4 +1,3 @@
-import json
 import logging
 import subprocess
 
@@ -49,39 +48,27 @@ def manage_ica_pipeline(
 ) -> None:
     coloredlogs.install(level=logging.INFO)
     logging.info(f'Starting management job for {sequencing_group.name}')
-    has_succeeded: bool = False
-    try_counter = 1
-    while not has_succeeded and try_counter <= 2:  # noqa: PLR2004
-        management_output = job.call(
-            _run,
-            sequencing_group=sequencing_group,
-            pipeline_id_file=pipeline_id_file,
-            ica_fids_path=ica_fids_path,
-            analysis_output_fid_path=analysis_output_fid_path,
-            api_root=api_root,
-            output=output,
-        ).as_str()
 
-        logging.info(f'{management_output}')
+    management_output = job.call(
+        _run,
+        sequencing_group=sequencing_group,
+        pipeline_id_file=pipeline_id_file,
+        ica_fids_path=ica_fids_path,
+        analysis_output_fid_path=analysis_output_fid_path,
+        api_root=api_root,
+        output=output,
+    )
 
-        if management_output == 'SUCCEEDED':
-            with open(to_path(pipeline_id_file)) as pipeline_fid_handle:
-                ica_pipeline_id: str = pipeline_fid_handle.read().rstrip()
-            bucket, object_path = output.split('/', maxsplit=1)
-            create_object_in_gcp(
-                bucket=bucket,
-                object_path=object_path,
-                contents=json.dumps({'pipeline': ica_pipeline_id, 'status': 'success'}),
-            )
-            has_succeeded = True
-        elif management_output == 'ABORTED':
-            raise Exception(f'The pipeline run for sequencing group {sequencing_group.name} has been cancelled.')
-        else:
-            try_counter += 1
-        if try_counter == 2:  # noqa: PLR2004
-            raise Exception(
-                f'The pipeline run for sequencing group {sequencing_group.name} has failed after 2 retries, please check ICA for more info.'  # noqa: E501
-            )
+    get_batch().write_output(management_output.as_str(), output)
+
+    # with open(to_path(pipeline_id_file)) as pipeline_fid_handle:
+    #     ica_pipeline_id: str = pipeline_fid_handle.read().rstrip()
+    # bucket, object_path = output.split('/', maxsplit=1)
+    # create_object_in_gcp(
+    #     bucket=bucket,
+    #     object_path=object_path,
+    #     contents=json.dumps({'pipeline': ica_pipeline_id, 'status': 'success'}),
+    #     )
 
 
 def _run(
@@ -91,45 +78,55 @@ def _run(
     analysis_output_fid_path: str,
     api_root: str,
     output: str,
-) -> str:
-    # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
-    if not to_path(pipeline_id_file).exists():
-        ica_pipeline_id: str = _submit_new_ica_pipeline(
-            sg_name=sequencing_group.name,
-            ica_fids_path=ica_fids_path,
-            analysis_output_fid_path=analysis_output_fid_path,
-            api_root=api_root,
-            output=output,
-        )
-        # Create the pipeline ID in GCP
-        bucket: str = output.split('/')[0]
-        object_path: str = output.rsplit('/')[0] + '_pipeline_id.json'
-        create_object_in_gcp(bucket=bucket, object_path=object_path, contents=ica_pipeline_id)
-    else:
-        # Get an existing pipeline ID
-        with open(to_path(pipeline_id_file)) as pipeline_fid_handle:
-            ica_pipeline_id = pipeline_fid_handle.read().rstrip()
-        # Cancel a running job in ICA
-        if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False):
-            logging.info(f'Cancelling pipeline run: {ica_pipeline_id} for sequencing group {sequencing_group.name}')
-            cancel_ica_pipeline_run.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
+) -> str | None:
+    has_succeeded: bool = False
+    try_counter = 1
+    # Attempt one retry on pipeline failure
+    while not has_succeeded and try_counter <= 2:  # noqa: PLR2004
+        # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
+        if not to_path(pipeline_id_file).exists():
+            ica_pipeline_id: str = _submit_new_ica_pipeline(
+                sg_name=sequencing_group.name,
+                ica_fids_path=ica_fids_path,
+                analysis_output_fid_path=analysis_output_fid_path,
+                api_root=api_root,
+                output=output,
+            )
+            # Create the pipeline ID in GCP
+            bucket: str = output.split('/')[0]
+            object_path: str = output.rsplit('/')[0] + '_pipeline_id.json'
+            create_object_in_gcp(bucket=bucket, object_path=object_path, contents=ica_pipeline_id)
+        else:
+            # Get an existing pipeline ID
+            with open(to_path(pipeline_id_file)) as pipeline_fid_handle:
+                ica_pipeline_id = pipeline_fid_handle.read().rstrip()
+            # Cancel a running job in ICA
+            if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False):
+                logging.info(f'Cancelling pipeline run: {ica_pipeline_id} for sequencing group {sequencing_group.name}')
+                cancel_ica_pipeline_run.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
+                _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)
+                return 'ABORTED'
+
+        # Monitor an existing ICA pipeline run
+        pipeline_status = monitor_dragen_pipeline.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
+
+        if pipeline_status == 'SUCCEEDED':
+            logging.info(f'Pipeline run {ica_pipeline_id} has succeeded')
+            has_succeeded = True
+            return 'SUCCEEDED'
+        if pipeline_status in ['ABORTING', 'ABORTED']:
+            logging.info(f'The pipeline run {ica_pipeline_id} has been cancelled for sample {sequencing_group.name}.')
             _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)
-            return 'ABORTED'
-
-    # Monitor an existing ICA pipeline run
-    pipeline_status = monitor_dragen_pipeline.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
-
-    if pipeline_status == 'SUCCEEDED':
-        logging.info(f'Pipeline run {ica_pipeline_id} has succeeded')
-        return 'SUCCEEDED'
-    if pipeline_status in ['ABORTING', 'ABORTED']:
-        logging.info(f'The pipeline run {ica_pipeline_id} has been cancelled for sample {sequencing_group.name}.')
+            raise Exception(f'The pipeline run for sequencing group {sequencing_group.name} has been cancelled.')
+        # Log failed ICA pipeline to a file somewhere
+        # Delete the pipeline ID file
         _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)
-        return 'ABORTED'
-    # Log failed ICA pipeline to a file somewhere
-    # Delete the pipeline ID file
-    _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)
-    return 'FAILED'
+        try_counter += 1
+        if try_counter == 2:  # noqa: PLR2004
+            raise Exception(
+                f'The pipeline run for sequencing group {sequencing_group.name} has failed after 2 retries, please check ICA for more info.'  # noqa: E501
+            )
+    return None
 
 
 def _submit_new_ica_pipeline(
