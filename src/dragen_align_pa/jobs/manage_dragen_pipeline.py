@@ -59,6 +59,7 @@ def manage_ica_pipeline(
             ica_fids_path=ica_fids_path,
             analysis_output_fid_path=analysis_output_fid_path,
             api_root=api_root,
+            output=output,
         ).as_str()
 
         if management_output == 'SUCCEEDED':
