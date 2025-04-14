@@ -6,7 +6,7 @@ from cpg_flow.targets import SequencingGroup
 from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command, get_batch
 from hailtop.batch.job import BashJob
-from utils import calculate_needed_storage
+from dragen_align_pa.utils import calculate_needed_storage
 
 
 def initalise_download_job(sequencing_group: SequencingGroup, job_name: str) -> BashJob:

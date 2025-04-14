@@ -49,6 +49,9 @@ dragen_align_pa = 'dragen_align_pa.run_workflow:cli_main'
 # package-dir = {"" = "src"}
 packages = ["src/dragen_align_pa"]
 
+[tool.hatch.build.targets.wheel.sources]
+"src" = ""
+
 [tool.black]
 line-length = 120
 skip-string-normalization = true
