@@ -46,7 +46,7 @@ def manage_ica_pipeline(
     analysis_output_fid_path: str,
     api_root: str,
     output: str,
-) -> None:
+) -> PythonJob:
     coloredlogs.install(level=logging.INFO)
     logging.info(f'Starting management job for {sequencing_group.name}')
 
@@ -61,6 +61,8 @@ def manage_ica_pipeline(
     )
 
     get_batch().write_output(management_output.as_str(), output)
+
+    return job
 
 
 def _run(
@@ -85,7 +87,7 @@ def _run(
                 output=output,
             )
             # Create the pipeline ID in GCP
-            bucket: str = get_path_components_from_gcp_path(output)['bucket']
+            bucket: str = get_path_components_from_gcp_path(pipeline_id_file)['bucket']
             object_path: str = (
                 get_path_components_from_gcp_path(pipeline_id_file)['suffix']
                 + get_path_components_from_gcp_path(pipeline_id_file)['file']
@@ -120,6 +122,9 @@ def _run(
         # Delete the pipeline ID file
         _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)
         try_counter += 1
+        logging.info(
+            f'The pipeline {ica_pipeline_id} has failed, deleting pipeline ID file {pipeline_id_file} and retrying once'
+        )
         if try_counter == 2:  # noqa: PLR2004
             raise Exception(
                 f'The pipeline run for sequencing group {sequencing_group.name} has failed after 2 retries, please check ICA for more info.'  # noqa: E501
