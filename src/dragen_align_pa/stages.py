@@ -147,7 +147,7 @@ class ManageDragenPipeline(SequencingGroupStage):
             ica_fids_path=str(inputs.as_path(target=sequencing_group, stage=UploadDataToIca)),  # type: ignore  # noqa: PGH003
             analysis_output_fid_path=str(inputs.as_path(target=sequencing_group, stage=PrepareIcaForDragenAnalysis)),  # type: ignore  # noqa: PGH003
             api_root=ICA_REST_ENDPOINT,
-            output=str(outputs['success']),
+            success_file=str(outputs['success']),
         )
 
         return self.make_outputs(

@@ -4,13 +4,11 @@ import subprocess
 import coloredlogs
 from cpg_flow.targets import SequencingGroup
 from cpg_utils import to_path  # type: ignore  # noqa: PGH003
-from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline, run_align_genotype_with_dragen
-from dragen_align_pa.utils import create_object_in_gcp
 
 
 def initalise_management_job(sequencing_group: SequencingGroup, pipeline_id_file: str) -> PythonJob:
@@ -44,7 +42,7 @@ def manage_ica_pipeline(
     ica_fids_path: str,
     analysis_output_fid_path: str,
     api_root: str,
-    output: str,
+    success_file: str,
 ) -> PythonJob:
     coloredlogs.install(level=logging.INFO)
     logging.info(f'Starting management job for {sequencing_group.name}')
@@ -58,10 +56,10 @@ def manage_ica_pipeline(
         ica_fids_path=ica_fids_path,
         analysis_output_fid_path=analysis_output_fid_path,
         api_root=api_root,
-        output=output,
+        success_file=success_file,
     )
 
-    get_batch().write_output(management_output.as_json(), output)
+    get_batch().write_output(management_output.as_json(), success_file)
 
     return job
 
@@ -72,7 +70,6 @@ def _run(
     ica_fids_path: str,
     analysis_output_fid_path: str,
     api_root: str,
-    output: str,
 ) -> dict[str, str] | None:
     has_succeeded: bool = False
     try_counter = 1
@@ -85,18 +82,9 @@ def _run(
                 ica_fids_path=ica_fids_path,
                 analysis_output_fid_path=analysis_output_fid_path,
                 api_root=api_root,
-                output=output,
             )
-            # Create the pipeline ID in GCP
-            bucket: str = get_path_components_from_gcp_path(pipeline_id_file)['bucket']
-            object_path: str = (
-                get_path_components_from_gcp_path(pipeline_id_file)['suffix']
-                + get_path_components_from_gcp_path(pipeline_id_file)['file']
-            )
-            logging.info(f'Pipeline ID file: {pipeline_id_file}')
-            logging.info(f'bucket: {bucket}')
-            logging.info(f'object_path: {object_path}')
-            create_object_in_gcp(bucket=bucket, object_path=object_path, contents=ica_pipeline_id)
+            with to_path(pipeline_id_file).open('w') as f:
+                f.write(ica_pipeline_id)
         else:
             # Get an existing pipeline ID
             with open(to_path(pipeline_id_file)) as pipeline_fid_handle:
@@ -138,7 +126,6 @@ def _submit_new_ica_pipeline(
     ica_fids_path: str,
     analysis_output_fid_path: str,
     api_root: str,
-    output: str,
 ) -> str:
     ica_pipeline_id: str = run_align_genotype_with_dragen.run(
         ica_fids_path=ica_fids_path,
@@ -156,6 +143,5 @@ def _submit_new_ica_pipeline(
         reference_tags=config_retrieve(['ica', 'tags', 'reference_tags']),
         user_reference=sg_name,
         api_root=api_root,
-        output_path=output,
     )
     return ica_pipeline_id

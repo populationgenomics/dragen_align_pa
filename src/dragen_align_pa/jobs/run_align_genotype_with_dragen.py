@@ -96,7 +96,6 @@ def run(
     reference_tags: list[str],
     user_reference: str,
     api_root: str,
-    output_path: str,
 ) -> str:
     """_summary_
 
@@ -149,7 +148,5 @@ def run(
         )
 
         logging.info(f'Submitted ICA run with pipeline ID: {analysis_run_id}')
-        with cpg_utils.to_path(output_path).open('w') as f:
-            f.write(analysis_run_id)
 
     return analysis_run_id
