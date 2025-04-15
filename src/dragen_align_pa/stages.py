@@ -156,7 +156,7 @@ class ManageDragenPipeline(SequencingGroupStage):
 
         return self.make_outputs(
             target=sequencing_group,
-            data=outputs['success'],
+            data=outputs,
             jobs=management_job,
         )
 
