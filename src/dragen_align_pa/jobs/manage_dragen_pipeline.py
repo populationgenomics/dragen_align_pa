@@ -60,7 +60,7 @@ def manage_ica_pipeline(
         output=output,
     )
 
-    get_batch().write_output(management_output.as_str(), output)
+    get_batch().write_output(management_output.as_json(), output)
 
     return job
 
@@ -72,7 +72,7 @@ def _run(
     analysis_output_fid_path: str,
     api_root: str,
     output: str,
-) -> str | None:
+) -> dict[str, str] | None:
     has_succeeded: bool = False
     try_counter = 1
     # Attempt one retry on pipeline failure
@@ -105,7 +105,7 @@ def _run(
                 logging.info(f'Cancelling pipeline run: {ica_pipeline_id} for sequencing group {sequencing_group.name}')
                 cancel_ica_pipeline_run.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
                 _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)
-                return 'ABORTED'
+                return {ica_pipeline_id: 'ABORTED'}
 
         # Monitor an existing ICA pipeline run
         pipeline_status = monitor_dragen_pipeline.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
@@ -113,7 +113,7 @@ def _run(
         if pipeline_status == 'SUCCEEDED':
             logging.info(f'Pipeline run {ica_pipeline_id} has succeeded')
             has_succeeded = True
-            return 'SUCCEEDED'
+            return {ica_pipeline_id: 'SUCCEEDED'}
         if pipeline_status in ['ABORTING', 'ABORTED']:
             logging.info(f'The pipeline run {ica_pipeline_id} has been cancelled for sample {sequencing_group.name}.')
             _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)

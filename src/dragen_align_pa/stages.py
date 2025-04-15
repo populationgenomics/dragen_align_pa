@@ -135,7 +135,7 @@ class ManageDragenPipeline(SequencingGroupStage):
         sg_bucket: cpg_utils.Path = sequencing_group.dataset.prefix()
         return {
             'success': sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE / f'{sequencing_group.name}_pipeline_success.json',
-            'pipeline_id': sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE / f'{sequencing_group.name}_pipeline_id.json',
+            'pipeline_id': sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE / f'{sequencing_group.name}_pipeline_id.txt',
         }
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
