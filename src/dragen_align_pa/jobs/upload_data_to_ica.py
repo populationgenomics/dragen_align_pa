@@ -10,7 +10,7 @@ from hailtop.batch.job import BashJob
 from dragen_align_pa.utils import calculate_needed_storage
 
 
-def initalise_upload_job(sequencing_group: SequencingGroup) -> BashJob:
+def _initalise_upload_job(sequencing_group: SequencingGroup) -> BashJob:
     upload_job: BashJob = get_batch().new_bash_job(
         name='UploadDataToIca',
         attributes=sequencing_group.get_job_attrs() or {} | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
@@ -22,9 +22,12 @@ def initalise_upload_job(sequencing_group: SequencingGroup) -> BashJob:
     return upload_job
 
 
-def upload_data_to_ica(job: BashJob, sequencing_group: SequencingGroup, ica_cli_setup: str, output: str) -> BashJob:
+def upload_data_to_ica(sequencing_group: SequencingGroup, ica_cli_setup: str, output: str) -> BashJob:
     upload_folder = config_retrieve(['ica', 'data_prep', 'upload_folder'])
     bucket: str = get_path_components_from_gcp_path(str(sequencing_group.cram))['bucket']
+
+    job: BashJob = _initalise_upload_job(sequencing_group=sequencing_group)
+
     authenticate_cloud_credentials_in_job(job)
     coloredlogs.install(level=logging.INFO)
     logging.info(f'Uploading CRAM and CRAI for {sequencing_group.name}')
@@ -71,21 +74,6 @@ def upload_data_to_ica(job: BashJob, sequencing_group: SequencingGroup, ica_cli_
             fi
 
             get_fids
-
-            # Try 10 times to call the ICA API to get the required file ID data
-            counter=0
-            while [ $counter -le 10 ]
-                do
-                get_fids
-                if [ -s {job.ofile} ]
-                then
-                    break
-                elif [ $counter -eq 10 ]
-                then
-                    exit 1
-                fi
-                counter=$((counter+1))
-            done
             """,  # noqa: E501
             define_retry_function=True,
         ),

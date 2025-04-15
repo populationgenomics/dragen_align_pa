@@ -7,7 +7,7 @@ from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command,
 from hailtop.batch.job import BashJob
 
 
-def initalise_bulk_download_job(sequencing_group: SequencingGroup) -> BashJob:
+def _initalise_bulk_download_job(sequencing_group: SequencingGroup) -> BashJob:
     bulk_download_job = get_batch().new_bash_job(
         name='DownloadDataFromIca',
         attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
@@ -17,13 +17,14 @@ def initalise_bulk_download_job(sequencing_group: SequencingGroup) -> BashJob:
 
 
 def download_bulk_data_from_ica(
-    job: BashJob,
     sequencing_group: SequencingGroup,
     gcp_folder_for_ica_download: str,
     pipeline_id_path: str,
     ica_cli_setup: str,
 ) -> BashJob:
+    job: BashJob = _initalise_bulk_download_job(sequencing_group=sequencing_group)
     authenticate_cloud_credentials_in_job(job=job)
+
     ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
     bucket: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
     job.command(

@@ -113,7 +113,7 @@ def _run(
         logging.info(
             f'The pipeline {ica_pipeline_id} has failed, deleting pipeline ID file {pipeline_id_file} and retrying once'
         )
-        if try_counter == 2:  # noqa: PLR2004
+        if try_counter > 2:  # noqa: PLR2004
             raise Exception(
                 f'The pipeline run for sequencing group {sequencing_group.name} has failed after 2 retries, please check ICA for more info.'  # noqa: E501
             )

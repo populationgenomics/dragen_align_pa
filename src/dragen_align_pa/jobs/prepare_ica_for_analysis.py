@@ -8,7 +8,7 @@ from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 
 
-def initalise_ica_prep_job(sequencing_group: SequencingGroup) -> PythonJob:
+def _initalise_ica_prep_job(sequencing_group: SequencingGroup) -> PythonJob:
     prepare_ica_job: PythonJob = get_batch().new_python_job(
         name='PrepareIcaForDragenAnalysis',
         attributes=sequencing_group.get_job_attrs() or {} | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
@@ -19,14 +19,16 @@ def initalise_ica_prep_job(sequencing_group: SequencingGroup) -> PythonJob:
 
 
 def run_ica_prep_job(
-    ica_prep_job: PythonJob,
+    sequencing_group: SequencingGroup,
     output: str,
     ica_analysis_output_folder: str,
     api_root: str,
     sg_name: str,
     bucket_name: str,
-) -> None:
-    output_fids = ica_prep_job.call(
+) -> PythonJob:
+    job: PythonJob = _initalise_ica_prep_job(sequencing_group=sequencing_group)
+
+    output_fids = job.call(
         _run,
         ica_analysis_output_folder=ica_analysis_output_folder,
         api_root=api_root,
@@ -35,6 +37,8 @@ def run_ica_prep_job(
     ).as_json()
 
     get_batch().write_output(output_fids, output)
+
+    return job
 
 
 def _run(

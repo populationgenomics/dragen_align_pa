@@ -65,11 +65,10 @@ class PrepareIcaForDragenAnalysis(SequencingGroupStage):
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         bucket_name: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
+        outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
 
-        outputs = self.expected_outputs(sequencing_group=sequencing_group)
-        prepare_ica_job: PythonJob = prepare_ica_for_analysis.initalise_ica_prep_job(sequencing_group=sequencing_group)
-        prepare_ica_for_analysis.run_ica_prep_job(
-            ica_prep_job=prepare_ica_job,
+        ica_prep_job: PythonJob = prepare_ica_for_analysis.run_ica_prep_job(
+            sequencing_group=sequencing_group,
             output=str(outputs),
             ica_analysis_output_folder=config_retrieve(['ica', 'data_prep', 'output_folder']),
             api_root=ICA_REST_ENDPOINT,
@@ -80,7 +79,7 @@ class PrepareIcaForDragenAnalysis(SequencingGroupStage):
         return self.make_outputs(
             target=sequencing_group,
             data=outputs,
-            jobs=prepare_ica_job,
+            jobs=ica_prep_job,
         )
 
 
@@ -91,10 +90,9 @@ class UploadDataToIca(SequencingGroupStage):
         return sg_bucket / GCP_FOLDER_FOR_ICA_PREP / f'{sequencing_group.name}_fids.json'
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
-        output = self.expected_outputs(sequencing_group=sequencing_group)
+        output: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
 
         upload_job: BashJob = upload_data_to_ica.upload_data_to_ica(
-            job=upload_data_to_ica.initalise_upload_job(sequencing_group=sequencing_group),
             sequencing_group=sequencing_group,
             ica_cli_setup=ICA_CLI_SETUP,
             output=str(output),
@@ -205,10 +203,7 @@ class DownloadCramFromIca(SequencingGroupStage):
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
-            job=download_specific_files_from_ica.initalise_download_job(
-                sequencing_group=sequencing_group,
-                job_name='DownloadCramFromIca',
-            ),
+            job_name='DownloadCramFromIca',
             sequencing_group=sequencing_group,
             filetype='cram',
             bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
@@ -255,10 +250,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         pipeline ID. If read outside the job, it will get the pipeline ID from the previous pipeline run.
         """  # noqa: E501
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
-            job=download_specific_files_from_ica.initalise_download_job(
-                sequencing_group=sequencing_group,
-                job_name='DownloadGvcfFromIca',
-            ),
+            job_name='DownloadGvcfFromIca',
             sequencing_group=sequencing_group,
             filetype='gvcf',
             bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
@@ -296,7 +288,6 @@ class DownloadDataFromIca(SequencingGroupStage):
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
         ica_download_job: BashJob = download_ica_pipeline_outputs.download_bulk_data_from_ica(
-            job=download_ica_pipeline_outputs.initalise_bulk_download_job(sequencing_group=sequencing_group),
             sequencing_group=sequencing_group,
             gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
             pipeline_id_path=str(

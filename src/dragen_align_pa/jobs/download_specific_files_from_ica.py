@@ -10,7 +10,7 @@ from hailtop.batch.job import BashJob
 from dragen_align_pa.utils import calculate_needed_storage
 
 
-def initalise_download_job(sequencing_group: SequencingGroup, job_name: str) -> BashJob:
+def _initalise_download_job(sequencing_group: SequencingGroup, job_name: str) -> BashJob:
     download_job: BashJob = get_batch().new_bash_job(
         name=job_name,
         attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
@@ -24,7 +24,7 @@ def initalise_download_job(sequencing_group: SequencingGroup, job_name: str) -> 
 
 
 def download_data_from_ica(
-    job: BashJob,
+    job_name: str,
     sequencing_group: SequencingGroup,
     filetype: str,
     bucket: str,
@@ -32,9 +32,12 @@ def download_data_from_ica(
     gcp_folder_for_ica_download: str,
     pipeline_id_path: str,
 ) -> BashJob:
-    authenticate_cloud_credentials_in_job(job=job)
     coloredlogs.install(level=logging.INFO)
     logging.info(f'Downloading {filetype} and {filetype} index for {sequencing_group.name}')
+
+    job: BashJob = _initalise_download_job(sequencing_group=sequencing_group, job_name=job_name)
+    authenticate_cloud_credentials_in_job(job=job)
+
     ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
     data: Literal['cram', 'gvcf.gz'] = 'cram' if filetype == 'cram' else 'gvcf.gz'
     index: Literal['crai', 'tbi'] = 'crai' if filetype == 'cram' else 'tbi'
