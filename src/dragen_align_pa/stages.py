@@ -113,7 +113,7 @@ class UploadDataToIca(SequencingGroupStage):
 @stage(
     required_stages=[PrepareIcaForDragenAnalysis, UploadDataToIca],  # type: ignore  # noqa: PGH003
     analysis_type='dragen_align_genotype',
-    analysis_keys=['pipeline_id'],
+    analysis_keys=['success', 'pipeline_id'],
 )
 class ManageDragenPipeline(SequencingGroupStage):
     """
@@ -187,7 +187,7 @@ class MonitorGvcfMlrWithDragen(SequencingGroupStage):
 
 @stage(
     analysis_type='cram',
-    analysis_keys=['cram'],
+    analysis_keys=['cram', 'crai'],
     required_stages=[ManageDragenPipeline],  # type: ignore  # noqa: PGH003
 )
 class DownloadCramFromIca(SequencingGroupStage):
@@ -232,7 +232,7 @@ class DownloadCramFromIca(SequencingGroupStage):
 
 @stage(
     analysis_type='gvcf',
-    analysis_keys=['gvcf'],
+    analysis_keys=['gvcf', 'gvcf_tbi'],
     required_stages=[ManageDragenPipeline],  # type: ignore  # noqa: PGH003
 )
 class DownloadGvcfFromIca(SequencingGroupStage):
