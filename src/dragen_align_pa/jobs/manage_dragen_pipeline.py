@@ -4,6 +4,7 @@ import subprocess
 import coloredlogs
 from cpg_flow.targets import SequencingGroup
 from cpg_utils import to_path  # type: ignore  # noqa: PGH003
+from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
@@ -93,8 +94,8 @@ def _run(
                 output=output,
             )
             # Create the pipeline ID in GCP
-            bucket: str = output.split('/')[0]
-            object_path: str = output.rsplit('/')[0] + '_pipeline_id.json'
+            bucket: str = get_path_components_from_gcp_path(output)['bucket']
+            object_path: str = get_path_components_from_gcp_path(output)['suffix']
             logging.info(f'output: {output}')
             logging.info(f'bucket: {bucket}')
             logging.info(f'object_path: {object_path}')
