@@ -95,6 +95,9 @@ def _run(
             # Create the pipeline ID in GCP
             bucket: str = output.split('/')[0]
             object_path: str = output.rsplit('/')[0] + '_pipeline_id.json'
+            logging.info(f'output: {output}')
+            logging.info(f'bucket: {bucket}')
+            logging.info(f'object_path: {object_path}')
             create_object_in_gcp(bucket=bucket, object_path=object_path, contents=ica_pipeline_id)
         else:
             # Get an existing pipeline ID
