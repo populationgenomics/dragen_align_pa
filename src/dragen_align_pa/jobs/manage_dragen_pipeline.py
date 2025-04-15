@@ -39,7 +39,6 @@ def _delete_pipeline_id_file(pipeline_id_file: str) -> None:
 
 
 def manage_ica_pipeline(
-    job: PythonJob,
     sequencing_group: SequencingGroup,
     pipeline_id_file: str,
     ica_fids_path: str,
@@ -49,6 +48,8 @@ def manage_ica_pipeline(
 ) -> PythonJob:
     coloredlogs.install(level=logging.INFO)
     logging.info(f'Starting management job for {sequencing_group.name}')
+
+    job: PythonJob = initalise_management_job(sequencing_group=sequencing_group, pipeline_id_file=pipeline_id_file)
 
     management_output = job.call(
         _run,

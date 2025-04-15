@@ -142,10 +142,6 @@ class ManageDragenPipeline(SequencingGroupStage):
         outputs: dict[str, cpg_utils.Path | Path] = self.expected_outputs(sequencing_group=sequencing_group)
 
         management_job: PythonJob = manage_dragen_pipeline.manage_ica_pipeline(
-            job=manage_dragen_pipeline.initalise_management_job(
-                sequencing_group=sequencing_group,
-                pipeline_id_file=str(outputs['pipeline_id']),
-            ),
             sequencing_group=sequencing_group,
             pipeline_id_file=str(outputs['pipeline_id']),
             ica_fids_path=str(inputs.as_path(target=sequencing_group, stage=UploadDataToIca)),  # type: ignore  # noqa: PGH003
