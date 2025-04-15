@@ -62,15 +62,6 @@ def manage_ica_pipeline(
 
     get_batch().write_output(management_output.as_str(), output)
 
-    # with open(to_path(pipeline_id_file)) as pipeline_fid_handle:
-    #     ica_pipeline_id: str = pipeline_fid_handle.read().rstrip()
-    # bucket, object_path = output.split('/', maxsplit=1)
-    # create_object_in_gcp(
-    #     bucket=bucket,
-    #     object_path=object_path,
-    #     contents=json.dumps({'pipeline': ica_pipeline_id, 'status': 'success'}),
-    #     )
-
 
 def _run(
     sequencing_group: SequencingGroup,
@@ -95,8 +86,11 @@ def _run(
             )
             # Create the pipeline ID in GCP
             bucket: str = get_path_components_from_gcp_path(output)['bucket']
-            object_path: str = get_path_components_from_gcp_path(output)['suffix']
-            logging.info(f'output: {output}')
+            object_path: str = (
+                get_path_components_from_gcp_path(pipeline_id_file)['suffix']
+                + get_path_components_from_gcp_path(pipeline_id_file)['file']
+            )
+            logging.info(f'Pipeline ID file: {pipeline_id_file}')
             logging.info(f'bucket: {bucket}')
             logging.info(f'object_path: {object_path}')
             create_object_in_gcp(bucket=bucket, object_path=object_path, contents=ica_pipeline_id)
