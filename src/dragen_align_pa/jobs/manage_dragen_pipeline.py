@@ -56,7 +56,6 @@ def manage_ica_pipeline(
         ica_fids_path=ica_fids_path,
         analysis_output_fid_path=analysis_output_fid_path,
         api_root=api_root,
-        success_file=success_file,
     )
 
     get_batch().write_output(management_output.as_json(), success_file)
