@@ -128,7 +128,7 @@ def main():
 
         # Get only the last folder name
         # folder_path = os.path.dirname(file)
-        folder = 'dragen_align_pa'
+        folder = 'dragen_align_pa.Dockerfile'
 
         # Determine the next available tag based on current_version.
         new_tag = get_next_version_tag(folder, current_version)
