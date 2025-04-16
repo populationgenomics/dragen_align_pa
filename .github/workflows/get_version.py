@@ -106,18 +106,16 @@ def get_before_commit():
 
 
 def main():
-    # before_commit = get_before_commit()
+    before_commit = get_before_commit()
 
     # Get changed Dockerfiles
-    # result = subprocess.run(
-    #     ['git', 'diff', '--name-only', before_commit, 'HEAD', '--', '*Dockerfile'],
-    #     capture_output=True,
-    #     text=True,
-    #     check=True,
-    # )
-    # dockerfiles = result.stdout.splitlines()
-
-    dockerfiles = ['images/dragen_align_pa.Dockerfile']
+    result = subprocess.run(
+        ['git', 'diff', '--name-only', before_commit, 'HEAD', '--', '*Dockerfile'],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    dockerfiles = result.stdout.splitlines()
 
     include_entries = []
 
@@ -127,8 +125,8 @@ def main():
             continue
 
         # Get only the last folder name
-        # folder_path = os.path.dirname(file)
-        folder = 'dragen_align_pa.Dockerfile'
+        folder_path = os.path.dirname(file)
+        folder = os.path.basename(folder_path) if folder_path else 'root'
 
         # Determine the next available tag based on current_version.
         new_tag = get_next_version_tag(folder, current_version)
