@@ -6,7 +6,6 @@ import os
 import re
 import subprocess
 import sys
-from pathlib import Path
 
 
 def extract_version_from_file(file_path: str) -> str | None:
@@ -125,16 +124,14 @@ def main():
         if current_version is None:
             continue
 
-        # Get image name from Dockerfile
-        image_name: str = Path(file).stem
         # Get only the last folder name
-        # folder_path = os.path.dirname(file)
-        # folder = os.path.basename(folder_path) if folder_path else 'root'
+        folder_path = os.path.dirname(file)
+        folder = os.path.basename(folder_path) if folder_path else 'dragen_align_pa'
 
         # Determine the next available tag based on current_version.
-        new_tag = get_next_version_tag(image_name, current_version)
+        new_tag = get_next_version_tag(folder, current_version)
 
-        include_entries.append({'name': image_name, 'tag': new_tag})
+        include_entries.append({'name': folder, 'tag': new_tag})
 
     # Build the final matrix structure.
     matrix = {'include': include_entries}
