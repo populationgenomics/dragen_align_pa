@@ -117,7 +117,7 @@ def main():
     # )
     # dockerfiles = result.stdout.splitlines()
 
-    dockerfiles = ['images/dragen_align_pa.Dockerfile']
+    dockerfiles = ['dragen_align_pa.Dockerfile']
 
     include_entries = []
 
