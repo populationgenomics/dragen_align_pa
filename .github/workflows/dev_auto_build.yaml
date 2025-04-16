@@ -12,7 +12,7 @@ on:
       image_tag:
         description: 'Tag of image'
         required: true
-        default: ${{github.ref_name}}-test
+        default: test
       docker_cli_args:
         description: 'Extra docker CLI params'
         required: false
