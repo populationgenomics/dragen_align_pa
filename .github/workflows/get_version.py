@@ -106,16 +106,18 @@ def get_before_commit():
 
 
 def main():
-    before_commit = get_before_commit()
+    # before_commit = get_before_commit()
 
     # Get changed Dockerfiles
-    result = subprocess.run(
-        ['git', 'diff', '--name-only', before_commit, 'HEAD', '--', '*Dockerfile'],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    dockerfiles = result.stdout.splitlines()
+    # result = subprocess.run(
+    #     ['git', 'diff', '--name-only', before_commit, 'HEAD', '--', '*Dockerfile'],
+    #     capture_output=True,
+    #     text=True,
+    #     check=True,
+    # )
+    # dockerfiles = result.stdout.splitlines()
+
+    dockerfiles = 'images/dragen_align_pa.Dockerfile'
 
     include_entries = []
 
