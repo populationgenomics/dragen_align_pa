@@ -117,7 +117,7 @@ def main():
     # )
     # dockerfiles = result.stdout.splitlines()
 
-    dockerfiles = ['dragen_align_pa.Dockerfile']
+    dockerfiles = ['images/dragen_align_pa.Dockerfile']
 
     include_entries = []
 
@@ -127,8 +127,8 @@ def main():
             continue
 
         # Get only the last folder name
-        folder_path = os.path.dirname(file)
-        folder = os.path.basename(folder_path) if folder_path else 'dragen_align_pa'
+        # folder_path = os.path.dirname(file)
+        folder = 'dragen_align_pa'
 
         # Determine the next available tag based on current_version.
         new_tag = get_next_version_tag(folder, current_version)
