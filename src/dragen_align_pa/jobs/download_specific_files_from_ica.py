@@ -39,7 +39,7 @@ def download_data_from_ica(
     authenticate_cloud_credentials_in_job(job=job)
 
     ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
-    data: Literal['cram', 'gvcf.gz'] = 'cram' if filetype == 'cram' else 'gvcf.gz'
+    data: Literal['cram', 'hard-filtered.gvcf.gz'] = 'cram' if filetype == 'cram' else 'hard-filtered.gvcf.gz'
     index: Literal['crai', 'tbi'] = 'crai' if filetype == 'cram' else 'tbi'
     if filetype == 'cram':
         gcp_prefix = 'cram'
