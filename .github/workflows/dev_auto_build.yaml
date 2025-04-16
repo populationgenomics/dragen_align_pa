@@ -100,7 +100,7 @@ jobs:
           docker build \
           --build-arg VERSION=${{ matrix.tag }} \
           --tag ${{ env.IMAGES_PREFIX }}/${{ matrix.name }}:${{github.ref_name}}-${{ matrix.tag }} \
-          ${{ matrix.name }}
+          images/${{ matrix.name }}
 
       - name: 'Push to dev artifactory'
         run: |
