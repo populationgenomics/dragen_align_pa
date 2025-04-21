@@ -69,69 +69,18 @@ def get_next_version_tag(folder: str, version: str) -> str:
     return f'{version}-{new_suffix}'
 
 
-def get_before_commit():
-    """
-    Determines the correct 'before' commit:
-    - If on a feature branch: Finds the commit where the branch
-    diverged from `origin/main`
-    - If on `main` with a merge: Finds the last two merge
-    commits and compares them.
-    """
-    current_branch = subprocess.run(
-        ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-
-    if current_branch == 'main':
-        # Get the last two merge commits
-        merge_commits = subprocess.run(
-            ['git', 'log', '--merges', '--format=%H', '-n', '2'],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.splitlines()
-        merge_commit_threshold = 2
-        if len(merge_commits) >= merge_commit_threshold:
-            return merge_commits[1]  # Compare latest merge with the one before it
-        return 'HEAD~1'  # Default to previous commit if no merges
-    # Find the commit where this branch diverged from main
-    return subprocess.run(
-        ['git', 'merge-base', 'HEAD', 'origin/main'],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-
-
 def main():
-    before_commit = get_before_commit()
+    dockerfile = 'Dockerfile'
+    current_version = extract_version_from_file(dockerfile)
+    if current_version is None:
+        # Throw an error here
+        raise NotImplementedError('The Dockerfile needs to contain a version string in the format "ENV VERSION=x.x.x"')
 
-    # Get changed Dockerfiles
-    result = subprocess.run(
-        ['git', 'diff', '--name-only', before_commit, 'HEAD', '--', '*Dockerfile'],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    dockerfiles = result.stdout.splitlines()
+    # Determine the next available tag based on current_version.
+    new_tag = get_next_version_tag(dockerfile, current_version)
 
     include_entries = []
-
-    for file in dockerfiles:
-        current_version = extract_version_from_file(file)
-        if current_version is None:
-            continue
-
-        # Get only the last folder name
-        folder_path = os.path.dirname(file)
-        folder = os.path.basename(folder_path) if folder_path else 'root'
-
-        # Determine the next available tag based on current_version.
-        new_tag = get_next_version_tag(folder, current_version)
-
-        include_entries.append({'name': folder, 'tag': new_tag})
+    include_entries.append({'name': dockerfile, 'tag': new_tag})
 
     # Build the final matrix structure.
     matrix = {'include': include_entries}
