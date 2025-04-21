@@ -97,10 +97,9 @@ jobs:
 
       - name: 'build image with get_next_version'
         run: |
-          docker build \
+          docker build . -f Dockerfile \
           --build-arg VERSION=${{ matrix.tag }} \
-          --tag ${{ env.IMAGES_PREFIX }}/${{ matrix.name }}:${{github.ref_name}}-${{ matrix.tag }} \
-          Dockerfile
+          --tag ${{ env.IMAGES_PREFIX }}/${{ matrix.name }}:${{github.ref_name}}-${{ matrix.tag }}
 
       - name: 'Push to dev artifactory'
         run: |
