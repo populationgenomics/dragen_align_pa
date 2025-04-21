@@ -70,17 +70,18 @@ def get_next_version_tag(folder: str, version: str) -> str:
 
 
 def main():
-    dockerfile = 'Dockerfile'
-    current_version = extract_version_from_file(dockerfile)
+    dockerfile_name = 'Dockerfile'
+    container_name = 'dragen_align_pa'
+    current_version = extract_version_from_file(dockerfile_name)
     if current_version is None:
         # Throw an error here
         raise NotImplementedError('The Dockerfile needs to contain a version string in the format "ENV VERSION=x.x.x"')
 
     # Determine the next available tag based on current_version.
-    new_tag = get_next_version_tag(dockerfile, current_version)
+    new_tag = get_next_version_tag(container_name, current_version)
 
     include_entries = []
-    include_entries.append({'name': dockerfile, 'tag': new_tag})
+    include_entries.append({'name': container_name, 'tag': new_tag})
 
     # Build the final matrix structure.
     matrix = {'include': include_entries}
