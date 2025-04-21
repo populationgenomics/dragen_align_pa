@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-#  ruff: noqa: S603
-
 import json
 import os
 import re
