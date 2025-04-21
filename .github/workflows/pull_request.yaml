@@ -1,4 +1,4 @@
-name: Autobuild development image
+name: Build image on PR
 on:
   pull_request:
     types: [opened, synchronize]
