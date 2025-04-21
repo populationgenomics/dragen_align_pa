@@ -99,11 +99,11 @@ jobs:
         run: |
           docker build . -f Dockerfile \
           --build-arg VERSION=${{ matrix.tag }} \
-          --tag ${{ env.IMAGES_PREFIX }}/${{ matrix.name }}:${{ matrix.tag }}-${{github.ref_name}}
+          --tag ${{ env.IMAGES_PREFIX }}/${{ matrix.name }}:${{github.ref_name}}-${{ matrix.tag }}
 
       - name: 'Push to dev artifactory'
         run: |
-          docker push "${{ env.IMAGES_PREFIX }}/${{ matrix.name }}:${{ matrix.tag }}-${{github.ref_name}}" | tee push.log
+          docker push "${{ env.IMAGES_PREFIX }}/${{ matrix.name }}:${{github.ref_name}}-${{ matrix.tag }}" | tee push.log
           digest=$(grep 'digest:' push.log | grep -o 'sha256:[0-9a-f]*')
           echo ":package: Link to image:" >> $GITHUB_STEP_SUMMARY
           echo "https://console.cloud.google.com/artifacts/docker/cpg-common/australia-southeast1/images-dev/${{ matrix.name }}/$digest?project=cpg-common" >> $GITHUB_STEP_SUMMARY
@@ -135,7 +135,7 @@ jobs:
         shell: bash
         env:
           IMAGE_NAME: ${{ github.event.inputs.image_name }}
-          IMAGE_TAG: ${{ github.event.inputs.image_tag }}-${{github.ref_name}}
+          IMAGE_TAG: ${{github.ref_name}}-${{ github.event.inputs.image_tag }}
           CLI_ARGS: ${{ github.event.inputs.docker_cli_args }}
         run: |
 
