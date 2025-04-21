@@ -46,7 +46,7 @@ def get_next_version_tag(folder: str, version: str) -> str:
             full_image_name,
             '--format=json',
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)  # noqa: S603
 
         # If existing tags are found, proceed to determine the next version.
         tags_list += json.loads(result.stdout)
