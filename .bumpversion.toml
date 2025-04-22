@@ -11,3 +11,6 @@ tag_message = "Bump version: {current_version} → {new_version}"
 allow_dirty = false
 message = "Bump version: {current_version} → {new_version}"
 commit_args = ""
+
+[[tool.bumpversion.files]]
+filename = "Dockerfile"
