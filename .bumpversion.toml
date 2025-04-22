@@ -14,3 +14,5 @@ commit_args = ""
 
 [[tool.bumpversion.files]]
 filename = "Dockerfile"
+search = "ENV VERSION={current_version}"
+replace = "ENV VERSION={new_version}"
