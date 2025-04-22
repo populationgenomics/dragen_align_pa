@@ -3,6 +3,14 @@
 [workflow]
 
 name = 'dragen_align_pa'
+output_prefix = "ica"
+sequencing_type = "genome"
+input_cohorts = [ "COH4965",]
+last_stages = ['DownloadDataFromIca']
+
+[images]
+# This image contains the ICA CLI used for transferring data from ICA -> GCP at the end of the pipeline.
+ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:1.0.0-1"
 
 # Flags to manage existing pipeline runs: set the appropriate flag to true and resubmit the job to cancel or resume monitoring.
 [ica.management]
@@ -13,8 +21,8 @@ monitor_previous = false
 # This is automatically prefixed by the dataset and access level, so these values would result in
 # cpg-fewgenomes-test/new_upload_folder and cpg-fewgenomes-test/test_output_folder when run.
 [ica.data_prep]
-upload_folder = "new_upload_folder"
-output_folder = "test_output_folder"
+upload_folder = "test-cram-upload"
+output_folder = "test-dragen-378"
 
 # These tags are used in the ICA UI. You can also use the mfor filtering via the API, but I don't do any of that in this pipeline.
 [ica.tags]
@@ -35,9 +43,12 @@ dragen_ht_id = 'fil.854d49a151a24edae5d708da2935b1b0'
 # Choice for which CRAM reference to use. Current choices are 'dragmap' or 'gatk'
 old_cram_reference = 'dragmap'
 
-# CRAM reference used to align the CRAM file that you want to realign with Dragen
+# Folder containing reference (bgz with gz suffix) + fai index used to align the CRAM file that you want to realign with Dragen
 # Dragmap reference FASTA
-dragmap = 'fil.589de3adaa7a4615929208dd508b26bf'
+dragmap = 'fol.df2129db2c88419cbe0408dd600dce1f'
+
+# Homo_sapiens_assembly38 (unmaksed)
+# dragmap = 'fol.d45ec3a17cf241f5b61b08dd7c524fb7'
 
 # GATK reference FASTA
 gatk = ''
@@ -46,11 +57,6 @@ gatk = ''
 cross_cont_vcf = 'fil.1a7a2d0442854127e5d608da2935b1b0'
 coverage_region_1 = 'fil.ad60897bc97e4646f28c08da33ba0a20'
 coverage_region_2 = 'fil.c4ade57f5ffe4baff28d08da33ba0a20'
-
-[images]
-# This image contains the ICA CLI used for transferring data from ICA -> GCP at the end of the pipeline.
-ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/ica:2.31.2"
-
 
 # used to make sure we don't repeat previously completed stages
 check_expected_outputs = true
