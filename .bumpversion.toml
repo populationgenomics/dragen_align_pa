@@ -2,8 +2,8 @@
 current_version = "1.0.0"
 parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
 serialize = ["{major}.{minor}.{patch}"]
-search = "{current_version}"
-replace = "{new_version}"
+# search = "{current_version}"
+# replace = "{new_version}"
 commit = true
 tag = false
 tag_name = "v{new_version}"
