@@ -1,5 +1,5 @@
-# cpg-flow-pipeline-template
-A template repository to use as a base for CPG workflows using the cpg-flow pipeline framework
+# dragen_align_pa
+Realign CRAM files using Dragen 3.7.8 via ICA
 
 ## Purpose
 
