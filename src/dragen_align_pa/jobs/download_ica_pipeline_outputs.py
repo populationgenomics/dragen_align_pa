@@ -13,7 +13,7 @@ def _initalise_bulk_download_job(sequencing_group: SequencingGroup) -> BashJob:
         name='DownloadDataFromIca',
         attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
     )
-    bulk_download_job.image(image=config_retrieve(['workflow', 'driver_image']))
+    bulk_download_job.image(image=config_retrieve(['images', 'ica']))
     return bulk_download_job
 
 

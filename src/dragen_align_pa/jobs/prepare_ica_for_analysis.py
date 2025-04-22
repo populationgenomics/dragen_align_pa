@@ -12,7 +12,7 @@ def _initalise_ica_prep_job(sequencing_group: SequencingGroup) -> PythonJob:
         name='PrepareIcaForDragenAnalysis',
         attributes=sequencing_group.get_job_attrs() or {} | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
     )
-    prepare_ica_job.image(image=config_retrieve(['workflow', 'driver_image']))
+    prepare_ica_job.image(image=config_retrieve(['images', 'ica']))
 
     return prepare_ica_job
 

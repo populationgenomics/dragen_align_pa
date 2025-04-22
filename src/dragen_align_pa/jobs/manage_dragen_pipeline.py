@@ -26,7 +26,7 @@ def initalise_management_job(sequencing_group: SequencingGroup, pipeline_id_file
         name=name,
         attributes=sequencing_group.get_job_attrs() or {} | {'tool': 'Dragen'},  # type: ignore  # noqa: PGH003
     )
-    management_job.image(image=config_retrieve(['workflow', 'driver_image']))
+    management_job.image(image=config_retrieve(['images', 'ica']))
     return management_job
 
 

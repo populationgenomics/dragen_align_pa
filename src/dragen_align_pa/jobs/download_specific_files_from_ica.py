@@ -15,7 +15,7 @@ def _initalise_download_job(sequencing_group: SequencingGroup, job_name: str) ->
         attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
     )
 
-    download_job.image(image=config_retrieve(['workflow', 'driver_image']))
+    download_job.image(image=config_retrieve(['images', 'ica']))
     download_job.storage(calculate_needed_storage(cram=str(sequencing_group.cram)))
     download_job.memory('8Gi')
 

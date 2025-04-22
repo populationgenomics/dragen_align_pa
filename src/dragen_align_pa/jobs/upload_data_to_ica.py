@@ -14,7 +14,7 @@ def _initalise_upload_job(sequencing_group: SequencingGroup) -> BashJob:
         attributes=sequencing_group.get_job_attrs() or {} | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
     )
 
-    upload_job.image(image=config_retrieve(['workflow', 'driver_image']))
+    upload_job.image(image=config_retrieve(['images', 'ica']))
     upload_job.storage(calculate_needed_storage(cram=str(sequencing_group.cram)))
 
     return upload_job
