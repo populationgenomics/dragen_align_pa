@@ -1,9 +1,8 @@
-import logging
 from typing import Literal
 
-import coloredlogs
 import icasdk
 from icasdk.apis.tags import project_analysis_api
+from loguru import logger
 
 from dragen_align_pa import utils
 
@@ -26,8 +25,6 @@ def run(ica_pipeline_id: str, api_root: str) -> dict[str, str]:
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
 
-    coloredlogs.install(level=logging.INFO)
-
     configuration = icasdk.Configuration(host=api_root)
     configuration.api_key['ApiKeyAuth'] = api_key
 
@@ -37,10 +34,10 @@ def run(ica_pipeline_id: str, api_root: str) -> dict[str, str]:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         try:
             api_instance.abort_analysis(
-                path_params=path_parameters,
+                path_params=path_parameters,  # type: ignore  # noqa: PGH003
                 skip_deserialization=True,
-            )
-            logging.info(f'Sent cancellation request for ICA analysis: {ica_pipeline_id}')
+            )  # type: ignore  # noqa: PGH003
+            logger.info(f'Sent cancellation request for ICA analysis: {ica_pipeline_id}')
             return {'cancelled': ica_pipeline_id}
         except icasdk.ApiException as e:
             raise icasdk.ApiException(f'Exception when calling ProjectAnalysisApi->abort_analysis: {e}') from e

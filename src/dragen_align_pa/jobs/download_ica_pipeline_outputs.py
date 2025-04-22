@@ -5,6 +5,7 @@ from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command, get_batch
 from hailtop.batch.job import BashJob
+from loguru import logger
 
 
 def _initalise_bulk_download_job(sequencing_group: SequencingGroup) -> BashJob:
@@ -27,6 +28,7 @@ def download_bulk_data_from_ica(
 
     ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
     bucket: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
+    logger.info(f'Downloading bulk ICA data for {sequencing_group.name}.')
     job.command(
         command(
             rf"""

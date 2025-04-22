@@ -1,11 +1,10 @@
-import logging
 import time
 from random import randint
 from typing import Literal
 
-import coloredlogs
 import icasdk
 from icasdk.apis.tags import project_analysis_api
+from loguru import logger
 
 from dragen_align_pa import utils
 
@@ -31,13 +30,11 @@ def run(
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
 
-    coloredlogs.install(level=logging.INFO)
-
     configuration = icasdk.Configuration(host=api_root)
     configuration.api_key['ApiKeyAuth'] = api_key
     pipeline_id: str = ica_pipeline_id['pipeline_id'] if isinstance(ica_pipeline_id, dict) else ica_pipeline_id
 
-    logging.info(f'Monitoring pipeline run {pipeline_id} which of type {type(pipeline_id)}')
+    logger.info(f'Monitoring pipeline run {pipeline_id} which of type {type(pipeline_id)}')
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         path_params: dict[str, str] = {'projectId': project_id}

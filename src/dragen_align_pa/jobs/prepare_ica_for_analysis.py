@@ -1,11 +1,10 @@
-import logging
 from typing import Literal
 
-import coloredlogs
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
+from loguru import logger
 
 
 def _initalise_ica_prep_job(sequencing_group: SequencingGroup) -> PythonJob:
@@ -68,8 +67,6 @@ def _run(
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
 
-    coloredlogs.install(level=logging.INFO)
-
     configuration = icasdk.Configuration(host=api_root)
     configuration.api_key['ApiKeyAuth'] = api_key
     path_parameters: dict[str, str] = {'projectId': project_id}
@@ -85,5 +82,5 @@ def _run(
             folder_path=folder_path,
             object_type='FOLDER',
         )
-        logging.info(f'Created folder ID {object_id} for analysis outputs')
+        logger.info(f'Created folder ID {object_id} for analysis outputs')
     return {'analysis_output_fid': object_id}

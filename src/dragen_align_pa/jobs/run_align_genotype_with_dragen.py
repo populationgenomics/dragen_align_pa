@@ -1,8 +1,6 @@
 import json
-import logging
 from typing import Any, Literal
 
-import coloredlogs
 import cpg_utils
 import icasdk
 from icasdk.apis.tags import project_analysis_api
@@ -11,6 +9,7 @@ from icasdk.model.analysis_parameter_input import AnalysisParameterInput
 from icasdk.model.analysis_tag import AnalysisTag
 from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
+from loguru import logger
 
 from dragen_align_pa import utils
 
@@ -117,7 +116,6 @@ def run(
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
 
-    coloredlogs.install(level=logging.INFO)
     configuration = icasdk.Configuration(host=api_root)
     configuration.api_key['ApiKeyAuth'] = api_key
 
@@ -147,6 +145,6 @@ def run(
             api_instance=api_instance,
         )
 
-        logging.info(f'Submitted ICA run with pipeline ID: {analysis_run_id}')
+        logger.info(f'Submitted ICA run with pipeline ID: {analysis_run_id}')
 
     return analysis_run_id

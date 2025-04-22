@@ -29,6 +29,6 @@ COPY LICENSE pyproject.toml README.md .
 COPY src src/
 
 RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
-    && pip install typing-extensions --upgrade \
+    && pip install loguru \
     && pip install . \
     && pip show dragen_align_pa

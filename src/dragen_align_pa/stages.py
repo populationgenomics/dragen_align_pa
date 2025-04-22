@@ -1,13 +1,12 @@
-import logging
 from math import ceil
 from typing import TYPE_CHECKING, Final
 
-import coloredlogs
 import cpg_utils
 from cpg_flow.stage import SequencingGroupStage, StageInput, StageOutput, stage  # type: ignore  # noqa: PGH003
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve
+from loguru import logger
 
 from dragen_align_pa.jobs import (
     download_ica_pipeline_outputs,
@@ -40,13 +39,10 @@ set -x
 """  # noqa: E501
 
 
-coloredlogs.install(level=logging.INFO)
-
-
 def calculate_needed_storage(
     cram: str,
 ) -> str:
-    logging.info(f'Checking blob size for {cram}')
+    logger.info(f'Checking blob size for {cram}')
     storage_size: int = cpg_utils.to_path(cram).stat().st_size
     return f'{ceil(ceil((storage_size / (1024**3)) + 3) * 1.2)}Gi'
 

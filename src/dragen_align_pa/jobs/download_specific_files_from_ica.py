@@ -1,11 +1,10 @@
-import logging
 from typing import Literal
 
-import coloredlogs
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command, get_batch
 from hailtop.batch.job import BashJob
+from loguru import logger
 
 from dragen_align_pa.utils import calculate_needed_storage
 
@@ -32,8 +31,7 @@ def download_data_from_ica(
     gcp_folder_for_ica_download: str,
     pipeline_id_path: str,
 ) -> BashJob:
-    coloredlogs.install(level=logging.INFO)
-    logging.info(f'Downloading {filetype} and {filetype} index for {sequencing_group.name}')
+    logger.info(f'Downloading {filetype} and {filetype} index for {sequencing_group.name}')
 
     job: BashJob = _initalise_download_job(sequencing_group=sequencing_group, job_name=job_name)
     authenticate_cloud_credentials_in_job(job=job)

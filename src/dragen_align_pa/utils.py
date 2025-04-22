@@ -1,14 +1,13 @@
 import json
-import logging
 from math import ceil
 from typing import TYPE_CHECKING, Final, Literal
 
-import coloredlogs
 import cpg_utils
 import icasdk
-from google.cloud import secretmanager, storage
+from google.cloud import secretmanager
 from icasdk.apis.tags import project_analysis_api, project_data_api
 from icasdk.model.create_data import CreateData
+from loguru import logger
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -18,20 +17,12 @@ SECRET_CLIENT = secretmanager.SecretManagerServiceClient()
 SECRET_PROJECT: Final = 'cpg-common'
 SECRET_NAME: Final = 'illumina_cpg_workbench_api'
 SECRET_VERSION: Final = 'latest'
-coloredlogs.install(level=logging.INFO)
-
-
-def create_object_in_gcp(bucket: str, object_path: str, contents: str) -> None:
-    storage_client = storage.Client()
-    storage_bucket = storage_client.get_bucket(bucket)
-    new_blob = storage_bucket.blob(object_path)
-    new_blob.upload_from_string(contents)
 
 
 def calculate_needed_storage(
     cram: str,
 ) -> str:
-    logging.info(f'Checking blob size for {cram}')
+    logger.info(f'Checking blob size for {cram}')
     storage_size: int = cpg_utils.to_path(cram).stat().st_size
     return f'{ceil(ceil((storage_size / (1024**3)) + 3) * 1.2)}Gi'
 
@@ -111,8 +102,8 @@ def check_object_already_exists(
             'filename': [file_name],
             'filenameMatchMode': 'EXACT',
         } | query_params
-    logging.info(f'{query_params}')
-    logging.info(f'Checking to see if the {object_type} object already exists at {folder_path}/{file_name}')
+    logger.info(f'{query_params}')
+    logger.info(f'Checking to see if the {object_type} object already exists at {folder_path}/{file_name}')
     try:
         api_response = api_instance.get_project_data_list(  # type: ignore  # noqa: PGH003
             path_params=path_params,  # type: ignore  # noqa: PGH003
@@ -160,7 +151,7 @@ def create_upload_object_id(
         folder_path=folder_path,
         object_type=object_type,
     )
-    logging.info(f'{existing_object_id}')
+    logger.info(f'{existing_object_id}')
     if existing_object_id:
         return existing_object_id
     try:

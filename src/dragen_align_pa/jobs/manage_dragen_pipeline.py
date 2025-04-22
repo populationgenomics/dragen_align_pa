@@ -1,12 +1,11 @@
-import logging
 import subprocess
 
-import coloredlogs
 from cpg_flow.targets import SequencingGroup
 from cpg_utils import to_path  # type: ignore  # noqa: PGH003
 from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
+from loguru import logger
 
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline, run_align_genotype_with_dragen
 
@@ -32,7 +31,7 @@ def initalise_management_job(sequencing_group: SequencingGroup, pipeline_id_file
 
 
 def _delete_pipeline_id_file(pipeline_id_file: str) -> None:
-    logging.info(f'Deleting the pipeline run ID file {pipeline_id_file}')
+    logger.info(f'Deleting the pipeline run ID file {pipeline_id_file}')
     subprocess.run(['gcloud', 'storage', 'rm', pipeline_id_file], check=True)  # noqa: S603, S607
 
 
@@ -44,8 +43,7 @@ def manage_ica_pipeline(
     api_root: str,
     success_file: str,
 ) -> PythonJob:
-    coloredlogs.install(level=logging.INFO)
-    logging.info(f'Starting management job for {sequencing_group.name}')
+    logger.info(f'Starting management job for {sequencing_group.name}')
 
     job: PythonJob = initalise_management_job(sequencing_group=sequencing_group, pipeline_id_file=pipeline_id_file)
 
@@ -90,7 +88,7 @@ def _run(
                 ica_pipeline_id = pipeline_fid_handle.read().rstrip()
             # Cancel a running job in ICA
             if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False):
-                logging.info(f'Cancelling pipeline run: {ica_pipeline_id} for sequencing group {sequencing_group.name}')
+                logger.info(f'Cancelling pipeline run: {ica_pipeline_id} for sequencing group {sequencing_group.name}')
                 cancel_ica_pipeline_run.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
                 _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)
                 return {ica_pipeline_id: 'ABORTED'}
@@ -99,18 +97,18 @@ def _run(
         pipeline_status = monitor_dragen_pipeline.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
 
         if pipeline_status == 'SUCCEEDED':
-            logging.info(f'Pipeline run {ica_pipeline_id} has succeeded')
+            logger.info(f'Pipeline run {ica_pipeline_id} has succeeded')
             has_succeeded = True
             return {ica_pipeline_id: 'SUCCEEDED'}
         if pipeline_status in ['ABORTING', 'ABORTED']:
-            logging.info(f'The pipeline run {ica_pipeline_id} has been cancelled for sample {sequencing_group.name}.')
+            logger.info(f'The pipeline run {ica_pipeline_id} has been cancelled for sample {sequencing_group.name}.')
             _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)
             raise Exception(f'The pipeline run for sequencing group {sequencing_group.name} has been cancelled.')
         # Log failed ICA pipeline to a file somewhere
         # Delete the pipeline ID file
         _delete_pipeline_id_file(pipeline_id_file=pipeline_id_file)
         try_counter += 1
-        logging.info(
+        logger.info(
             f'The pipeline {ica_pipeline_id} has failed, deleting pipeline ID file {pipeline_id_file} and retrying once'
         )
         if try_counter > 2:  # noqa: PLR2004

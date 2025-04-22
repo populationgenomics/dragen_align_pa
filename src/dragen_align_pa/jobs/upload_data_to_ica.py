@@ -1,11 +1,9 @@
-import logging
-
-import coloredlogs
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command, get_batch
 from hailtop.batch.job import BashJob
+from loguru import logger
 
 from dragen_align_pa.utils import calculate_needed_storage
 
@@ -29,8 +27,7 @@ def upload_data_to_ica(sequencing_group: SequencingGroup, ica_cli_setup: str, ou
     job: BashJob = _initalise_upload_job(sequencing_group=sequencing_group)
 
     authenticate_cloud_credentials_in_job(job)
-    coloredlogs.install(level=logging.INFO)
-    logging.info(f'Uploading CRAM and CRAI for {sequencing_group.name}')
+    logger.info(f'Uploading CRAM and CRAI for {sequencing_group.name}')
 
     # Check if the CRAM and CRAI already exists in ICA before uploading. If they exist, just return the ID for the CRAM and CRAI  # noqa: E501
     # The internal `command` method is a wrapper from cpg_utils.hail_batch that extends the normal hail batch command
