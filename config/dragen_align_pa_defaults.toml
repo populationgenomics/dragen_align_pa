@@ -10,7 +10,7 @@ last_stages = ['DownloadDataFromIca']
 
 [images]
 # This image contains the ICA CLI used for transferring data from ICA -> GCP at the end of the pipeline.
-ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:1.0.0-1"
+ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:0.1.0-1"
 
 # Flags to manage existing pipeline runs: set the appropriate flag to true and resubmit the job to cancel or resume monitoring.
 [ica.management]
