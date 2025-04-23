@@ -59,9 +59,13 @@ def upload_data_to_ica(sequencing_group: SequencingGroup, ica_cli_setup: str, ou
             cram_status=$(icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram --match-mode EXACT -o json | jq -r '.items[].details.status')
             crai_status=$(icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram.crai --match-mode EXACT -o json | jq -r '.items[].details.status')
 
-            if [[ $cram_status != "AVAILABLE" ]]
+            if [[ $cram_status != "AVAILABLE" ]] && [[ $crai_status != "AVAILABLE" ]]
             then
                 retry copy_from_gcp
+            fi
+
+            if [[ $cram_status != "AVAILABLE" ]]
+            then
                 retry upload_cram
             fi
 
