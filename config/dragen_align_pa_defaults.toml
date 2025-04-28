@@ -1,7 +1,5 @@
-# this is a template for the config file
-# demonstrating some of the common options used in cpg-flow
+# This is an example config file detailing all the optioons used for running the realignment pipeline
 [workflow]
-
 name = 'dragen_align_pa'
 output_prefix = "ica"
 sequencing_type = "genome"
@@ -9,7 +7,8 @@ input_cohorts = [ "COH4965",]
 last_stages = ['DownloadDataFromIca']
 
 [images]
-# This image contains the ICA CLI used for transferring data from ICA -> GCP at the end of the pipeline.
+# This image contains the entire pipeline code. The version is automatically bumped by bump-my-version (or other version 
+# incrememt tools), but you may need to change the final -1 suffix to the correct suffix.
 ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:0.1.0-1"
 
 # Flags to manage existing pipeline runs: set the appropriate flag to true and resubmit the job to cancel or resume monitoring.
@@ -47,7 +46,7 @@ old_cram_reference = 'dragmap'
 # Dragmap reference FASTA
 dragmap = 'fol.df2129db2c88419cbe0408dd600dce1f'
 
-# Homo_sapiens_assembly38 (unmaksed)
+# Homo_sapiens_assembly38 (unmaksed), used for tob-wgs
 # dragmap = 'fol.d45ec3a17cf241f5b61b08dd7c524fb7'
 
 # GATK reference FASTA
