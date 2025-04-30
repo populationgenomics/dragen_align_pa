@@ -2,8 +2,14 @@ from math import ceil
 from typing import TYPE_CHECKING, Final
 
 import cpg_utils
-from cpg_flow.stage import SequencingGroupStage, StageInput, StageOutput, stage  # type: ignore  # noqa: PGH003
-from cpg_flow.targets import SequencingGroup
+from cpg_flow.stage import (
+    CohortStage,
+    SequencingGroupStage,
+    StageInput,
+    StageOutput,
+    stage,  # type: ignore  # noqa: PGH003
+)
+from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve
 from loguru import logger
@@ -109,7 +115,7 @@ class UploadDataToIca(SequencingGroupStage):
     analysis_type='dragen_align_genotype',
     analysis_keys=['success', 'pipeline_id'],
 )
-class ManageDragenPipeline(SequencingGroupStage):
+class ManageDragenPipeline(CohortStage):
     """
     Due to the nature of the Dragen pipeline and stage dependencies, we need to run, monitor and cancel the pipeline in the same stage.
 
@@ -124,28 +130,41 @@ class ManageDragenPipeline(SequencingGroupStage):
 
     def expected_outputs(
         self,
-        sequencing_group: SequencingGroup,
+        cohort: Cohort,
     ) -> dict[str, cpg_utils.Path]:
-        sg_bucket: cpg_utils.Path = sequencing_group.dataset.prefix()
+        sg_bucket: cpg_utils.Path = cohort.dataset.prefix()
         return {
-            'success': sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE / f'{sequencing_group.name}_pipeline_success.json',
-            'pipeline_id': sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE / f'{sequencing_group.name}_pipeline_id.txt',
+            f'{sequencing_group.name}_success': sg_bucket
+            / GCP_FOLDER_FOR_RUNNING_PIPELINE
+            / f'{sequencing_group.name}_pipeline_success.json'
+            for sequencing_group in cohort.get_sequencing_groups()
+        } | {
+            f'{sequencing_group.name}_pipeline_id': sg_bucket
+            / GCP_FOLDER_FOR_RUNNING_PIPELINE
+            / f'{sequencing_group.name}_pipeline_id.txt'
+            for sequencing_group in cohort.get_sequencing_groups()
         }
 
-    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
-        outputs: dict[str, cpg_utils.Path | Path] = self.expected_outputs(sequencing_group=sequencing_group)
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+        outputs: dict[str, cpg_utils.Path | Path] = self.expected_outputs(cohort=cohort)
+
+        # Inputs from previous stages
+        ica_fids_path: dict[str, cpg_utils.Path] = inputs.as_path_by_target(stage=UploadDataToIca)  # type: ignore  # noqa: PGH003
+        analysis_output_fid_path: dict[str, cpg_utils.Path] = inputs.as_path_by_target(
+            stage=PrepareIcaForDragenAnalysis  # type: ignore  # noqa: PGH003
+        )
 
         management_job: PythonJob = manage_dragen_pipeline.manage_ica_pipeline(
-            sequencing_group=sequencing_group,
+            cohort=cohort,
             pipeline_id_file=str(outputs['pipeline_id']),
-            ica_fids_path=str(inputs.as_path(target=sequencing_group, stage=UploadDataToIca)),  # type: ignore  # noqa: PGH003
-            analysis_output_fid_path=str(inputs.as_path(target=sequencing_group, stage=PrepareIcaForDragenAnalysis)),  # type: ignore  # noqa: PGH003
+            ica_fids_path=ica_fids_path,
+            analysis_output_fid_path=analysis_output_fid_path,
             api_root=ICA_REST_ENDPOINT,
             success_file=str(outputs['success']),
         )
 
         return self.make_outputs(
-            target=sequencing_group,
+            target=cohort,
             data=outputs,
             jobs=management_job,
         )
