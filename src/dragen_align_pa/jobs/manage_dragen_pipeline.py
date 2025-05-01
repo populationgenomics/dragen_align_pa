@@ -96,18 +96,18 @@ def _run(
                 continue
 
             # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
-            if not to_path(pipeline_id_file):
+            if not pipeline_id_file.exists():
                 ica_pipeline_id: str = _submit_new_ica_pipeline(
                     sg_name=sg_name,
                     ica_fids_path=str(ica_fids_path[sg_name]),
                     analysis_output_fid_path=str(analysis_output_fids_path[sg_name]),
                     api_root=api_root,
                 )
-                with to_path(pipeline_id_file).open('w') as f:
+                with pipeline_id_file.open('w') as f:
                     f.write(ica_pipeline_id)
             else:
                 # Get an existing pipeline ID
-                with to_path(pipeline_id_file).open('r') as pipeline_fid_handle:
+                with pipeline_id_file.open('r') as pipeline_fid_handle:
                     ica_pipeline_id = pipeline_fid_handle.read().rstrip()
                 # Cancel a running job in ICA
                 if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False):
@@ -165,7 +165,7 @@ def _run(
         time.sleep(600)
     with open('tmp_errors.log') as tmp_log_handle:
         lines: list[str] = tmp_log_handle.readlines()
-        with to_path(outputs[f'{cohort.name}_errors']).open('a') as gcp_error_log_file:
+        with outputs[f'{cohort.name}_errors'].open('a') as gcp_error_log_file:
             gcp_error_log_file.write('\n'.join(lines))
 
 
