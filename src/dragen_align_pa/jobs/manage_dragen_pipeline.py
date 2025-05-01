@@ -35,14 +35,6 @@ def manage_ica_pipeline(
     analysis_output_fids_path: dict[str, cpg_utils.Path],
     api_root: str,
 ) -> PythonJob:
-    logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
-    logger.add(sink=outputs[f'{cohort.name}_errors'], format='{time} - {level} - {message}', level='ERROR')
-    logger.info(f'Starting management job for {cohort.name}')
-
-    # Add a single entry to the error log file so that the pipeline doesn't incorrectly think outputs don't
-    # exist if everything ran fine
-    logger.error(f'Error logging for {cohort.name} run on {datetime.now()}')  # noqa: DTZ005
-
     job: PythonJob = _initalise_management_job(cohort=cohort)
 
     job.call(
@@ -64,6 +56,14 @@ def _run(
     analysis_output_fids_path: dict[str, cpg_utils.Path],
     api_root: str,
 ) -> None:
+    logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
+    logger.add(sink=outputs[f'{cohort.name}_errors'], format='{time} - {level} - {message}', level='ERROR')
+    logger.info(f'Starting management job for {cohort.name}')
+
+    # Add a single entry to the error log file so that the pipeline doesn't incorrectly think outputs don't
+    # exist if everything ran fine
+    logger.error(f'Error logging for {cohort.name} run on {datetime.now()}')  # noqa: DTZ005
+
     running_pipelines: list[str] = []
     cancelled_pipelines: list[str] = []
     failed_pipelines: list[str] = []
