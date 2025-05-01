@@ -219,6 +219,7 @@ class DownloadCramFromIca(SequencingGroupStage):
         pipeline_id_path: cpg_utils.Path = str(
             inputs.as_path_by_target(
                 stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+                key=f'{sequencing_group.name}_pipeline_id',
             ).values()
         )
 
@@ -273,6 +274,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         pipeline_id_path: cpg_utils.Path = str(
             inputs.as_path_by_target(
                 stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+                key=f'{sequencing_group.name}_pipeline_id',
             ).values()
         )
 
@@ -318,6 +320,7 @@ class DownloadDataFromIca(SequencingGroupStage):
         pipeline_id_path: cpg_utils.Path = str(
             inputs.as_path_by_target(
                 stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+                key=f'{sequencing_group.name}_pipeline_id',
             ).values()
         )
         ica_download_job: BashJob = download_ica_pipeline_outputs.download_bulk_data_from_ica(
