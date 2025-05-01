@@ -101,11 +101,11 @@ def _run(
                     analysis_output_fid_path=str(analysis_output_fids_path[sg_name]),
                     api_root=api_root,
                 )
-                with open(pipeline_id_file, 'w') as f:
+                with open(to_path(pipeline_id_file), 'w') as f:
                     f.write(ica_pipeline_id)
             else:
                 # Get an existing pipeline ID
-                with open(pipeline_id_file) as pipeline_fid_handle:
+                with open(to_path(pipeline_id_file)) as pipeline_fid_handle:
                     ica_pipeline_id = pipeline_fid_handle.read().rstrip()
                 # Cancel a running job in ICA
                 if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False):
