@@ -152,6 +152,11 @@ def _run(
         # If more than 5% of pipelines are failing, exit now so we can investigate
         if failed_pipelines and float(len(failed_pipelines)) / float(len(cohort.get_sequencing_groups())) > 0.05:  # noqa: PLR2004
             raise Exception(f'More than 5% of pipelines have failed. Failing pipelines: {" ".join(failed_pipelines)}')
+        # Catch just in case everything is finished on the first pass through the loop
+        if (len(completed_pipelines) + len(cancelled_pipelines) + len(failed_pipelines)) == len(
+            cohort.get_sequencing_groups()
+        ):
+            break
         # Wait 10 minutes before checking again
         time.sleep(600)
 
