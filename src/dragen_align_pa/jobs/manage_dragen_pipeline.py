@@ -76,6 +76,9 @@ def _run(
             sg_name: str = sequencing_group.name
             pipeline_id_file: cpg_utils.Path = outputs[f'{sg_name}_pipeline_id']
             pipeline_success_file: cpg_utils.Path = outputs[f'{sg_name}_success']
+            logger.info(
+                f'sg_name: {sg_name}, pipeline ID file: {pipeline_id_file}, pipeline success file: {pipeline_success_file}'
+            )
 
             # In case of Hail Batch crashes, find previous completed runs so we can skip trying to monitor them
             if pipeline_success_file.exists() and sg_name not in completed_pipelines:
