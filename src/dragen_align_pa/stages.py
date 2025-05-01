@@ -222,7 +222,7 @@ class DownloadCramFromIca(SequencingGroupStage):
                     stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
                     key=f'{sequencing_group.name}_pipeline_id',
                 ).values()
-            )[0]
+            )
         )
 
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
@@ -279,7 +279,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
                     stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
                     key=f'{sequencing_group.name}_pipeline_id',
                 ).values()
-            )[0]
+            )
         )
 
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
