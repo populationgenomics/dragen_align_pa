@@ -37,14 +37,7 @@ def run(
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         path_params: dict[str, str] = {'projectId': project_id}
 
-        pipeline_status: str = utils.check_ica_pipeline_status(
+        return utils.check_ica_pipeline_status(
             api_instance=api_instance,
             path_params=path_params | {'analysisId': pipeline_id},
         )
-        # Other running statuses are REQUESTED AWAITINGINPUT INPROGRESS
-        while pipeline_status not in ['SUCCEEDED', 'FAILED', 'FAILEDFINAL', 'ABORTED']:
-            pipeline_status = utils.check_ica_pipeline_status(
-                api_instance=api_instance,
-                path_params=path_params | {'analysisId': pipeline_id},
-            )
-        return pipeline_status
