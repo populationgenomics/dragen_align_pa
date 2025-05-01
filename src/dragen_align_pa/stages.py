@@ -111,7 +111,6 @@ class UploadDataToIca(SequencingGroupStage):
 @stage(
     required_stages=[PrepareIcaForDragenAnalysis, UploadDataToIca],  # type: ignore  # noqa: PGH003
     analysis_type='dragen_align_genotype',
-    analysis_keys=['success', 'pipeline_id'],
 )
 class ManageDragenPipeline(CohortStage):
     """
