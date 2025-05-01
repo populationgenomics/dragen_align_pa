@@ -105,9 +105,6 @@ class UploadDataToIca(SequencingGroupStage):
         )
 
 
-# As a SequencingGroupStage, this is expensive for large cohorts. The choices are either
-# - Refactor into CohortStage -> no downloads can start until the entire cohort has finished
-# - Wait for throttling to become a feature (if possible) and throttle this stage
 @stage(
     required_stages=[PrepareIcaForDragenAnalysis, UploadDataToIca],  # type: ignore  # noqa: PGH003
     analysis_type='dragen_align_genotype',
@@ -220,11 +217,15 @@ class DownloadCramFromIca(SequencingGroupStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
 
         # Inputs from previous stage
-        pipeline_id_path: cpg_utils.Path = inputs.as_path(
+        pipeline_id_path: cpg_utils.Path = inputs.as_dict(
             target=sequencing_group,
             stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
-            key=f'{sequencing_group.name}_pipeline_id',
-        )
+        )[f'{sequencing_group.name}_pipeline_id']
+        # pipeline_id_path: cpg_utils.Path = inputs.as_path(
+        #     target=sequencing_group,
+        #     stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+        #     key=f'{sequencing_group.name}_pipeline_id',
+        # )
 
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
             job_name='DownloadCramFromIca',
@@ -274,11 +275,15 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
 
         # Inputs from previous stage
-        pipeline_id_path: cpg_utils.Path = inputs.as_path(
+        pipeline_id_path: cpg_utils.Path = inputs.as_dict(
             target=sequencing_group,
             stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
-            key=f'{sequencing_group.name}_pipeline_id',
-        )
+        )[f'{sequencing_group.name}_pipeline_id']
+        # pipeline_id_path: cpg_utils.Path = inputs.as_path(
+        #     target=sequencing_group,
+        #     stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+        #     key=f'{sequencing_group.name}_pipeline_id',
+        # )
 
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
             job_name='DownloadGvcfFromIca',
@@ -319,11 +324,15 @@ class DownloadDataFromIca(SequencingGroupStage):
         outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
 
         # Inputs from previous stage
-        pipeline_id_path: cpg_utils.Path = inputs.as_path(
+        pipeline_id_path: cpg_utils.Path = inputs.as_dict(
             target=sequencing_group,
             stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
-            key=f'{sequencing_group.name}_pipeline_id',
-        )
+        )[f'{sequencing_group.name}_pipeline_id']
+        # pipeline_id_path: cpg_utils.Path = inputs.as_path(
+        #     target=sequencing_group,
+        #     stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+        #     key=f'{sequencing_group.name}_pipeline_id',
+        # )
         ica_download_job: BashJob = download_ica_pipeline_outputs.download_bulk_data_from_ica(
             sequencing_group=sequencing_group,
             gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
