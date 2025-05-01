@@ -23,8 +23,6 @@ from dragen_align_pa.jobs import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from hailtop.batch.job import BashJob, PythonJob
 
 DRAGEN_VERSION: Final = config_retrieve(['ica', 'pipelines', 'dragen_version'])
@@ -150,7 +148,7 @@ class ManageDragenPipeline(CohortStage):
         )
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
-        outputs: dict[str, cpg_utils.Path | Path] = self.expected_outputs(cohort=cohort)
+        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
         # Inputs from previous stages
         ica_fids_path: dict[str, cpg_utils.Path] = inputs.as_path_by_target(stage=UploadDataToIca)  # type: ignore  # noqa: PGH003
@@ -220,6 +218,15 @@ class DownloadCramFromIca(SequencingGroupStage):
         }
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
+        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
+
+        # Inputs from previous stage
+        pipeline_id_path: cpg_utils.Path = inputs.as_path(
+            target=sequencing_group,
+            stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+            key=f'{sequencing_group.name}_pipeline_id',
+        )
+
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
             job_name='DownloadCramFromIca',
             sequencing_group=sequencing_group,
@@ -227,14 +234,12 @@ class DownloadCramFromIca(SequencingGroupStage):
             bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
             ica_cli_setup=ICA_CLI_SETUP,
             gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
-            pipeline_id_path=str(
-                inputs.as_path(target=sequencing_group, stage=ManageDragenPipeline, key='pipeline_id')  # type: ignore  # noqa: PGH003
-            ),
+            pipeline_id_path=str(pipeline_id_path),
         )
 
         return self.make_outputs(
             target=sequencing_group,
-            data=self.expected_outputs(sequencing_group=sequencing_group),
+            data=outputs,
             jobs=ica_download_job,
         )
 
@@ -267,6 +272,15 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         in metamist to be done via stage decorators. The pipeline ID needs to be read within the Hail BashJob to get the current
         pipeline ID. If read outside the job, it will get the pipeline ID from the previous pipeline run.
         """  # noqa: E501
+        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
+
+        # Inputs from previous stage
+        pipeline_id_path: cpg_utils.Path = inputs.as_path(
+            target=sequencing_group,
+            stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+            key=f'{sequencing_group.name}_pipeline_id',
+        )
+
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
             job_name='DownloadGvcfFromIca',
             sequencing_group=sequencing_group,
@@ -274,14 +288,12 @@ class DownloadGvcfFromIca(SequencingGroupStage):
             bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
             ica_cli_setup=ICA_CLI_SETUP,
             gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
-            pipeline_id_path=str(
-                inputs.as_path(target=sequencing_group, stage=ManageDragenPipeline, key='pipeline_id')  # type: ignore  # noqa: PGH003
-            ),
+            pipeline_id_path=str(pipeline_id_path),
         )
 
         return self.make_outputs(
             target=sequencing_group,
-            data=self.expected_outputs(sequencing_group=sequencing_group),
+            data=outputs,
             jobs=ica_download_job,
         )
 
@@ -305,21 +317,23 @@ class DownloadDataFromIca(SequencingGroupStage):
         return bucket_name / GCP_FOLDER_FOR_ICA_DOWNLOAD / 'dragen_metrics' / f'{sequencing_group.name}'
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
+        outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
+
+        # Inputs from previous stage
+        pipeline_id_path: cpg_utils.Path = inputs.as_path(
+            target=sequencing_group,
+            stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+            key=f'{sequencing_group.name}_pipeline_id',
+        )
         ica_download_job: BashJob = download_ica_pipeline_outputs.download_bulk_data_from_ica(
             sequencing_group=sequencing_group,
             gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
-            pipeline_id_path=str(
-                inputs.as_path(
-                    target=sequencing_group,
-                    stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
-                    key='pipeline_id',
-                )
-            ),
+            pipeline_id_path=str(pipeline_id_path),
             ica_cli_setup=ICA_CLI_SETUP,
         )
 
         return self.make_outputs(
             target=sequencing_group,
-            data=self.expected_outputs(sequencing_group=sequencing_group),
+            data=outputs,
             jobs=ica_download_job,
         )
