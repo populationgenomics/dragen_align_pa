@@ -216,9 +216,10 @@ class DownloadCramFromIca(SequencingGroupStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
 
         # Inputs from previous stage
-        pipeline_id_path: cpg_utils.Path = inputs.as_path_by_target(
-            stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
-            key=f'{sequencing_group.name}_pipeline_id',
+        pipeline_id_path: cpg_utils.Path = str(
+            inputs.as_path_by_target(
+                stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+            ).values()
         )
 
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
@@ -269,9 +270,10 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
 
         # Inputs from previous stage
-        pipeline_id_path: cpg_utils.Path = inputs.as_path_by_target(
-            stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
-            key=f'{sequencing_group.name}_pipeline_id',
+        pipeline_id_path: cpg_utils.Path = str(
+            inputs.as_path_by_target(
+                stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+            ).values()
         )
 
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
@@ -313,9 +315,10 @@ class DownloadDataFromIca(SequencingGroupStage):
         outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
 
         # Inputs from previous stage
-        pipeline_id_path: cpg_utils.Path = inputs.as_path_by_target(
-            stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
-            key=f'{sequencing_group.name}_pipeline_id',
+        pipeline_id_path: cpg_utils.Path = str(
+            inputs.as_path_by_target(
+                stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+            ).values()
         )
         ica_download_job: BashJob = download_ica_pipeline_outputs.download_bulk_data_from_ica(
             sequencing_group=sequencing_group,
