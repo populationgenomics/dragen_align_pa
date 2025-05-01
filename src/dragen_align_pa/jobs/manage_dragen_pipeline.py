@@ -57,7 +57,9 @@ def _run(
     api_root: str,
 ) -> None:
     logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
-    logger.add(sink=outputs[f'{cohort.name}_errors'], format='{time} - {level} - {message}', level='ERROR')
+    logger.add(
+        sink=outputs[str(to_path(f'{cohort.name}_errors'))], format='{time} - {level} - {message}', level='ERROR'
+    )
     logger.info(f'Starting management job for {cohort.name}')
 
     # Add a single entry to the error log file so that the pipeline doesn't incorrectly think outputs don't
