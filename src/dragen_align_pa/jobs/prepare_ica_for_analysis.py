@@ -1,7 +1,7 @@
 from typing import Literal
 
 from cpg_flow.targets import SequencingGroup
-from cpg_utils.config import config_retrieve
+from cpg_utils.config import config_retrieve, get_driver_image
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
@@ -12,7 +12,7 @@ def _initalise_ica_prep_job(sequencing_group: SequencingGroup) -> PythonJob:
         name='PrepareIcaForDragenAnalysis',
         attributes=sequencing_group.get_job_attrs() or {} | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
     )
-    prepare_ica_job.image(image=config_retrieve(['images', 'ica']))
+    prepare_ica_job.image(image=get_driver_image())
 
     return prepare_ica_job
 

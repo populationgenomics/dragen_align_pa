@@ -1,6 +1,6 @@
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
-from cpg_utils.config import config_retrieve
+from cpg_utils.config import config_retrieve, get_driver_image
 from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command, get_batch
 from hailtop.batch.job import BashJob
 from loguru import logger
@@ -14,7 +14,7 @@ def _initalise_upload_job(sequencing_group: SequencingGroup) -> BashJob:
         attributes=sequencing_group.get_job_attrs() or {} | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
     )
 
-    upload_job.image(image=config_retrieve(['images', 'ica']))
+    upload_job.image(image=get_driver_image())
     upload_job.storage(calculate_needed_storage(cram=str(sequencing_group.cram)))
 
     return upload_job

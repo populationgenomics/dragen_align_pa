@@ -5,7 +5,7 @@ from datetime import datetime
 
 import cpg_utils
 from cpg_flow.targets import Cohort
-from cpg_utils.config import config_retrieve
+from cpg_utils.config import config_retrieve, get_driver_image
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
@@ -18,7 +18,7 @@ def _initalise_management_job(cohort: Cohort) -> PythonJob:
         name=f'Manage Dragen pipeline runs for cohort: {cohort.name}',
         attributes=cohort.get_job_attrs() or {} | {'tool': 'Dragen'},  # type: ignore  # noqa: PGH003
     )
-    management_job.image(image=config_retrieve(['images', 'ica']))
+    management_job.image(image=get_driver_image())
     return management_job
 
 
