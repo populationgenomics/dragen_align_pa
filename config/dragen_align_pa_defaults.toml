@@ -6,6 +6,13 @@ sequencing_type = "genome"
 input_cohorts = [ "COH4965",]
 last_stages = ['DownloadDataFromIca']
 
+# used to make sure we don't repeat previously completed stages
+check_expected_outputs = true
+
+# the method to register outputs, can be missing - will not generate metamist analysis entries
+status_reporter = 'metamist'
+
+
 [images]
 # This image contains the entire pipeline code. The version is automatically bumped by bump-my-version (or other version
 # incrememt tools), but you may need to change the final -1 suffix to the correct suffix.
@@ -56,9 +63,3 @@ gatk = ''
 cross_cont_vcf = 'fil.1a7a2d0442854127e5d608da2935b1b0'
 coverage_region_1 = 'fil.ad60897bc97e4646f28c08da33ba0a20'
 coverage_region_2 = 'fil.c4ade57f5ffe4baff28d08da33ba0a20'
-
-# used to make sure we don't repeat previously completed stages
-check_expected_outputs = true
-
-# the method to register outputs, can be missing - will not generate metamist analysis entries
-status_reporter = 'metamist'

@@ -1,5 +1,6 @@
 from typing import Literal
 
+import cpg_utils
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command, get_batch
@@ -29,7 +30,7 @@ def download_data_from_ica(
     bucket: str,
     ica_cli_setup: str,
     gcp_folder_for_ica_download: str,
-    pipeline_id_path: str,
+    pipeline_id_path: cpg_utils.Path,
 ) -> BashJob:
     logger.info(f'Downloading {filetype} and {filetype} index for {sequencing_group.name}')
 

@@ -1,5 +1,6 @@
 """Download all the non CRAM / GVCF outputs from ICA"""
 
+import cpg_utils
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve
@@ -20,7 +21,7 @@ def _initalise_bulk_download_job(sequencing_group: SequencingGroup) -> BashJob:
 def download_bulk_data_from_ica(
     sequencing_group: SequencingGroup,
     gcp_folder_for_ica_download: str,
-    pipeline_id_path: str,
+    pipeline_id_path: cpg_utils.Path,
     ica_cli_setup: str,
 ) -> BashJob:
     job: BashJob = _initalise_bulk_download_job(sequencing_group=sequencing_group)

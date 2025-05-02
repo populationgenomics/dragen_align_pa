@@ -20,7 +20,6 @@ def _initalise_ica_prep_job(sequencing_group: SequencingGroup) -> PythonJob:
 def run_ica_prep_job(
     sequencing_group: SequencingGroup,
     output: str,
-    ica_analysis_output_folder: str,
     api_root: str,
     sg_name: str,
     bucket_name: str,
@@ -29,7 +28,7 @@ def run_ica_prep_job(
 
     output_fids = job.call(
         _run,
-        ica_analysis_output_folder=ica_analysis_output_folder,
+        ica_analysis_output_folder=config_retrieve(['ica', 'data_prep', 'output_folder']),
         api_root=api_root,
         sg_name=sg_name,
         bucket_name=bucket_name,
