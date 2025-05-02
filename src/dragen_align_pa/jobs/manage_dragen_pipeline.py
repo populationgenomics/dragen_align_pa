@@ -119,7 +119,9 @@ def _run(
             elif pipeline_status == 'SUCCEEDED':
                 logger.info(f'Pipeline run {ica_pipeline_id} has succeeded for {sg_name}')
                 completed_pipelines.append(sg_name)
-                running_pipelines.remove(sg_name)
+                # Testing fix
+                if sg_name in running_pipelines:
+                    running_pipelines.remove(sg_name)
                 # Write the success to GCP
                 with pipeline_success_file.open('w') as success_file:
                     success_file.write(f'ICA pipeline {ica_pipeline_id} has succeeded for sequencing group {sg_name}.')
@@ -127,12 +129,14 @@ def _run(
             elif pipeline_status in ['ABORTING', 'ABORTED']:
                 logger.info(f'The pipeline run {ica_pipeline_id} has been cancelled for sample {sg_name}.')
                 cancelled_pipelines.append(sg_name)
-                running_pipelines.remove(sg_name)
+                if sg_name in running_pipelines:
+                    running_pipelines.remove(sg_name)
                 _delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_file))
 
             elif pipeline_status in ['FAILED', 'FAILEDFINAL']:
                 # Log failed ICA pipeline to a file somewhere
-                running_pipelines.remove(sg_name)
+                if sg_name in running_pipelines:
+                    running_pipelines.remove(sg_name)
                 failed_pipelines.append(sg_name)
                 _delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_file))
                 logger.error(
