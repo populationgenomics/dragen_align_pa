@@ -48,7 +48,7 @@ def manage_ica_pipeline(
     return job
 
 
-def _run(
+def _run(  # noqa: PLR0915
     cohort: Cohort,
     outputs: dict[str, cpg_utils.Path],
     ica_fids_path: dict[str, cpg_utils.Path],

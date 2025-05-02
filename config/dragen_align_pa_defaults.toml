@@ -7,7 +7,7 @@ input_cohorts = [ "COH4965",]
 last_stages = ['DownloadDataFromIca']
 
 [images]
-# This image contains the entire pipeline code. The version is automatically bumped by bump-my-version (or other version 
+# This image contains the entire pipeline code. The version is automatically bumped by bump-my-version (or other version
 # incrememt tools), but you may need to change the final -1 suffix to the correct suffix.
 ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:1.0.0-1"
 
