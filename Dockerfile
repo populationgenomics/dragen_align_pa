@@ -1,7 +1,7 @@
 FROM australia-southeast1-docker.pkg.dev/cpg-common/images/cpg_hail_gcloud:0.2.134.cpg1
 
 # Dragen align pa pipeline version.
-ENV VERSION=0.1.0
+ENV VERSION=1.0.0
 
 ARG ICA_CLI_VERSION=${ICA_CLI_VERSION:-2.31.0}
 
