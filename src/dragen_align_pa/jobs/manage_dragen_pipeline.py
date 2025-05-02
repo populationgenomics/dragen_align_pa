@@ -5,7 +5,6 @@ from datetime import datetime
 
 import cpg_utils
 from cpg_flow.targets import Cohort
-from cpg_utils import to_path  # type: ignore  # noqa: PGH003
 from cpg_utils.config import config_retrieve
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
@@ -77,9 +76,6 @@ def _run(
             sg_name: str = sequencing_group.name
             pipeline_id_file: cpg_utils.Path = outputs[f'{sg_name}_pipeline_id']
             pipeline_success_file: cpg_utils.Path = outputs[f'{sg_name}_success']
-            logger.info(
-                f'sg_name: {sg_name}, pipeline ID file: {pipeline_id_file}, pipeline success file: {pipeline_success_file}'
-            )
 
             # In case of Hail Batch crashes, find previous completed runs so we can skip trying to monitor them
             if pipeline_success_file.exists() and sg_name not in completed_pipelines:
@@ -125,7 +121,7 @@ def _run(
                 completed_pipelines.append(sg_name)
                 running_pipelines.remove(sg_name)
                 # Write the success to GCP
-                with open(to_path(outputs[sg_name]), 'w') as success_file:
+                with pipeline_success_file.open('w') as success_file:
                     success_file.write(f'ICA pipeline {ica_pipeline_id} has succeeded for sequencing group {sg_name}.')
 
             elif pipeline_status in ['ABORTING', 'ABORTED']:
