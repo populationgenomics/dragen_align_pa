@@ -1,3 +1,4 @@
+import sys
 from typing import Literal
 
 import icasdk
@@ -32,6 +33,8 @@ def run(
     configuration.api_key['ApiKeyAuth'] = api_key
     pipeline_id: str = ica_pipeline_id['pipeline_id'] if isinstance(ica_pipeline_id, dict) else ica_pipeline_id
 
+    logger.remove(0)
+    logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
     logger.info(f'Monitoring pipeline run {pipeline_id} which of type {type(pipeline_id)}')
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)

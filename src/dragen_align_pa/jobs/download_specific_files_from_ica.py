@@ -1,3 +1,4 @@
+import sys
 from typing import Literal
 
 import cpg_utils
@@ -32,6 +33,8 @@ def download_data_from_ica(
     gcp_folder_for_ica_download: str,
     pipeline_id_path: cpg_utils.Path,
 ) -> BashJob:
+    logger.remove(0)
+    logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
     logger.info(f'Downloading {filetype} and {filetype} index for {sequencing_group.name}')
 
     job: BashJob = _initalise_download_job(sequencing_group=sequencing_group, job_name=job_name)

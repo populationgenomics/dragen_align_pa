@@ -1,3 +1,5 @@
+import sys
+
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve, get_driver_image
@@ -27,6 +29,8 @@ def upload_data_to_ica(sequencing_group: SequencingGroup, ica_cli_setup: str, ou
     job: BashJob = _initalise_upload_job(sequencing_group=sequencing_group)
 
     authenticate_cloud_credentials_in_job(job)
+    logger.remove(0)
+    logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
     logger.info(f'Uploading CRAM and CRAI for {sequencing_group.name}')
 
     # Check if the CRAM and CRAI already exists in ICA before uploading. If they exist, just return the ID for the CRAM and CRAI  # noqa: E501

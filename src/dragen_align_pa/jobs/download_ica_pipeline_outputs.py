@@ -1,5 +1,7 @@
 """Download all the non CRAM / GVCF outputs from ICA"""
 
+import sys
+
 import cpg_utils
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
@@ -29,6 +31,8 @@ def download_bulk_data_from_ica(
 
     ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
     bucket: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
+    logger.remove(0)
+    logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
     logger.info(f'Downloading bulk ICA data for {sequencing_group.name}.')
     job.command(
         command(
