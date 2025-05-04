@@ -5,7 +5,7 @@ from datetime import datetime
 
 import cpg_utils
 from cpg_flow.targets import Cohort
-from cpg_utils.config import config_retrieve, get_driver_image
+from cpg_utils.config import config_retrieve, get_driver_image, try_get_ar_guid
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
@@ -189,7 +189,7 @@ def _submit_new_ica_pipeline(
         user_tags=config_retrieve(['ica', 'tags', 'user_tags']),
         technical_tags=config_retrieve(['ica', 'tags', 'technical_tags']),
         reference_tags=config_retrieve(['ica', 'tags', 'reference_tags']),
-        user_reference=sg_name,
+        user_reference=f'{sg_name}_{try_get_ar_guid()}_',
         api_root=api_root,
     )
     return ica_pipeline_id
