@@ -61,9 +61,9 @@ def check_ica_pipeline_status(
         str: The status of the pipeline. Can be one of ['REQUESTED', 'AWAITINGINPUT', 'INPROGRESS', 'SUCCEEDED', 'FAILED', 'FAILEDFINAL', 'ABORTED']
     """  # noqa: E501
     try:
-        api_response = api_instance.get_analysis(path_params=path_params)  # type: ignore  # noqa: PGH003
-        pipeline_status: str = api_response.body['status']  # type: ignore  # noqa: PGH003
-        return pipeline_status  # type: ignore  # noqa: PGH003
+        api_response = api_instance.get_analysis(path_params=path_params)  # type: ignore[ReportUnknownVariableType]
+        pipeline_status: str = api_response.body['status']  # type: ignore[ReportUnknownVariableType]
+        return pipeline_status  # type: ignore[ReportUnknownVariableType]
     except icasdk.ApiException as e:
         raise icasdk.ApiException(f'Exception when calling ProjectAnalysisApi -> get_analysis: {e}') from e
 
@@ -105,14 +105,14 @@ def check_object_already_exists(
     logger.info(f'{query_params}')
     logger.info(f'Checking to see if the {object_type} object already exists at {folder_path}/{file_name}')
     try:
-        api_response = api_instance.get_project_data_list(  # type: ignore  # noqa: PGH003
-            path_params=path_params,  # type: ignore  # noqa: PGH003
-            query_params=query_params,  # type: ignore  # noqa: PGH003
-        )  # type: ignore  # noqa: PGH003
-        if len(api_response.body['items']) == 0:  # type: ignore  # noqa: PGH003
+        api_response = api_instance.get_project_data_list(  # type: ignore[ReportUnknownVariableType]
+            path_params=path_params,  # type: ignore[ReportUnknownVariableType]
+            query_params=query_params,  # type: ignore[ReportUnknownVariableType]
+        )  # type: ignore[ReportUnknownVariableType]
+        if len(api_response.body['items']) == 0:  # type: ignore[ReportUnknownVariableType]
             return None
         if object_type == 'FOLDER' or api_response.body['items'][0]['data']['details']['status'] == 'PARTIAL':
-            return api_response.body['items'][0]['data']['id']  # type: ignore  # noqa: PGH003
+            return api_response.body['items'][0]['data']['id']  # type: ignore[ReportUnknownVariableType]
         # Statuses are ["PARTIAL", "AVAILABLE", "ARCHIVING", "ARCHIVED", "UNARCHIVING", "DELETING", ]
         raise NotImplementedError('Checking for other status is not implemented yet.')
     except icasdk.ApiException as e:
@@ -167,11 +167,11 @@ def create_upload_object_id(
                 folderPath=f'{folder_path}/',
                 dataType=object_type,
             )
-        api_response = api_instance.create_data_in_project(  # type: ignore  # noqa: PGH003
-            path_params=path_params,  # type: ignore  # noqa: PGH003
+        api_response = api_instance.create_data_in_project(  # type: ignore[ReportUnknownVariableType]
+            path_params=path_params,  # type: ignore[ReportUnknownVariableType]
             body=body,
         )
-        return api_response.body['data']['id']  # type: ignore  # noqa: PGH003
+        return api_response.body['data']['id']  # type: ignore[ReportUnknownVariableType]
     except icasdk.ApiException as e:
         raise icasdk.ApiException(
             f'Exception when calling ProjectDataApi -> create_data_in_project: {e}',

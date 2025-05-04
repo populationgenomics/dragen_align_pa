@@ -10,7 +10,7 @@ from loguru import logger
 def _initalise_ica_prep_job(sequencing_group: SequencingGroup) -> PythonJob:
     prepare_ica_job: PythonJob = get_batch().new_python_job(
         name='PrepareIcaForDragenAnalysis',
-        attributes=sequencing_group.get_job_attrs() or {} | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
+        attributes=sequencing_group.get_job_attrs() or {} | {'tool': 'ICA'},  # type: ignore[ReportUnknownVariableType]
     )
     prepare_ica_job.image(image=get_driver_image())
 

@@ -13,7 +13,7 @@ from dragen_align_pa.utils import calculate_needed_storage
 def _initalise_download_job(sequencing_group: SequencingGroup, job_name: str) -> BashJob:
     download_job: BashJob = get_batch().new_bash_job(
         name=job_name,
-        attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
+        attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'ICA'},  # type: ignore[ReportUnknownVariableType]
     )
 
     download_job.image(image=get_driver_image())

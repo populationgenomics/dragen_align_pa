@@ -11,9 +11,9 @@ This is re-implemented as a simpler form, only knowing how to build a single wor
 
 from argparse import ArgumentParser
 
-from cpg_flow.workflow import run_workflow  # type: ignore  # noqa: PGH003
+from cpg_flow.workflow import run_workflow  # type: ignore[ReportUnknownVariableType]
 
-from dragen_align_pa.stages import DownloadDataFromIca  # type: ignore  # noqa: PGH003
+from dragen_align_pa.stages import DownloadDataFromIca  # type: ignore[ReportUnknownVariableType]
 
 
 def cli_main():
@@ -31,9 +31,9 @@ def cli_main():
     # Otherwise all configuration should be done by providing all relevant configs to analysis-runner
     # https://github.com/populationgenomics/team-docs/blob/main/cpg_utils_config.md#config-in-analysis-runner-jobs
 
-    stages = [DownloadDataFromIca]  # type: ignore  # noqa: PGH003
+    stages = [DownloadDataFromIca]  # type: ignore[ReportUnknownVariableType]
 
-    run_workflow(stages=stages, dry_run=args.dry_run)  # type: ignore  # noqa: PGH003
+    run_workflow(stages=stages, dry_run=args.dry_run)  # type: ignore[ReportUnknownVariableType]
 
 
 if __name__ == '__main__':

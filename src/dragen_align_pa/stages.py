@@ -6,7 +6,7 @@ from cpg_flow.stage import (
     SequencingGroupStage,
     StageInput,
     StageOutput,
-    stage,  # type: ignore  # noqa: PGH003
+    stage,  # type: ignore[ReportUnknownVariableType]
 )
 from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
@@ -95,7 +95,7 @@ class UploadDataToIca(SequencingGroupStage):
 
 
 @stage(
-    required_stages=[PrepareIcaForDragenAnalysis, UploadDataToIca],  # type: ignore  # noqa: PGH003
+    required_stages=[PrepareIcaForDragenAnalysis, UploadDataToIca],  # type: ignore[ReportUnknownVariableType]
 )
 class ManageDragenPipeline(CohortStage):
     """
@@ -128,9 +128,9 @@ class ManageDragenPipeline(CohortStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
         # Inputs from previous stages
-        ica_fids_path: dict[str, cpg_utils.Path] = inputs.as_path_by_target(stage=UploadDataToIca)  # type: ignore  # noqa: PGH003
+        ica_fids_path: dict[str, cpg_utils.Path] = inputs.as_path_by_target(stage=UploadDataToIca)  # type: ignore[ReportUnknownVariableType]
         analysis_output_fids_path: dict[str, cpg_utils.Path] = inputs.as_path_by_target(
-            stage=PrepareIcaForDragenAnalysis  # type: ignore  # noqa: PGH003
+            stage=PrepareIcaForDragenAnalysis  # type: ignore[ReportUnknownVariableType]
         )
 
         management_job: PythonJob = manage_dragen_pipeline.manage_ica_pipeline(
@@ -148,7 +148,7 @@ class ManageDragenPipeline(CohortStage):
         )
 
 
-@stage(analysis_type='dragen_mlr', required_stages=[ManageDragenPipeline])  # type: ignore  # noqa: PGH003
+@stage(analysis_type='dragen_mlr', required_stages=[ManageDragenPipeline])  # type: ignore[ReportUnknownVariableType]
 class GvcfMlrWithDragen(SequencingGroupStage):
     def expected_outputs(
         self,
@@ -160,7 +160,7 @@ class GvcfMlrWithDragen(SequencingGroupStage):
         pass
 
 
-@stage(required_stages=[GvcfMlrWithDragen])  # type: ignore  # noqa: PGH003
+@stage(required_stages=[GvcfMlrWithDragen])  # type: ignore[ReportUnknownVariableType]
 class MonitorGvcfMlrWithDragen(SequencingGroupStage):
     def expected_outputs(
         self,
@@ -175,7 +175,7 @@ class MonitorGvcfMlrWithDragen(SequencingGroupStage):
 @stage(
     analysis_type='cram',
     analysis_keys=['cram', 'crai'],
-    required_stages=[ManageDragenPipeline],  # type: ignore  # noqa: PGH003
+    required_stages=[ManageDragenPipeline],  # type: ignore[ReportUnknownVariableType]
 )
 class DownloadCramFromIca(SequencingGroupStage):
     """
@@ -200,7 +200,7 @@ class DownloadCramFromIca(SequencingGroupStage):
         # Inputs from previous stage
         pipeline_id_path: cpg_utils.Path = list(  # noqa: RUF015
             inputs.as_path_by_target(
-                stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+                stage=ManageDragenPipeline,  # type: ignore[ReportUnknownVariableType]
                 key=f'{sequencing_group.name}_pipeline_id',
             ).values()
         )[0]
@@ -225,7 +225,7 @@ class DownloadCramFromIca(SequencingGroupStage):
 @stage(
     analysis_type='gvcf',
     analysis_keys=['gvcf', 'gvcf_tbi'],
-    required_stages=[ManageDragenPipeline],  # type: ignore  # noqa: PGH003
+    required_stages=[ManageDragenPipeline],  # type: ignore[ReportUnknownVariableType]
 )
 class DownloadGvcfFromIca(SequencingGroupStage):
     def expected_outputs(
@@ -255,7 +255,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         # Inputs from previous stage
         pipeline_id_path: cpg_utils.Path = list(  # noqa: RUF015
             inputs.as_path_by_target(
-                stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+                stage=ManageDragenPipeline,  # type: ignore[ReportUnknownVariableType]
                 key=f'{sequencing_group.name}_pipeline_id',
             ).values()
         )[0]
@@ -279,7 +279,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
 
 @stage(
     analysis_type='ica_data_download',
-    required_stages=[ManageDragenPipeline, DownloadCramFromIca, DownloadGvcfFromIca],  # type: ignore  # noqa: PGH003
+    required_stages=[ManageDragenPipeline, DownloadCramFromIca, DownloadGvcfFromIca],  # type: ignore[ReportUnknownVariableType]
 )
 class DownloadDataFromIca(SequencingGroupStage):
     """
@@ -302,7 +302,7 @@ class DownloadDataFromIca(SequencingGroupStage):
         pipeline_id_path: cpg_utils.Path = list(  # noqa: RUF015
             iter(
                 inputs.as_path_by_target(
-                    stage=ManageDragenPipeline,  # type: ignore  # noqa: PGH003
+                    stage=ManageDragenPipeline,  # type: ignore[ReportUnknownVariableType]
                     key=f'{sequencing_group.name}_pipeline_id',
                 ).values()
             )

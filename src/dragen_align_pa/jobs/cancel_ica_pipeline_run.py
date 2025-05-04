@@ -34,9 +34,9 @@ def run(ica_pipeline_id: str, api_root: str) -> dict[str, str]:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         try:
             api_instance.abort_analysis(
-                path_params=path_parameters,  # type: ignore  # noqa: PGH003
+                path_params=path_parameters,  # type: ignore[ReportUnknownVariableType]
                 skip_deserialization=True,
-            )  # type: ignore  # noqa: PGH003
+            )  # type: ignore[ReportUnknownVariableType]
             logger.info(f'Sent cancellation request for ICA analysis: {ica_pipeline_id}')
             return {'cancelled': ica_pipeline_id}
         except icasdk.ApiException as e:

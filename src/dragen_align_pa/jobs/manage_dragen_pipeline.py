@@ -16,7 +16,7 @@ from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipelin
 def _initalise_management_job(cohort: Cohort) -> PythonJob:
     management_job: PythonJob = get_batch().new_python_job(
         name=f'Manage Dragen pipeline runs for cohort: {cohort.name}',
-        attributes=cohort.get_job_attrs() or {} | {'tool': 'Dragen'},  # type: ignore  # noqa: PGH003
+        attributes=cohort.get_job_attrs() or {} | {'tool': 'Dragen'},  # type: ignore[ReportUnknownVariableType]
     )
     management_job.image(image=get_driver_image())
     return management_job

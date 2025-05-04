@@ -11,7 +11,7 @@ from dragen_align_pa.utils import calculate_needed_storage
 def _initalise_upload_job(sequencing_group: SequencingGroup) -> BashJob:
     upload_job: BashJob = get_batch().new_bash_job(
         name='UploadDataToIca',
-        attributes=sequencing_group.get_job_attrs() or {} | {'tool': 'ICA'},  # type: ignore  # noqa: PGH003
+        attributes=sequencing_group.get_job_attrs() or {} | {'tool': 'ICA'},  # type: ignore[ReportUnknownVariableType]
     )
 
     upload_job.image(image=get_driver_image())

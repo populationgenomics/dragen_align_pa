@@ -71,12 +71,12 @@ def submit_dragen_run(
         ),
     )
     try:
-        api_response = api_instance.create_nextflow_analysis(  # type: ignore  # noqa: PGH003
+        api_response = api_instance.create_nextflow_analysis(  # type: ignore[ReportUnknownVariableType]
             path_params=project_id,
             header_params=header_params,
             body=body,
         )
-        return api_response.body['id']  # type: ignore  # noqa: PGH003
+        return api_response.body['id']  # type: ignore[ReportUnknownVariableType]
     except icasdk.ApiException as e:
         raise icasdk.ApiException(f'Exception when calling ProjectAnalysisApi->create_nextflow_analysis: {e}') from e
 
