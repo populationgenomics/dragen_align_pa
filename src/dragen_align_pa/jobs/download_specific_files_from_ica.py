@@ -58,7 +58,7 @@ def download_data_from_ica(
                 icav2 projectdata download $index $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.{data}.{index} --exclude-source-path
                 icav2 projectdata download $md5 $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.{data}.md5sum --exclude-source-path
 
-                # Get md5sum of the downloaded data file file and compare it with the ICA md5sum
+                # Get md5sum of the downloaded data file and compare it with the ICA md5sum
                 # Checking here because using icav2 package to download which doesn't automatically perform checksum matching
                 ica_md5_hash=$(cat $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.{data}.md5sum)
                 self_md5=$(cat $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.{data} | md5sum | cut -d " " -f1)
