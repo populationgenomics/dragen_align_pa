@@ -59,7 +59,7 @@ class PrepareIcaForDragenAnalysis(SequencingGroupStage):
         sg_bucket: cpg_utils.Path = sequencing_group.dataset.prefix()
         return sg_bucket / GCP_FOLDER_FOR_ICA_PREP / f'{sequencing_group.name}_output_fid.json'
 
-    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:  # noqa: ARG002
         bucket_name: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
         outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
 
@@ -84,7 +84,7 @@ class UploadDataToIca(SequencingGroupStage):
         sg_bucket: cpg_utils.Path = sequencing_group.dataset.prefix()
         return sg_bucket / GCP_FOLDER_FOR_ICA_PREP / f'{sequencing_group.name}_fids.json'
 
-    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:  # noqa: ARG002
         output: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
 
         upload_job: BashJob = upload_data_to_ica.upload_data_to_ica(
@@ -130,7 +130,7 @@ class ManageDragenPipeline(CohortStage):
             }
         return results
 
-    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
         # Inputs from previous stages
@@ -200,7 +200,7 @@ class DownloadCramFromIca(SequencingGroupStage):
             'crai': bucket_name / GCP_FOLDER_FOR_ICA_DOWNLOAD / 'cram' / f'{sequencing_group.name}.cram.crai',
         }
 
-    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
 
         # Inputs from previous stage
@@ -250,7 +250,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
             / f'{sequencing_group.name}.hard-filtered.gvcf.gz.tbi',
         }
 
-    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
         """
         Download gVCF and gVCF TBI files from ICA separately. This is to allow registrations of the gVCF files
         in metamist to be done via stage decorators. The pipeline ID needs to be read within the Hail BashJob to get the current
@@ -301,7 +301,7 @@ class DownloadDataFromIca(SequencingGroupStage):
         bucket_name: cpg_utils.Path = sequencing_group.dataset.prefix()
         return bucket_name / GCP_FOLDER_FOR_ICA_DOWNLOAD / 'dragen_metrics' / f'{sequencing_group.name}'
 
-    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
         outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
 
         # Inputs from previous stage

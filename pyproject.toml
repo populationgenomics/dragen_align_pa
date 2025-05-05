@@ -5,7 +5,6 @@ requires = ["hatchling >= 1.26"]
 build-backend = "hatchling.build"
 
 [project]
-# # TODO(you): update this to reflect the project's name & description
 name='dragen_align_pa'
 description='Realign CRAM files with Dragen 3.7.8 in ICA'
 readme = "README.md"
