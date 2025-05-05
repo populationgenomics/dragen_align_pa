@@ -162,7 +162,7 @@ def _run(  # noqa: PLR0915
             break
         # Wait 10 minutes before checking again
         time.sleep(600)
-    with open('tmp_errors.log', 'w') as tmp_log_handle:
+    with open('tmp_errors.log') as tmp_log_handle:
         lines: list[str] = tmp_log_handle.readlines()
         with outputs[f'{cohort.name}_errors'].open('a') as gcp_error_log_file:
             gcp_error_log_file.write('\n'.join(lines))
