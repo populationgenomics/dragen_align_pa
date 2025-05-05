@@ -44,7 +44,6 @@ set -x
 
 logger.remove(0)
 logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
-logger.add(sink='tmp_errors.log', format='{time} - {level} - {message}', level='ERROR')
 
 
 # No need to register this stage in Metamist I think, just ICA prep
