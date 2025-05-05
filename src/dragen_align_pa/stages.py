@@ -2,6 +2,7 @@ import sys
 from typing import TYPE_CHECKING, Final
 
 import cpg_utils
+from cpg_flow.inputs import get_multicohort
 from cpg_flow.stage import (
     CohortStage,
     SequencingGroupStage,
@@ -9,7 +10,7 @@ from cpg_flow.stage import (
     StageOutput,
     stage,  # type: ignore[ReportUnknownVariableType]
 )
-from cpg_flow.targets import Cohort, MultiCohort, SequencingGroup
+from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve
 from loguru import logger
@@ -204,7 +205,7 @@ class DownloadCramFromIca(SequencingGroupStage):
 
         # Inputs from previous stage
         pipeline_id_path: cpg_utils.Path = inputs.as_dict(
-            target=MultiCohort.get_cohorts()[0],  # type: ignore[reportArgumentType]
+            target=get_multicohort().get_cohorts()[0],
             stage=ManageDragenPipeline,  # type: ignore[reportArgumentType]
         )[f'{sequencing_group.name}_pipeline_id']
 
@@ -257,7 +258,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
 
         # Inputs from previous stage
         pipeline_id_path: cpg_utils.Path = inputs.as_dict(
-            target=MultiCohort.get_cohorts()[0],  # type: ignore[reportArgumentType]
+            target=get_multicohort().get_cohorts()[0],
             stage=ManageDragenPipeline,  # type: ignore[reportArgumentType]
         )[f'{sequencing_group.name}_pipeline_id']
 
@@ -301,7 +302,7 @@ class DownloadDataFromIca(SequencingGroupStage):
 
         # Inputs from previous stage
         pipeline_id_path: cpg_utils.Path = inputs.as_dict(
-            target=MultiCohort.get_cohorts()[0],  # type: ignore[reportArgumentType]
+            target=get_multicohort().get_cohorts()[0],
             stage=ManageDragenPipeline,  # type: ignore[reportArgumentType]
         )[f'{sequencing_group.name}_pipeline_id']
 
