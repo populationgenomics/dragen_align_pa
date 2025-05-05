@@ -9,7 +9,7 @@ from cpg_flow.stage import (
     StageOutput,
     stage,  # type: ignore[ReportUnknownVariableType]
 )
-from cpg_flow.targets import Cohort, SequencingGroup
+from cpg_flow.targets import Cohort, MultiCohort, SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve
 from loguru import logger
@@ -204,12 +204,10 @@ class DownloadCramFromIca(SequencingGroupStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
 
         # Inputs from previous stage
-        pipeline_id_path: cpg_utils.Path = list(  # noqa: RUF015
-            inputs.as_path_by_target(
-                stage=ManageDragenPipeline,  # type: ignore[ReportUnknownVariableType]
-                key=f'{sequencing_group.name}_pipeline_id',
-            ).values()
-        )[0]
+        pipeline_id_path: cpg_utils.Path = inputs.as_dict(
+            target=MultiCohort.get_cohorts()[0],  # type: ignore[reportArgumentType]
+            stage=ManageDragenPipeline,  # type: ignore[reportArgumentType]
+        )[f'{sequencing_group.name}_pipeline_id']
 
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
             job_name='DownloadCramFromIca',
@@ -259,12 +257,10 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
 
         # Inputs from previous stage
-        pipeline_id_path: cpg_utils.Path = list(  # noqa: RUF015
-            inputs.as_path_by_target(
-                stage=ManageDragenPipeline,  # type: ignore[ReportUnknownVariableType]
-                key=f'{sequencing_group.name}_pipeline_id',
-            ).values()
-        )[0]
+        pipeline_id_path: cpg_utils.Path = inputs.as_dict(
+            target=MultiCohort.get_cohorts()[0],  # type: ignore[reportArgumentType]
+            stage=ManageDragenPipeline,  # type: ignore[reportArgumentType]
+        )[f'{sequencing_group.name}_pipeline_id']
 
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
             job_name='DownloadGvcfFromIca',
@@ -305,14 +301,11 @@ class DownloadDataFromIca(SequencingGroupStage):
         outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
 
         # Inputs from previous stage
-        pipeline_id_path: cpg_utils.Path = list(  # noqa: RUF015
-            iter(
-                inputs.as_path_by_target(
-                    stage=ManageDragenPipeline,  # type: ignore[ReportUnknownVariableType]
-                    key=f'{sequencing_group.name}_pipeline_id',
-                ).values()
-            )
-        )[0]
+        pipeline_id_path: cpg_utils.Path = inputs.as_dict(
+            target=MultiCohort.get_cohorts()[0],  # type: ignore[reportArgumentType]
+            stage=ManageDragenPipeline,  # type: ignore[reportArgumentType]
+        )[f'{sequencing_group.name}_pipeline_id']
+
         ica_download_job: BashJob = download_ica_pipeline_outputs.download_bulk_data_from_ica(
             sequencing_group=sequencing_group,
             gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
