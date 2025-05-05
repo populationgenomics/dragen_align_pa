@@ -1,3 +1,4 @@
+import sys
 from typing import TYPE_CHECKING, Final
 
 import cpg_utils
@@ -11,6 +12,7 @@ from cpg_flow.stage import (
 from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve
+from loguru import logger
 
 from dragen_align_pa.jobs import (
     download_ica_pipeline_outputs,
@@ -39,6 +41,10 @@ echo "x-api-key: $(cat key)" >> $HOME/.icav2/config.yaml
 icav2 projects enter $(cat projectID)
 set -x
 """  # noqa: E501
+
+logger.remove(0)
+logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
+logger.add(sink='tmp_errors.log', format='{time} - {level} - {message}', level='ERROR')
 
 
 # No need to register this stage in Metamist I think, just ICA prep

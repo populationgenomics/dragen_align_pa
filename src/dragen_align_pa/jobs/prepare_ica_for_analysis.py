@@ -1,4 +1,3 @@
-import sys
 from typing import Literal
 
 from cpg_flow.targets import SequencingGroup
@@ -62,9 +61,6 @@ def _run(
     from icasdk.apis.tags import project_data_api
 
     from dragen_align_pa.utils import create_upload_object_id, get_ica_secrets
-
-    logger.remove(0)
-    logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
 
     secrets: dict[Literal['projectID', 'apiKey'], str] = get_ica_secrets()
     project_id: str = secrets['projectID']

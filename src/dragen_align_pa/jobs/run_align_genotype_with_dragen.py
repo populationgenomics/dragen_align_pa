@@ -1,5 +1,4 @@
 import json
-import sys
 from typing import Any, Literal
 
 import cpg_utils
@@ -112,8 +111,6 @@ def run(
         api_root (str): The ICA API root
         output_path (str): The path to write the pipeline ID to
     """  # noqa: E501
-    logger.remove(0)
-    logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
 
     secrets: dict[Literal['projectID', 'apiKey'], str] = utils.get_ica_secrets()
     project_id: str = secrets['projectID']

@@ -1,5 +1,4 @@
 import subprocess
-import sys
 import time
 from datetime import datetime
 
@@ -55,9 +54,6 @@ def _run(  # noqa: PLR0915
     analysis_output_fids_path: dict[str, cpg_utils.Path],
     api_root: str,
 ) -> None:
-    logger.remove(0)
-    logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
-    logger.add(sink='tmp_errors.log', format='{time} - {level} - {message}', level='ERROR')
     logger.info(f'Starting management job for {cohort.name}')
 
     # Add a single entry to the error log file so that the pipeline doesn't incorrectly think outputs don't
