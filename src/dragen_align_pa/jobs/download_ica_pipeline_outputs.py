@@ -34,7 +34,7 @@ def download_bulk_data_from_ica(
         command(
             rf"""
             function download_extra_data {{
-            files_and_ids=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_${{ar_guid_}}_-${{pipeline_id}}/{sequencing_group.name}/ -o json | jq -r '.items[] | select(.details.name | test(".cram|.gvcf") | not) | "\(.details.name) \(.id)"')
+            files_and_ids=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_${{ar_guid}}_-${{pipeline_id}}/{sequencing_group.name}/ -o json | jq -r '.items[] | select(.details.name | test(".cram|.gvcf") | not) | "\(.details.name) \(.id)"')
             while IFS= read -r line; do
                 name=$(echo "$line" | awk '{{print $1}}')
                 id=$(echo "$line" | awk '{{print $2}}')
