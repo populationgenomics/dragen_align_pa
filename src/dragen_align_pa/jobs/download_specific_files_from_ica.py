@@ -46,14 +46,14 @@ def download_data_from_ica(
         gcp_prefix = 'base_gvcf'
     else:
         gcp_prefix = 'mlr_gvcf'
-    # TODO fix download path to include ar_guid
+
     job.command(
         command(
             f"""
                 function download_individual_files {{
-                main_data=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_$ar_guid_-$pipeline_id/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.{data} --match-mode EXACT -o json | jq -r '.items[].id')
-                index=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_$ar_guid_-$pipeline_id/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.{data}.{index} --match-mode EXACT -o json | jq -r '.items[].id')
-                md5=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_$ar_guid_-$pipeline_id/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.{data}.md5sum --match-mode EXACT -o json | jq -r '.items[].id')
+                main_data=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_${{ar_guid}}_-${{pipeline_id}}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.{data} --match-mode EXACT -o json | jq -r '.items[].id')
+                index=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_${{ar_guid_}}-${{pipeline_id}}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.{data}.{index} --match-mode EXACT -o json | jq -r '.items[].id')
+                md5=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_${{ar_guid_}}-${{pipeline_id}}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.{data}.md5sum --match-mode EXACT -o json | jq -r '.items[].id')
                 icav2 projectdata download $main_data $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.{data} --exclude-source-path
                 icav2 projectdata download $index $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.{data}.{index} --exclude-source-path
                 icav2 projectdata download $md5 $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.{data}.md5sum --exclude-source-path
