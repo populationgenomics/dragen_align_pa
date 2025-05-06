@@ -3,7 +3,7 @@
 name = 'dragen_align_pa'
 output_prefix = "ica"
 sequencing_type = "genome"
-input_cohorts = [ "COH4965",]
+input_cohorts = [ "COH0000",]
 last_stages = ['DownloadDataFromIca']
 
 # used to make sure we don't repeat previously completed stages
