@@ -3,7 +3,7 @@
 import cpg_utils
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
-from cpg_utils.config import config_retrieve, get_driver_image
+from cpg_utils.config import config_retrieve, get_driver_image, try_get_ar_guid
 from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command, get_batch
 from hailtop.batch.job import BashJob
 from loguru import logger
@@ -28,13 +28,14 @@ def download_bulk_data_from_ica(
     authenticate_cloud_credentials_in_job(job=job)
 
     ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
+    ar_guid: str = try_get_ar_guid()
     bucket: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
     logger.info(f'Downloading bulk ICA data for {sequencing_group.name}.')
     job.command(
         command(
             rf"""
             function download_extra_data {{
-            files_and_ids=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}-$pipeline_id/{sequencing_group.name}/ -o json | jq -r '.items[] | select(.details.name | test(".cram|.gvcf") | not) | "\(.details.name) \(.id)"')
+            files_and_ids=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_{ar_guid}_-$pipeline_id/{sequencing_group.name}/ -o json | jq -r '.items[] | select(.details.name | test(".cram|.gvcf") | not) | "\(.details.name) \(.id)"')
             while IFS= read -r line; do
                 name=$(echo "$line" | awk '{{print $1}}')
                 id=$(echo "$line" | awk '{{print $2}}')
