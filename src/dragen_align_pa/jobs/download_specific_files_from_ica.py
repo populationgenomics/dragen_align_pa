@@ -1,4 +1,3 @@
-import json
 from typing import Literal
 
 import cpg_utils
@@ -39,9 +38,6 @@ def download_data_from_ica(
     authenticate_cloud_credentials_in_job(job=job)
 
     ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
-    with open(pipeline_id_arguid_path) as fp:
-        ar_guid: str = json.load(fp)['ar_guid']
-        pipeline_id: str = json.load(fp)['pipeline_id']
     data: Literal['cram', 'hard-filtered.gvcf.gz'] = 'cram' if filetype == 'cram' else 'hard-filtered.gvcf.gz'
     index: Literal['crai', 'tbi'] = 'crai' if filetype == 'cram' else 'tbi'
     if filetype == 'cram':
@@ -50,14 +46,14 @@ def download_data_from_ica(
         gcp_prefix = 'base_gvcf'
     else:
         gcp_prefix = 'mlr_gvcf'
-
+    # TODO fix download path to include ar_guid
     job.command(
         command(
             f"""
                 function download_individual_files {{
-                main_data=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_{ar_guid}_-{pipeline_id}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.{data} --match-mode EXACT -o json | jq -r '.items[].id')
-                index=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_{ar_guid}_-{pipeline_id}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.{data}.{index} --match-mode EXACT -o json | jq -r '.items[].id')
-                md5=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_{ar_guid}_-{pipeline_id}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.{data}.md5sum --match-mode EXACT -o json | jq -r '.items[].id')
+                main_data=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_$ar_guid_-$pipeline_id/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.{data} --match-mode EXACT -o json | jq -r '.items[].id')
+                index=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_$ar_guid_-$pipeline_id/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.{data}.{index} --match-mode EXACT -o json | jq -r '.items[].id')
+                md5=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_$ar_guid_-$pipeline_id/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.{data}.md5sum --match-mode EXACT -o json | jq -r '.items[].id')
                 icav2 projectdata download $main_data $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.{data} --exclude-source-path
                 icav2 projectdata download $index $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.{data}.{index} --exclude-source-path
                 icav2 projectdata download $md5 $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.{data}.md5sum --exclude-source-path
@@ -84,7 +80,11 @@ def download_data_from_ica(
 
                 {ica_cli_setup}
                 mkdir -p $BATCH_TMPDIR/{sequencing_group.name}
-                echo "Pipeline ID: {pipeline_id}"
+                pipeline_id_arguid_filename=$(basename {pipeline_id_arguid_path})
+                gcloud storage cp {pipeline_id_arguid_path} .
+                pipeline_id=$(cat $pipeline_id_arguid_filename | jq -r .pipeline_id)
+                echo "Pipeline ID: $pipeline_id"
+                ar_guid=$(cat $pipeline_id_arguid_filename | jq -r .ar_guid)
 
                 retry download_individual_files
                 """,  # noqa: E501
