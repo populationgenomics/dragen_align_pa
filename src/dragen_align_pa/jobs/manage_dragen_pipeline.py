@@ -1,3 +1,4 @@
+import json
 import subprocess
 import time
 from datetime import datetime
@@ -63,6 +64,8 @@ def _run(  # noqa: PLR0915
     # exist if everything ran fine
     logger.error(f'Error logging for {cohort.name} run on {datetime.now()}')  # noqa: DTZ005
 
+    ar_guid: str = try_get_ar_guid()
+
     running_pipelines: list[str] = []
     cancelled_pipelines: list[str] = []
     failed_pipelines: list[str] = []
@@ -73,7 +76,7 @@ def _run(  # noqa: PLR0915
     ):
         for sequencing_group in cohort.get_sequencing_groups():
             sg_name: str = sequencing_group.name
-            pipeline_id_file: cpg_utils.Path = outputs[f'{sg_name}_pipeline_id']
+            pipeline_id_arguid_file: cpg_utils.Path = outputs[f'{sg_name}_pipeline_id_and_arguid']
             pipeline_success_file: cpg_utils.Path = outputs[f'{sg_name}_success']
 
             # In case of Hail Batch crashes, find previous completed runs so we can skip trying to monitor them
@@ -91,24 +94,24 @@ def _run(  # noqa: PLR0915
                 continue
 
             # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
-            if not pipeline_id_file.exists():
+            if not pipeline_id_arguid_file.exists():
                 ica_pipeline_id: str = _submit_new_ica_pipeline(
                     sg_name=sg_name,
                     ica_fids_path=str(ica_fids_path[sg_name]),
                     analysis_output_fid_path=str(analysis_output_fids_path[sg_name]),
                     api_root=api_root,
                 )
-                with pipeline_id_file.open('w') as f:
-                    f.write(ica_pipeline_id)
+                with pipeline_id_arguid_file.open('w') as f:
+                    f.write(json.dumps({'pipeline_id': ica_pipeline_id, 'ar_guid': ar_guid}))
             else:
                 # Get an existing pipeline ID
-                with pipeline_id_file.open('r') as pipeline_fid_handle:
-                    ica_pipeline_id = pipeline_fid_handle.read().rstrip()
+                with pipeline_id_arguid_file.open('r') as pipeline_fid_handle:
+                    ica_pipeline_id = json.load(pipeline_fid_handle)['pipeline_id']
                 # Cancel a running job in ICA
                 if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False):
                     logger.info(f'Cancelling pipeline run: {ica_pipeline_id} for sequencing group {sg_name}')
                     cancel_ica_pipeline_run.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
-                    _delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_file))
+                    _delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
 
             pipeline_status: str = monitor_dragen_pipeline.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
 
@@ -130,14 +133,14 @@ def _run(  # noqa: PLR0915
                 cancelled_pipelines.append(sg_name)
                 if sg_name in running_pipelines:
                     running_pipelines.remove(sg_name)
-                _delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_file))
+                _delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
 
             elif pipeline_status in ['FAILED', 'FAILEDFINAL']:
                 # Log failed ICA pipeline to a file somewhere
                 if sg_name in running_pipelines:
                     running_pipelines.remove(sg_name)
                 failed_pipelines.append(sg_name)
-                _delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_file))
+                _delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
                 logger.error(
                     f'The pipeline {ica_pipeline_id} has failed, deleting pipeline ID file {sg_name}_pipeline_id'
                 )
