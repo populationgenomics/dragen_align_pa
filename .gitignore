@@ -169,3 +169,12 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+#VSCode
+.vscode
+
+#ruff
+.ruff_cache
+
+# local
+local_test/
