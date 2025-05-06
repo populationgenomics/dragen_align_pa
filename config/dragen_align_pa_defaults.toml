@@ -25,7 +25,7 @@ monitor_previous = false
 
 # The base folders in ICA where data are uploaded, and Dragen results are written.
 # This is automatically prefixed by the dataset and access level, so these values would result in
-# cpg-fewgenomes-test/new_upload_folder and cpg-fewgenomes-test/test_output_folder when run.
+# cpg-[dataset]-[access_level]/test-cram-upload and cpg-[dataset]-[access_level]/test-dragen-378 when run.
 [ica.data_prep]
 upload_folder = "test-cram-upload"
 output_folder = "test-dragen-378"
