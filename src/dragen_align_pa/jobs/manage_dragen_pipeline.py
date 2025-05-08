@@ -153,6 +153,13 @@ def _run(  # noqa: PLR0915
         # This code will only trigger if a 'cancel pipeline' run is submitted before this master pipeline run is
         # cancelled in Hail Batch
         if cancelled_pipelines:
+            # If there are both cancelled and failed pipelines,
+            # write the failed pipelines to the error log before exiting.
+            if failed_pipelines:
+                with open('tmp_errors.log') as tmp_log_handle:
+                    lines: list[str] = tmp_log_handle.readlines()
+                    with outputs[f'{cohort.name}_errors'].open('a') as gcp_error_log_file:
+                        gcp_error_log_file.write('\n'.join(lines))
             raise Exception(f'The following pipelines have been cancelled: {" ".join(cancelled_pipelines)}')
 
         # If more than 5% of pipelines are failing, exit now so we can investigate
@@ -166,7 +173,7 @@ def _run(  # noqa: PLR0915
         # Wait 10 minutes before checking again
         time.sleep(600)
     with open('tmp_errors.log') as tmp_log_handle:
-        lines: list[str] = tmp_log_handle.readlines()
+        lines = tmp_log_handle.readlines()
         with outputs[f'{cohort.name}_errors'].open('a') as gcp_error_log_file:
             gcp_error_log_file.write('\n'.join(lines))
 
