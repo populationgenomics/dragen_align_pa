@@ -27,7 +27,7 @@ WORKDIR /dragen_align_pa
 # Add in the additional requirements that are most likely to change.
 COPY LICENSE pyproject.toml README.md .
 COPY src src/
-COPY third_party /third_party
+COPY third_party third_party/
 
 
 RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
