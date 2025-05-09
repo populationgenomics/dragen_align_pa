@@ -30,10 +30,12 @@ COPY LICENSE pyproject.toml README.md .
 COPY src src/
 
 ARG api_key=$(gcloud secrets versions access latest --secret=illumina_cpg_workbench_api | jq -r .apiKey)
-RUN icav2 projects enter ourdna-dragen-mlr-jobs -k $api_key && \
-    icav2 projectdata download -k $api_key /meta/secret/project-config.20250508215833.json /mlr_project_config.json --exclude-source-path && \
-    icav2 project enter OurDNA-DRAGEN-378 -k $api_key && \
-    icav2 projectdata download -k $api_key /popgen-cli-release/v${POPGEN_CLI_VERSION}/popgen_cli-${POPGEN_CLI_VERSION}-py3-none-any.whl popgen_cli-${POPGEN_CLI_VERSION}-py3-none-any.whl --exclude-source-path
+
+RUN icav2 projects enter ourdna-dragen-mlr-jobs -k ${api_key} \
+    && icav2 projectdata download -k ${api_key} /meta/secret/project-config.20250508215833.json /mlr_project_config.json --exclude-source-path \
+    && icav2 project enter OurDNA-DRAGEN-378 -k ${api_key} \
+    && icav2 projectdata download -k ${api_key} /popgen-cli-release/v${POPGEN_CLI_VERSION}/popgen_cli-${POPGEN_CLI_VERSION}-py3-none-any.whl popgen_cli-${POPGEN_CLI_VERSION}-py3-none-any.whl --exclude-source-path
 
 RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
-    && pip install .
+    && pip install . \
+    && pip freeze
