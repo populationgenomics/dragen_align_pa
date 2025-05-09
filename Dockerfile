@@ -32,5 +32,6 @@ COPY third_party /third_party
 
 RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
     && pip install . \
+    && ls \
     && pip install third_party/popgen_cli-2.0.0-py3-none-any.whl \
     && pip freeze
