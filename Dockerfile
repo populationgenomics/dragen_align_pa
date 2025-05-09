@@ -4,6 +4,7 @@ FROM australia-southeast1-docker.pkg.dev/cpg-common/images/cpg_hail_gcloud:0.2.1
 ENV VERSION=1.0.2
 
 ARG ICA_CLI_VERSION=${ICA_CLI_VERSION:-2.34.0}
+ARG POPGEN_CLI_VERSION=2.0.0
 
 RUN apt update && apt install -y \
     unzip \
@@ -27,6 +28,12 @@ WORKDIR /dragen_align_pa
 # Add in the additional requirements that are most likely to change.
 COPY LICENSE pyproject.toml README.md .
 COPY src src/
+
+ARG api_key=$(gcloud secrets versions access latest --secret=illumina_cpg_workbench_api | jq -r .apiKey)
+RUN icav2 projects enter ourdna-dragen-mlr-jobs -k $api_key && \
+    icav2 projectdata download -k $api_key /meta/secret/project-config.20250508215833.json /mlr_project_config.json --exclude-source-path && \
+    icav2 project enter OurDNA-DRAGEN-378 -k $api_key && \
+    icav2 projectdata download -k $api_key /popgen-cli-release/v${POPGEN_CLI_VERSION}/popgen_cli-${POPGEN_CLI_VERSION}-py3-none-any.whl popgen_cli-${POPGEN_CLI_VERSION}-py3-none-any.whl --exclude-source-path
 
 RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
     && pip install .
