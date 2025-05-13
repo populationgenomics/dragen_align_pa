@@ -18,6 +18,11 @@ status_reporter = 'metamist'
 # incrememt tools), but you may need to change the final -1 suffix to the correct suffix.
 ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:1.0.2-1"
 
+# Projects in ICA to run different analyses
+[ica.projects]
+dragen_align = "OurDNA-DRAGEN-378"
+dragen_mlr = "ourdna-dragen-mlr-jobs"
+
 # Flags to manage existing pipeline runs: set the appropriate flag to true and resubmit the job to cancel or resume monitoring.
 [ica.management]
 cancel_cohort_run = false
@@ -66,3 +71,8 @@ gatk = ''
 cross_cont_vcf = 'fil.1a7a2d0442854127e5d608da2935b1b0'
 coverage_region_1 = 'fil.ad60897bc97e4646f28c08da33ba0a20'
 coverage_region_2 = 'fil.c4ade57f5ffe4baff28d08da33ba0a20'
+
+[ica.mlr]
+config_json = "project-config.20250508215833.json"
+mlr_hash_table = "ica://apse2-popgen-cli-release-demo/data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9"
+analysis_instance_tier = "economy"
