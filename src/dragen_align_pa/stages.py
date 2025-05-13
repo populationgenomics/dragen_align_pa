@@ -22,6 +22,7 @@ from dragen_align_pa.jobs import (
     prepare_ica_for_analysis,
     upload_data_to_ica,
 )
+from dragen_align_pa.jobs.run_dragen_mlr import run_mlr
 
 if TYPE_CHECKING:
     from hailtop.batch.job import BashJob, PythonJob
@@ -164,7 +165,22 @@ class GvcfMlrWithDragen(SequencingGroupStage):
         pass
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
-        pass
+        outputs = self.expected_outputs(sequencing_group=sequencing_group)
+
+        # Inputs from previous stage
+        pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
+            target=get_multicohort().get_cohorts()[0],
+            stage=ManageDragenPipeline,  # type: ignore[reportArgumentType]
+        )[f'{sequencing_group.name}_pipeline_id_and_arguid']
+
+        mlr_job: BashJob = run_mlr(
+            sequencing_group=sequencing_group,
+            bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
+            ica_cli_setup=ICA_CLI_SETUP,
+            pipeline_id_arguid_path=pipeline_id_arguid_path,
+        )
+
+        return self.make_outputs(target=sequencing_group, data=outputs, jobs=mlr_job)
 
 
 @stage(required_stages=[GvcfMlrWithDragen])  # type: ignore[ReportUnknownVariableType]
