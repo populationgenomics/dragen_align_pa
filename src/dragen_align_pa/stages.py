@@ -161,8 +161,10 @@ class GvcfMlrWithDragen(SequencingGroupStage):
     def expected_outputs(
         self,
         sequencing_group: SequencingGroup,
-    ) -> None:
-        pass
+    ) -> cpg_utils.Path:
+        sg_bucket: cpg_utils.Path = sequencing_group.dataset.prefix()
+        prefix: cpg_utils.Path = sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE
+        return prefix / 'mlr_placeholder.txt'
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
         outputs = self.expected_outputs(sequencing_group=sequencing_group)
