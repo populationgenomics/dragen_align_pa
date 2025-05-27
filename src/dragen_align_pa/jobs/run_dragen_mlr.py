@@ -51,11 +51,10 @@ def run_mlr(
                     icav2 projects enter {mlr_project}
 
                     # Download the mlr config JSON
-                    mlr_id=$(icav2 projectdata list --data-type FILE --file-name {mlr_config_json} --parent-folder /meta/secret/ -o json | jq -r 'items[].id')
-                    icav2 projectdata download ${{mlr_id}} $BATCH_TMPDIR/{mlr_config_json} --exclude-source-path
+                    icav2 projectdata download {mlr_config_json} $BATCH_TMPDIR/mlr_config.json --exclude-source-path
 
                     popgen-cli dragen-mlr submit \
-                    --input-project-config-file-path $BATCH_TMPDIR/{mlr_config_json} \
+                    --input-project-config-file-path $BATCH_TMPDIR/mlr_config.json \
                     --output-analysis-json-folder-path {sg_name} \
                     --run-id {sg_name}-${{ar_guid}}-mlr \
                     --sample-id {sg_name} \
