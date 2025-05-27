@@ -56,7 +56,7 @@ def run_mlr(
                     popgen-cli dragen-mlr submit \
                     --input-project-config-file-path $BATCH_TMPDIR/mlr_config.json \
                     --output-analysis-json-folder-path {sg_name} \
-                    --run-id {sg_name}-${{ar_guid}}-mlr \
+                    --run-id {sg_name}-mlr \
                     --sample-id {sg_name} \
                     --input-ht-folder-url {mlr_hash_table} \
                     --output-folder-url {output_prefix}/{sg_name}_${{ar_guid}}_-${{pipeline_id}}/{sg_name} \
