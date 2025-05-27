@@ -43,8 +43,8 @@ def run_mlr(
 
                     # General authentication
                     {ica_cli_setup}
-                    cram_path=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_${{ar_guid}}_-${{pipeline_id}}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram --match-mode EXACT -o json | jq -r '.items[].details.path)
-                    gvcf_path=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_${{ar_guid}}_-${{pipeline_id}}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.hard-filtered.gvcf.gz --match-mode EXACT -o json | jq -r '.items[].details.path)
+                    cram_path=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_${{ar_guid}}_-${{pipeline_id}}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram --match-mode EXACT -o json | jq -r '.items[].details.path')
+                    gvcf_path=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_${{ar_guid}}_-${{pipeline_id}}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.hard-filtered.gvcf.gz --match-mode EXACT -o json | jq -r '.items[].details.path')
                     cram="ica://OurDNA-DRAGEN-378${{cram_path}}"
                     gvcf="ica://OurDNA-DRAGEN-378${{gvcf_path}}"
 
