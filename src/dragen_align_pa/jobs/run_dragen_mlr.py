@@ -52,7 +52,7 @@ def run_mlr(
         icav2 projects enter {mlr_project}
 
         # Download the mlr config JSON
-        icav2 projectdata download {mlr_config_json} $BATCH_TMPDIR/mlr_config.json --exclude-source-path
+        icav2 projectdata download {mlr_config_json} $BATCH_TMPDIR/mlr_config.json --exclude-source-path > /dev/null 2>&1
 
         popgen-cli dragen-mlr submit \
         --input-project-config-file-path $BATCH_TMPDIR/mlr_config.json \
@@ -63,7 +63,7 @@ def run_mlr(
         --output-folder-url {output_prefix}/{sg_name}_${{ar_guid}}_-${{pipeline_id}}/{sg_name} \
         --input-align-file-url ${{cram}} \
         --input-gvcf-file-url ${{gvcf}} \
-        --analysis-instance-tier {config_retrieve(['ica', 'mlr', 'analysis_instance_tier'])}
+        --analysis-instance-tier {config_retrieve(['ica', 'mlr', 'analysis_instance_tier'])}  > /dev/null 2>&1
 
         cat {sg_name}/sample-{sg_name}-run-{sg_name}-mlr.json | jq -r ".id"
     """  # noqa: E501
