@@ -65,8 +65,10 @@ def run_mlr(
                     --analysis-instance-tier {config_retrieve(['ica', 'mlr', 'analysis_instance_tier'])}
 
                     cat {sg_name}/sample-{sg_name}-run-{sg_name}-mlr.json
-                    cat {sg_name}/sample-{sg_name}-run-{sg_name}-mlr.json | jq -r ".ica_analysis_details.id"
+                    cat {sg_name}/sample-{sg_name}-run-{sg_name}-mlr.json | jq -r ".id"
                 """  # noqa: E501
     )
+
+    # output file name: CPG280131.hard-filtered.recal.gvcf.gz
 
     return job
