@@ -13,7 +13,7 @@ from argparse import ArgumentParser
 
 from cpg_flow.workflow import run_workflow  # type: ignore[ReportUnknownVariableType]
 
-from dragen_align_pa.stages import DownloadDataFromIca, GvcfMlrWithDragen  # type: ignore[ReportUnknownVariableType]
+from dragen_align_pa.stages import DownloadDataFromIca, ManageDragenMlr  # type: ignore[ReportUnknownVariableType]
 
 
 def cli_main():
@@ -31,7 +31,7 @@ def cli_main():
     # Otherwise all configuration should be done by providing all relevant configs to analysis-runner
     # https://github.com/populationgenomics/team-docs/blob/main/cpg_utils_config.md#config-in-analysis-runner-jobs
 
-    stages = [DownloadDataFromIca, GvcfMlrWithDragen]  # type: ignore[ReportUnknownVariableType]
+    stages = [DownloadDataFromIca, ManageDragenMlr]  # type: ignore[ReportUnknownVariableType]
 
     run_workflow(stages=stages, dry_run=args.dry_run)  # type: ignore[ReportUnknownVariableType]
 
