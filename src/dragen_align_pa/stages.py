@@ -156,45 +156,33 @@ class ManageDragenPipeline(CohortStage):
         )
 
 
-@stage(analysis_type='dragen_mlr', required_stages=[ManageDragenPipeline])  # type: ignore[ReportUnknownVariableType]
-class GvcfMlrWithDragen(SequencingGroupStage):
+@stage(analysis_type='dragen_mlr', required_stages=[ManageDragenPipeline])
+class ManageDragenMlr(CohortStage):
     def expected_outputs(
         self,
-        sequencing_group: SequencingGroup,
+        cohort: Cohort,
     ) -> cpg_utils.Path:
-        sg_bucket: cpg_utils.Path = sequencing_group.dataset.prefix()
+        sg_bucket: cpg_utils.Path = cohort.dataset.prefix()
         prefix: cpg_utils.Path = sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE
         return prefix / 'mlr_placeholder.txt'
 
-    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
-        outputs = self.expected_outputs(sequencing_group=sequencing_group)
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+        outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
         # Inputs from previous stage
-        pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
-            target=get_multicohort().get_cohorts()[0],
-            stage=ManageDragenPipeline,  # type: ignore[reportArgumentType]
-        )[f'{sequencing_group.name}_pipeline_id_and_arguid']
-
-        mlr_job: PythonJob = run_dragen_mlr.run_mlr(
-            sequencing_group=sequencing_group,
-            bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
-            ica_cli_setup=ICA_CLI_SETUP,
-            pipeline_id_arguid_path=pipeline_id_arguid_path,
+        pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path] = inputs.as_dict(
+            target=cohort,
+            stage=ManageDragenPipeline,
         )
 
-        return self.make_outputs(target=sequencing_group, data=outputs, jobs=mlr_job)
+        mlr_job: PythonJob = run_dragen_mlr.run_mlr(
+            cohort=cohort,
+            bucket=cohort.dataset.prefix(),
+            ica_cli_setup=ICA_CLI_SETUP,
+            pipeline_id_arguid_path_dict=pipeline_id_arguid_path_dict,
+        )
 
-
-@stage(required_stages=[GvcfMlrWithDragen])  # type: ignore[ReportUnknownVariableType]
-class MonitorGvcfMlrWithDragen(SequencingGroupStage):
-    def expected_outputs(
-        self,
-        sequencing_group: SequencingGroup,
-    ) -> None:
-        pass
-
-    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
-        pass
+        return self.make_outputs(target=cohort, data=outputs, jobs=mlr_job)
 
 
 @stage(

@@ -1,25 +1,47 @@
 import subprocess
 
 import cpg_utils
-from cpg_flow.targets import SequencingGroup
+from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve, get_driver_image
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
 
 
-def _initalise_mlr_job(sequencing_group: SequencingGroup) -> PythonJob:
+def _initalise_mlr_job(cohort: Cohort) -> PythonJob:
     mlr_job: PythonJob = get_batch().new_python_job(
         name='MlrWithDragen',
-        attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'ICA'},  # type: ignore[ReportUnknownVariableType]
+        attributes=(cohort.get_job_attrs() or {}) | {'tool': 'ICA'},  # type: ignore[ReportUnknownVariableType]
     )
     mlr_job.image(image=get_driver_image())
     return mlr_job
 
 
 def run_mlr(
-    sequencing_group: SequencingGroup, bucket: str, ica_cli_setup: str, pipeline_id_arguid_path: cpg_utils.Path
+    cohort: Cohort,
+    bucket: cpg_utils.Path,
+    ica_cli_setup: str,
+    pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path],
 ) -> PythonJob:
+    job: PythonJob = _initalise_mlr_job(cohort=cohort)
+
+    job.call(
+        _run,
+        cohort,
+        bucket,
+        ica_cli_setup,
+        pipeline_id_arguid_path_dict,
+    )
+
+    # output file name: CPG280131.hard-filtered.recal.gvcf.gz
+
+    return job
+
+
+def _run(
+    cohort: Cohort, bucket: cpg_utils.Path, ica_cli_setup: str, pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path]
+) -> None:
+    logger.info('Starting MLR processing and monitoring')
     ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
 
     mlr_project: str = config_retrieve(['ica', 'projects', 'dragen_mlr'])
@@ -27,15 +49,16 @@ def run_mlr(
     mlr_config_json: str = config_retrieve(['ica', 'mlr', 'config_json'])
     mlr_hash_table: str = config_retrieve(['ica', 'mlr', 'mlr_hash_table'])
 
-    sg_name: str = sequencing_group.name
+    for sequencing_group in cohort.get_sequencing_groups():
+        sg_name: str = sequencing_group.name
 
-    output_prefix: str = (
-        f'ica://{dragen_align_project}/{bucket}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{sg_name}'
-    )
+        output_prefix: str = (
+            f'ica://{dragen_align_project}/{bucket}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{sg_name}'
+        )
+        logger.info(f'{pipeline_id_arguid_path_dict}')
+        exit(1)
 
-    job: PythonJob = _initalise_mlr_job(sequencing_group=sequencing_group)
-
-    mlr_analysis_command: str = f"""
+        mlr_analysis_command: str = f"""
         # Get pipeline ID and ar_guid from previous step
         pipeline_id_arguid_filename=$(basename {pipeline_id_arguid_path})
         gcloud storage cp {pipeline_id_arguid_path} .
@@ -67,20 +90,7 @@ def run_mlr(
 
         cat {sg_name}/sample-{sg_name}-run-{sg_name}-mlr.json | jq -r ".id"
     """  # noqa: E501
-
-    job.call(
-        _run,
-        mlr_analysis_command,
-    )
-
-    # output file name: CPG280131.hard-filtered.recal.gvcf.gz
-
-    return job
-
-
-def _run(mlr_analysis_command: str) -> None:
-    logger.info('Starting MLR processing and monitoring')
-    mlr_analysis_id: str = subprocess.run(  # noqa: S602
-        mlr_analysis_command, shell=True, capture_output=True, check=False
-    ).stdout.decode()
-    logger.info(f'MLR analysis ID: {mlr_analysis_id}')
+        mlr_analysis_id: str = subprocess.run(  # noqa: S602
+            mlr_analysis_command, shell=True, capture_output=True, check=False
+        ).stdout.decode()
+        logger.info(f'MLR analysis ID: {mlr_analysis_id}')
