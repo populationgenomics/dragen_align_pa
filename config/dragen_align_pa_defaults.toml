@@ -73,6 +73,6 @@ coverage_region_1 = 'fil.ad60897bc97e4646f28c08da33ba0a20'
 coverage_region_2 = 'fil.c4ade57f5ffe4baff28d08da33ba0a20'
 
 [ica.mlr]
-config_json = "project-config.20250508215833.json"
+config_json = "fil.28f1c8b9408a47cb595608dd9d8fcae1"
 mlr_hash_table = "ica://ourdna-dragen-mlr-jobs/data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9"
 analysis_instance_tier = "economy"
