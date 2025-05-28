@@ -64,10 +64,7 @@ def run_mlr(
                     --input-gvcf-file-url ${{gvcf}} \
                     --analysis-instance-tier {config_retrieve(['ica', 'mlr', 'analysis_instance_tier'])}
 
-                    ls {sg_name}
-
-                    cat {sg_name}/analysis.sample-{sg_name}-run-*.json
-                    cat {sg_name}/analysis.sample-{sg_name}-run-*.json | jq -r ".ica_analysis_details.id"
+                    cat {sg_name}/sample-{sg_name}-run-{sg_name}-mlr.json | jq -r ".ica_analysis_details.id"
                 """  # noqa: E501
     )
 
