@@ -20,9 +20,9 @@ from dragen_align_pa.jobs import (
     download_specific_files_from_ica,
     manage_dragen_pipeline,
     prepare_ica_for_analysis,
+    run_dragen_mlr,
     upload_data_to_ica,
 )
-from dragen_align_pa.jobs.run_dragen_mlr import run_mlr
 
 if TYPE_CHECKING:
     from hailtop.batch.job import BashJob, PythonJob
@@ -175,7 +175,7 @@ class GvcfMlrWithDragen(SequencingGroupStage):
             stage=ManageDragenPipeline,  # type: ignore[reportArgumentType]
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
-        mlr_job: PythonJob = run_mlr(
+        mlr_job: PythonJob = run_dragen_mlr.run_mlr(
             sequencing_group=sequencing_group,
             bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
             ica_cli_setup=ICA_CLI_SETUP,
