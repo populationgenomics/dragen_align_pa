@@ -9,7 +9,7 @@ from loguru import logger
 
 
 def _initalise_mlr_job(sequencing_group: SequencingGroup) -> PythonJob:
-    mlr_job: PythonJob = get_batch().new_bash_job(
+    mlr_job: PythonJob = get_batch().new_python_job(
         name='MlrWithDragen',
         attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'ICA'},  # type: ignore[ReportUnknownVariableType]
     )
