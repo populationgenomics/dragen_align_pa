@@ -81,6 +81,6 @@ def run_mlr(
 def _run(mlr_analysis_command: str) -> None:
     logger.info('Starting MLR processing and monitoring')
     mlr_analysis_id: str = subprocess.run(  # noqa: S602
-        mlr_analysis_command, shell=True, stdout=subprocess.STDOUT, check=False
+        mlr_analysis_command, shell=True, stdout=subprocess.STDOUT, stderr=None, check=False
     ).stdout.decode()
     logger.info(f'MLR analysis ID: {mlr_analysis_id}')
