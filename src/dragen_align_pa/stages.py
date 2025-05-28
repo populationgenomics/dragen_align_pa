@@ -175,7 +175,7 @@ class GvcfMlrWithDragen(SequencingGroupStage):
             stage=ManageDragenPipeline,  # type: ignore[reportArgumentType]
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
-        mlr_job: BashJob = run_mlr(
+        mlr_job: PythonJob = run_mlr(
             sequencing_group=sequencing_group,
             bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
             ica_cli_setup=ICA_CLI_SETUP,
