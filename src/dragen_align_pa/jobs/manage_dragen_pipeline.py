@@ -1,5 +1,4 @@
 import json
-import subprocess
 import time
 from datetime import datetime
 
@@ -11,6 +10,7 @@ from hailtop.batch.job import PythonJob
 from loguru import logger
 
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline, run_align_genotype_with_dragen
+from dragen_align_pa.utils import delete_pipeline_id_file
 
 
 def _initalise_management_job(cohort: Cohort) -> PythonJob:
@@ -20,11 +20,6 @@ def _initalise_management_job(cohort: Cohort) -> PythonJob:
     )
     management_job.image(image=get_driver_image())
     return management_job
-
-
-def _delete_pipeline_id_file(pipeline_id_file: str) -> None:
-    logger.info(f'Deleting the pipeline run ID file {pipeline_id_file}')
-    subprocess.run(['gcloud', 'storage', 'rm', pipeline_id_file], check=True)  # noqa: S603, S607
 
 
 def manage_ica_pipeline(
@@ -111,7 +106,7 @@ def _run(  # noqa: PLR0915
                 if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False):
                     logger.info(f'Cancelling pipeline run: {ica_pipeline_id} for sequencing group {sg_name}')
                     cancel_ica_pipeline_run.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
-                    _delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
+                    delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
 
             pipeline_status: str = monitor_dragen_pipeline.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
 
@@ -133,14 +128,14 @@ def _run(  # noqa: PLR0915
                 cancelled_pipelines.append(sg_name)
                 if sg_name in running_pipelines:
                     running_pipelines.remove(sg_name)
-                _delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
+                delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
 
             elif pipeline_status in ['FAILED', 'FAILEDFINAL']:
                 # Log failed ICA pipeline to a file somewhere
                 if sg_name in running_pipelines:
                     running_pipelines.remove(sg_name)
                 failed_pipelines.append(sg_name)
-                _delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
+                delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
                 logger.error(
                     f'The pipeline {ica_pipeline_id} has failed, deleting pipeline ID file {sg_name}_pipeline_id'
                 )

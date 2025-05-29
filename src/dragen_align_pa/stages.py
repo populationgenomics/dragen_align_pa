@@ -18,9 +18,9 @@ from loguru import logger
 from dragen_align_pa.jobs import (
     download_ica_pipeline_outputs,
     download_specific_files_from_ica,
+    manage_dragen_mlr,
     manage_dragen_pipeline,
     prepare_ica_for_analysis,
-    run_dragen_mlr,
     upload_data_to_ica,
 )
 
@@ -102,7 +102,7 @@ class UploadDataToIca(SequencingGroupStage):
 
 
 @stage(
-    required_stages=[PrepareIcaForDragenAnalysis, UploadDataToIca],  # type: ignore[ReportUnknownVariableType]
+    required_stages=[PrepareIcaForDragenAnalysis, UploadDataToIca],
 )
 class ManageDragenPipeline(CohortStage):
     """
@@ -136,9 +136,9 @@ class ManageDragenPipeline(CohortStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
         # Inputs from previous stages
-        ica_fids_path: dict[str, cpg_utils.Path] = inputs.as_path_by_target(stage=UploadDataToIca)  # type: ignore[ReportUnknownVariableType]
+        ica_fids_path: dict[str, cpg_utils.Path] = inputs.as_path_by_target(stage=UploadDataToIca)
         analysis_output_fids_path: dict[str, cpg_utils.Path] = inputs.as_path_by_target(
-            stage=PrepareIcaForDragenAnalysis  # type: ignore[ReportUnknownVariableType]
+            stage=PrepareIcaForDragenAnalysis
         )
 
         management_job: PythonJob = manage_dragen_pipeline.manage_ica_pipeline(
@@ -161,13 +161,19 @@ class ManageDragenMlr(CohortStage):
     def expected_outputs(
         self,
         cohort: Cohort,
-    ) -> cpg_utils.Path:
+    ) -> dict[str, cpg_utils.Path]:
         sg_bucket: cpg_utils.Path = cohort.dataset.prefix()
         prefix: cpg_utils.Path = sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE
-        return prefix / 'mlr_placeholder.txt'
+        results: dict[str, cpg_utils.Path] = {}
+        for sequencing_group in cohort.get_sequencing_groups():
+            results |= {
+                f'{sequencing_group.name}_mlr_success': prefix / f'{sequencing_group.name}_pipeline_success.json',
+                f'{sequencing_group.name}_mlr_pipeline_id': prefix / f'{sequencing_group.name}_pipeline_id.json',
+            }
+        return results
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
-        outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
+        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
         # Inputs from previous stage
         pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path] = inputs.as_dict(
@@ -175,11 +181,13 @@ class ManageDragenMlr(CohortStage):
             stage=ManageDragenPipeline,
         )
 
-        mlr_job: PythonJob = run_dragen_mlr.run_mlr(
+        mlr_job: PythonJob = manage_dragen_mlr.run_mlr(
             cohort=cohort,
             bucket=cohort.dataset.prefix(),
             ica_cli_setup=ICA_CLI_SETUP,
             pipeline_id_arguid_path_dict=pipeline_id_arguid_path_dict,
+            api_root=ICA_REST_ENDPOINT,
+            outputs=outputs,
         )
 
         return self.make_outputs(target=cohort, data=outputs, jobs=mlr_job)
@@ -188,7 +196,7 @@ class ManageDragenMlr(CohortStage):
 @stage(
     analysis_type='cram',
     analysis_keys=['cram'],
-    required_stages=[ManageDragenPipeline],  # type: ignore[ReportUnknownVariableType]
+    required_stages=[ManageDragenPipeline],
 )
 class DownloadCramFromIca(SequencingGroupStage):
     """
@@ -213,7 +221,7 @@ class DownloadCramFromIca(SequencingGroupStage):
         # Inputs from previous stage
         pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
             target=get_multicohort().get_cohorts()[0],
-            stage=ManageDragenPipeline,  # type: ignore[reportArgumentType]
+            stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
@@ -236,7 +244,7 @@ class DownloadCramFromIca(SequencingGroupStage):
 @stage(
     analysis_type='gvcf',
     analysis_keys=['gvcf'],
-    required_stages=[ManageDragenPipeline],  # type: ignore[ReportUnknownVariableType]
+    required_stages=[ManageDragenPipeline],
 )
 class DownloadGvcfFromIca(SequencingGroupStage):
     def expected_outputs(
@@ -266,13 +274,66 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         # Inputs from previous stage
         pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
             target=get_multicohort().get_cohorts()[0],
-            stage=ManageDragenPipeline,  # type: ignore[reportArgumentType]
+            stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
             job_name='DownloadGvcfFromIca',
             sequencing_group=sequencing_group,
-            filetype='gvcf',
+            filetype='base_gvcf',
+            bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
+            ica_cli_setup=ICA_CLI_SETUP,
+            gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
+            pipeline_id_arguid_path=pipeline_id_arguid_path,
+        )
+
+        return self.make_outputs(
+            target=sequencing_group,
+            data=outputs,
+            jobs=ica_download_job,
+        )
+
+
+@stage(
+    analysis_type='gvcf',
+    analysis_keys=['gvcf'],
+    required_stages=[ManageDragenPipeline, DownloadGvcfFromIca],
+)
+class DownloadMlrGvcfFromIca(SequencingGroupStage):
+    def expected_outputs(
+        self,
+        sequencing_group: SequencingGroup,
+    ) -> dict[str, cpg_utils.Path]:
+        bucket_name: cpg_utils.Path = sequencing_group.dataset.prefix()
+        return {
+            'gvcf': bucket_name
+            / GCP_FOLDER_FOR_ICA_DOWNLOAD
+            / 'recal_gvcf'
+            / f'{sequencing_group.name}.hard-filtered.gvcf.gz',
+            'gvcf_tbi': bucket_name
+            / GCP_FOLDER_FOR_ICA_DOWNLOAD
+            / 'recal_gvcf'
+            / f'{sequencing_group.name}.hard-filtered.gvcf.gz.tbi',
+        }
+
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
+        """
+        Download gVCF and gVCF TBI files from ICA separately. This is to allow registrations of the gVCF files
+        in metamist to be done via stage decorators. The pipeline ID needs to be read within the Hail BashJob to get the current
+        pipeline ID. If read outside the job, it will get the pipeline ID from the previous pipeline run.
+        """  # noqa: E501
+        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
+
+        # Inputs from previous stage
+        pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
+            target=get_multicohort().get_cohorts()[0],
+            stage=ManageDragenPipeline,
+        )[f'{sequencing_group.name}_pipeline_id_and_arguid']
+
+        ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
+            job_name='DownloadGvcfFromIca',
+            sequencing_group=sequencing_group,
+            filetype='recal_gvcf',
             bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
             ica_cli_setup=ICA_CLI_SETUP,
             gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
@@ -288,7 +349,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
 
 @stage(
     analysis_type='ica_data_download',
-    required_stages=[ManageDragenPipeline, DownloadCramFromIca, DownloadGvcfFromIca],  # type: ignore[ReportUnknownVariableType]
+    required_stages=[ManageDragenPipeline, DownloadCramFromIca, DownloadGvcfFromIca],
 )
 class DownloadDataFromIca(SequencingGroupStage):
     """
@@ -310,7 +371,7 @@ class DownloadDataFromIca(SequencingGroupStage):
         # Inputs from previous stage
         pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
             target=get_multicohort().get_cohorts()[0],
-            stage=ManageDragenPipeline,  # type: ignore[reportArgumentType]
+            stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
         ica_download_job: BashJob = download_ica_pipeline_outputs.download_bulk_data_from_ica(
