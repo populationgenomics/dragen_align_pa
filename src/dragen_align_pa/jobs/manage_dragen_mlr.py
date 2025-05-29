@@ -65,9 +65,11 @@ def _submit_mlr_run(
 
         cat {sg_name}/sample-{sg_name}-run-{sg_name}-mlr.json | jq -r ".id"
     """  # noqa: E501
-    return subprocess.run(  # noqa: S602
+    mlr_analysis_id: str = subprocess.run(  # noqa: S602
         mlr_analysis_command, shell=True, capture_output=True, check=False
     ).stdout.decode()
+
+    return mlr_analysis_id
 
 
 def run_mlr(
@@ -89,8 +91,6 @@ def run_mlr(
         api_root=api_root,
         outputs=outputs,
     )
-
-    # output file name: CPG280131.hard-filtered.recal.gvcf.gz
 
     return job
 
@@ -144,7 +144,6 @@ def _run(  # noqa: PLR0915
                 continue
 
             # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
-            logger.info(f'MLR pipeline id file exists: {mlr_pipeline_id_file.exists()}')
             if not mlr_pipeline_id_file.exists():
                 mlr_analysis_id: str = _submit_mlr_run(
                     pipeline_id_arguid_path=pipeline_id_arguid_path_dict[f'{sg_name}_pipeline_id_and_arguid'],
