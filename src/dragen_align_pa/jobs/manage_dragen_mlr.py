@@ -24,7 +24,7 @@ def _initalise_mlr_job(cohort: Cohort) -> PythonJob:
 
 def _submit_mlr_run(
     pipeline_id_arguid_path: cpg_utils.Path,
-    bucket: cpg_utils.Path,
+    bucket: str,
     ica_analysis_output_folder: str,
     sg_name: str,
     ica_cli_setup: str,
@@ -61,22 +61,20 @@ def _submit_mlr_run(
         --output-folder-url {output_prefix}/{sg_name}_${{ar_guid}}_-${{pipeline_id}}/{sg_name} \
         --input-align-file-url ${{cram}} \
         --input-gvcf-file-url ${{gvcf}} \
-        --analysis-instance-tier {config_retrieve(['ica', 'mlr', 'analysis_instance_tier'])}
+        --analysis-instance-tier {config_retrieve(['ica', 'mlr', 'analysis_instance_tier'])} > /dev/null 2>&1
 
         cat {sg_name}/sample-{sg_name}-run-{sg_name}-mlr.json | jq -r ".id"
     """  # noqa: E501
-    logger.info(mlr_analysis_command)
     mlr_analysis_id: str = subprocess.run(  # noqa: S602
         mlr_analysis_command, shell=True, capture_output=True, check=False
     ).stdout.decode()
-    logger.info(mlr_analysis_id)
 
     return mlr_analysis_id
 
 
 def run_mlr(
     cohort: Cohort,
-    bucket: cpg_utils.Path,
+    bucket: str,
     ica_cli_setup: str,
     pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path],
     api_root: str,
@@ -99,7 +97,7 @@ def run_mlr(
 
 def _run(  # noqa: PLR0915
     cohort: Cohort,
-    bucket: cpg_utils.Path,
+    bucket: str,
     ica_cli_setup: str,
     pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path],
     api_root: str,

@@ -184,7 +184,7 @@ class ManageDragenMlr(CohortStage):
 
         mlr_job: PythonJob = manage_dragen_mlr.run_mlr(
             cohort=cohort,
-            bucket=cohort.dataset.prefix(),
+            bucket=get_path_components_from_gcp_path(str(cohort.dataset.prefix()))['bucket'],
             ica_cli_setup=ICA_CLI_SETUP,
             pipeline_id_arguid_path_dict=pipeline_id_arguid_path_dict,
             api_root=ICA_REST_ENDPOINT,
