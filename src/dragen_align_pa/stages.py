@@ -156,7 +156,7 @@ class ManageDragenPipeline(CohortStage):
         )
 
 
-@stage(analysis_type='dragen_mlr', required_stages=[ManageDragenPipeline])
+@stage(required_stages=[ManageDragenPipeline])
 class ManageDragenMlr(CohortStage):
     def expected_outputs(
         self,
