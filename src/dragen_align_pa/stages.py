@@ -125,10 +125,10 @@ class ManageDragenPipeline(CohortStage):
         prefix: cpg_utils.Path = sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE
         results: dict[str, cpg_utils.Path] = {f'{cohort.name}_errors': prefix / f'{cohort.name}_errors.log'}
         for sequencing_group in cohort.get_sequencing_groups():
+            sg_name: str = sequencing_group.name
             results |= {
-                f'{sequencing_group.name}_success': prefix / f'{sequencing_group.name}_pipeline_success.json',
-                f'{sequencing_group.name}_pipeline_id_and_arguid': prefix
-                / f'{sequencing_group.name}_pipeline_id_and_arguid.json',
+                f'{sg_name}_success': prefix / f'{sg_name}_pipeline_success.json',
+                f'{sg_name}_pipeline_id_and_arguid': prefix / f'{sg_name}_pipeline_id_and_arguid.json',
             }
         return results
 
@@ -166,9 +166,10 @@ class ManageDragenMlr(CohortStage):
         prefix: cpg_utils.Path = sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE
         results: dict[str, cpg_utils.Path] = {}
         for sequencing_group in cohort.get_sequencing_groups():
+            sg_name: str = sequencing_group.name
             results |= {
-                f'{sequencing_group.name}_mlr_success': prefix / f'{sequencing_group.name}_pipeline_success.json',
-                f'{sequencing_group.name}_mlr_pipeline_id': prefix / f'{sequencing_group.name}_pipeline_id.json',
+                f'{sg_name}_mlr_success': prefix / f'{sg_name}_mlr_pipeline_success.json',
+                f'{sg_name}_mlr_pipeline_id': prefix / f'{sg_name}_mlr_pipeline_id.json',
             }
         return results
 
@@ -327,11 +328,11 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
         # Inputs from previous stage
         pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
             target=get_multicohort().get_cohorts()[0],
-            stage=ManageDragenPipeline,
-        )[f'{sequencing_group.name}_pipeline_id_and_arguid']
+            stage=ManageDragenMlr,
+        )[f'{sequencing_group.name}_mlr_pipeline_id']
 
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
-            job_name='DownloadGvcfFromIca',
+            job_name='DownloadMlrGvcfFromIca',
             sequencing_group=sequencing_group,
             filetype='recal_gvcf',
             bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
