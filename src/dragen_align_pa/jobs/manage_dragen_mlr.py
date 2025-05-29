@@ -144,6 +144,7 @@ def _run(  # noqa: PLR0915
                 continue
 
             # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
+            logger.info(f'MLR pipeline id file exists: {mlr_pipeline_id_file.exists()}')
             if not mlr_pipeline_id_file.exists():
                 mlr_analysis_id: str = _submit_mlr_run(
                     pipeline_id_arguid_path=pipeline_id_arguid_path_dict[f'{sg_name}_pipeline_id_and_arguid'],
