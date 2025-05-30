@@ -161,11 +161,11 @@ def _run(  # noqa: PLR0915
                     output_prefix=output_prefix,
                 )
                 with mlr_pipeline_id_file.open('w') as mlr_fhandle:
-                    mlr_fhandle.write(json.dumps({'mlr_pipeline_id': mlr_analysis_id}))
+                    mlr_fhandle.write(json.dumps({'pipeline_id': mlr_analysis_id}))
             else:
                 # Get an existing pipeline ID
                 with mlr_pipeline_id_file.open('r') as mlr_pid_fhandle:
-                    mlr_analysis_id = json.load(mlr_pid_fhandle)['mlr_pipeline_id']
+                    mlr_analysis_id = json.load(mlr_pid_fhandle)['pipeline_id']
                 # Cancel a running job in ICA
                 if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False):
                     logger.info(f'Cancelling pipeline run: {mlr_analysis_id} for sequencing group {sg_name}')
