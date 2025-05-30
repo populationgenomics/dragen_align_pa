@@ -164,7 +164,7 @@ class ManageDragenMlr(CohortStage):
     ) -> dict[str, cpg_utils.Path]:
         sg_bucket: cpg_utils.Path = cohort.dataset.prefix()
         prefix: cpg_utils.Path = sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE
-        results: dict[str, cpg_utils.Path] = {}
+        results: dict[str, cpg_utils.Path] = {f'{cohort.name}_errors': prefix / f'{cohort.name}_errors.log'}
         for sequencing_group in cohort.get_sequencing_groups():
             sg_name: str = sequencing_group.name
             results |= {
