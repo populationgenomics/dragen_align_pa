@@ -310,11 +310,11 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
             'gvcf': bucket_name
             / GCP_FOLDER_FOR_ICA_DOWNLOAD
             / 'recal_gvcf'
-            / f'{sequencing_group.name}.hard-filtered.gvcf.gz',
+            / f'{sequencing_group.name}.hard-filtered.recal.gvcf.gz',
             'gvcf_tbi': bucket_name
             / GCP_FOLDER_FOR_ICA_DOWNLOAD
             / 'recal_gvcf'
-            / f'{sequencing_group.name}.hard-filtered.gvcf.gz.tbi',
+            / f'{sequencing_group.name}.hard-filtered.recal.gvcf.gz.tbi',
         }
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
