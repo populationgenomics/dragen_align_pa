@@ -38,7 +38,7 @@ def _submit_mlr_run(
         pipeline_id: str = data['pipeline_id']
         ar_guid: str = data['ar_guid']
 
-    cram_path: str = json.loads(
+    cram_path: str = (
         subprocess.run(  # noqa: S603
             [
                 '/usr/local/bin/icav2',
@@ -59,7 +59,8 @@ def _submit_mlr_run(
         )
         .stdout.decode()
         .strip()
-    )['items'][0]['details']['path']
+    )
+    # )['items'][0]['details']['path']
 
     logger.info(f'CRAM path: {cram_path}')
     exit(1)
