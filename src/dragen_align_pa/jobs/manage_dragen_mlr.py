@@ -38,19 +38,37 @@ def _submit_mlr_run(
         pipeline_id: str = data['pipeline_id']
         ar_guid: str = data['ar_guid']
 
-    print(f'Pipeline ID: {pipeline_id}, ar_guid: {ar_guid}')
-    exit(1)
-    mlr_analysis_command: str = f"""
-        # Get pipeline ID and ar_guid from previous step
-        pipeline_id_arguid_filename=$(basename {pipeline_id_arguid_path})
-        gcloud storage cp {pipeline_id_arguid_path} .
-        pipeline_id=$(cat $pipeline_id_arguid_filename | jq -r .pipeline_id)
-        ar_guid=$(cat $pipeline_id_arguid_filename | jq -r .ar_guid)
+    cram_path: str = json.loads(
+        subprocess.run(  # noqa: S603
+            [
+                '/usr/local/bin/icav2',
+                'projectdata',
+                'list',
+                '--parent-folder',
+                f'/{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}_{ar_guid}_-{pipeline_id}/{sg_name}/',
+                '--data-type',
+                'FILE',
+                '--file-name',
+                f'{sg_name}.cram--match-mode',
+                'EXACT',
+                '-o',
+                'json',
+            ],
+            check=False,
+            capture_output=True,
+        )
+        .stdout.decode()
+        .strip()
+    )['items'][0]['details']['path']
 
+    logger.info(f'CRAM path: {cram_path}')
+    exit(1)
+
+    mlr_analysis_command: str = f"""
         # General authentication
         {ica_cli_setup}
-        cram_path=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}_${{ar_guid}}_-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.cram --match-mode EXACT -o json | jq -r '.items[].details.path')
-        gvcf_path=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}_${{ar_guid}}_-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.hard-filtered.gvcf.gz --match-mode EXACT -o json | jq -r '.items[].details.path')
+        cram_path=$( --match-mode EXACT -o json | jq -r '.items[].details.path')
+        gvcf_path=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}_{ar_guid}_-{pipeline_id}/{sg_name}/ --data-type FILE --file-name {sg_name}.hard-filtered.gvcf.gz --match-mode EXACT -o json | jq -r '.items[].details.path')
         cram="ica://OurDNA-DRAGEN-378${{cram_path}}"
         gvcf="ica://OurDNA-DRAGEN-378${{gvcf_path}}"
 
@@ -65,7 +83,7 @@ def _submit_mlr_run(
         --run-id {sg_name}-mlr \
         --sample-id {sg_name} \
         --input-ht-folder-url {mlr_hash_table} \
-        --output-folder-url {output_prefix}/{sg_name}_${{ar_guid}}_-${{pipeline_id}}/{sg_name} \
+        --output-folder-url {output_prefix}/{sg_name}_{ar_guid}_-{pipeline_id}/{sg_name} \
         --input-align-file-url ${{cram}} \
         --input-gvcf-file-url ${{gvcf}} \
         --analysis-instance-tier {config_retrieve(['ica', 'mlr', 'analysis_instance_tier'])} > /dev/null 2>&1
