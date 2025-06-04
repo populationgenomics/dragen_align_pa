@@ -33,6 +33,13 @@ def _submit_mlr_run(
     mlr_hash_table: str,
     output_prefix: str,
 ) -> str:
+    with pipeline_id_arguid_path.open() as pid_arguid_fhandle:
+        data: dict[str, str] = json.load(pid_arguid_fhandle)
+        pipeline_id: str = data['pipeline_id']
+        ar_guid: str = data['ar_guid']
+
+    print(f'Pipeline ID: {pipeline_id}, ar_guid: {ar_guid}')
+    exit(1)
     mlr_analysis_command: str = f"""
         # Get pipeline ID and ar_guid from previous step
         pipeline_id_arguid_filename=$(basename {pipeline_id_arguid_path})
