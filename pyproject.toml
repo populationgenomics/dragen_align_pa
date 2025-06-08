@@ -104,6 +104,7 @@ ignore = [
     "N999", # invalid module name (not lower-case and potholes)
     "I001", # Import block is un-sorted or un-formatted (to remove soon)
     "S105", # Possible hardcoded secrets
+    "S602", # Potential untrusted input in shell=True
 ]
 
 [tool.ruff.lint.isort]
