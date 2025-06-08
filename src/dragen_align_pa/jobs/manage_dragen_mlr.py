@@ -65,11 +65,7 @@ def _submit_mlr_run(
         cat {sg_name}/sample-{sg_name}-run-{sg_name}-mlr.json | jq -r ".id"
     """  # noqa: E501
     mlr_analysis_id: str = (
-        subprocess.run(  # noqa: S602
-            mlr_analysis_command, shell=True, capture_output=True, check=False
-        )
-        .stdout.decode()
-        .strip()
+        subprocess.run(mlr_analysis_command, shell=True, capture_output=True, check=False).stdout.decode().strip()
     )
 
     return mlr_analysis_id
