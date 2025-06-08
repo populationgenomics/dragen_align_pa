@@ -19,9 +19,9 @@ ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:2.0
 
 # Projects in ICA to run different analyses
 [ica.projects]
-dragen_align = "OurDNA-DRAGEN-378"
-dragen_mlr = "ourdna-dragen-mlr-jobs"
-dragen_mlr_project_id = "f2f55709-f8d4-4364-bb04-c41975d4c0ed"
+dragen_align = "main_dragen_project"
+dragen_mlr = "mlr_job_project"
+dragen_mlr_project_id = "mlr_project_id"
 
 # Flags to manage existing pipeline runs: set the appropriate flag to true and resubmit the job to cancel or resume monitoring.
 [ica.management]
