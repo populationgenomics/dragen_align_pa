@@ -228,8 +228,8 @@ def _run(  # noqa: PLR0915
             cohort.get_sequencing_groups()
         ):
             break
-        # Wait 10 minutes before checking again
-        time.sleep(600)
+        # Wait 5 1/2 minutes before checking again (average run time 20 minutes)
+        time.sleep(330)
     with open('tmp_errors.log') as tmp_log_handle:
         lines = tmp_log_handle.readlines()
         with outputs[f'{cohort.name}_mlr_errors'].open('w') as gcp_error_log_file:
