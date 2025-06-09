@@ -40,7 +40,7 @@ def _run(bucket: str, api_root: str) -> None:
 
     path_params: dict[str, str] = {'projectId': project_id}
     query_params: dict[str, Sequence[str] | list[str] | str] = {
-        'filePath': bucket,
+        'filePath': [bucket],
         'filePathMatchMode': 'STARTS_WITH_CASE_INSENSITIVE',
         'type': 'FOLDER',
     }
