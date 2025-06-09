@@ -125,6 +125,7 @@ def _run(  # noqa: PLR0915
             sg_name: str = sequencing_group.name
             mlr_pipeline_success_file: cpg_utils.Path = outputs[f'{sg_name}_mlr_success']
             mlr_pipeline_id_file: cpg_utils.Path = outputs[f'{sg_name}_mlr_pipeline_id']
+            logger.info(f'{pipeline_id_arguid_path_dict}')
             with pipeline_id_arguid_path_dict[sg_name].open() as arguid_fh:
                 ar_guid: str = json.load(arguid_fh)['ar_guid']
 
