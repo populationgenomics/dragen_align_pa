@@ -395,7 +395,7 @@ class DownloadDataFromIca(SequencingGroupStage):
         )
 
 
-@stage(required_stages=[DownloadDataFromIca])
+@stage(required_stages=[DownloadCramFromIca, DownloadGvcfFromIca, DownloadMlrGvcfFromIca, DownloadDataFromIca])
 class DeleteDataInIca(CohortStage):
     """
     Delete all the data in ICA for a dataset, so we don't pay storage costs once processing is finished
