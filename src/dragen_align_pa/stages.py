@@ -405,7 +405,7 @@ class DeleteDataInIca(CohortStage):
         bucket_name: cpg_utils.Path = cohort.dataset.prefix()
         return bucket_name / GCP_FOLDER_FOR_ICA_PREP / 'placeholder_for_delete.txt'
 
-    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
         bucket_name: str = str(cohort.dataset.prefix())
