@@ -16,6 +16,7 @@ from cpg_utils.config import config_retrieve
 from loguru import logger
 
 from dragen_align_pa.jobs import (
+    delete_data_in_ica,
     download_ica_pipeline_outputs,
     download_specific_files_from_ica,
     manage_dragen_mlr,
@@ -392,3 +393,27 @@ class DownloadDataFromIca(SequencingGroupStage):
             data=outputs,
             jobs=ica_download_job,
         )
+
+
+@stage(required_stages=[DownloadDataFromIca])
+class DeleteDataInIca(CohortStage):
+    """
+    Delete all the data in ICA for a dataset, so we don't pay storage costs once processing is finished
+    """
+
+    def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
+        bucket_name: cpg_utils.Path = cohort.dataset.prefix()
+        return bucket_name / GCP_FOLDER_FOR_ICA_PREP / 'placeholder_for_delete.txt'
+
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+        outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
+
+        bucket_name: str = str(cohort.dataset.prefix())
+
+        ica_delete_job: PythonJob = delete_data_in_ica.delete_data_in_ica(
+            cohort=cohort,
+            bucket=bucket_name,
+            api_root=ICA_REST_ENDPOINT,
+        )
+
+        return self.make_outputs(target=cohort, data=outputs, jobs=ica_delete_job)
