@@ -5,6 +5,7 @@ output_prefix = "ica"
 sequencing_type = "genome"
 input_cohorts = [ "COH0000",]
 last_stages = ['DownloadDataFromIca']
+skip_stages = ['DeleteDataInIca']
 
 # used to make sure we don't repeat previously completed stages
 check_expected_outputs = true
