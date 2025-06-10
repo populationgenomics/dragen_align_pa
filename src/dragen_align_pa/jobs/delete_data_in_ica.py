@@ -9,7 +9,8 @@ from cpg_utils.config import get_driver_image
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
-from icasdk.exceptions import ApiValueError
+from icasdk.exceptions import ApiException, ApiValueError
+from loguru import logger
 
 from dragen_align_pa import utils
 
@@ -50,11 +51,14 @@ def _run(bucket: str, ica_fid_path: cpg_utils.Path, api_root: str) -> None:
         with ica_fid_path.open() as fid_handle:
             folder_id: str = json.load(fid_handle)['analysis_output_fid']
             path_params = path_params | {'dataId': folder_id}
-            # try:
-            # The API returns None (invalid as defined by the sdk) but deletes the data anyway.
-            with contextlib.suppress(ApiValueError):
-                api_instance.delete_data(  # type: ignore[ReportUnknownVariableType]
-                    path_params=path_params  # type: ignore[ReportUnknownVariableType]
+            try:
+                # The API returns None (invalid as defined by the sdk) but deletes the data anyway.
+                with contextlib.suppress(ApiValueError):
+                    api_instance.delete_data(  # type: ignore[ReportUnknownVariableType]
+                        path_params=path_params  # type: ignore[ReportUnknownVariableType]
+                    )
+            # Used to catch instances where the data has been deleted already
+            except ApiException:
+                logger.info(
+                    f"The folder {bucket} with folder ID {folder_id} doesn't exist. Has it already been deleted?"
                 )
-            # except:
-            #     logger.info(f"The folder {bucket} with folder ID {folder_id} doesn't exist. Has it already been deleted?")
