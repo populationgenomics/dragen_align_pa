@@ -55,7 +55,7 @@ def _run(bucket: str, api_root: str) -> None:
         )
         folder_id: str = api_response.body['items'][0]['data']['id']
         if folder_id:
-            api_instance.delete_data(  # type: ignore[ReportUnknownVariableType]
+            deletion_response = api_instance.delete_data(  # type: ignore[ReportUnknownVariableType]
                 path_params=path_params | {'dataId': folder_id}  # type: ignore[ReportUnknownVariableType]
             )
         else:
