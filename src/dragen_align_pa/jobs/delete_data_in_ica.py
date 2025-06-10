@@ -53,6 +53,7 @@ def _run(bucket: str, api_root: str) -> None:
             query_params=query_params,  # type: ignore[ReportUnknownVariableType]
             path_params=path_params,  # type: ignore[ReportUnknownVariableType]
         )
+        logger.info(f'{api_response.body}')
         folder_id: str = api_response.body['items'][0]['data']['id']
         if folder_id:
             logger.info(f'I want to delete the folder {bucket} with folder ID {folder_id}')
