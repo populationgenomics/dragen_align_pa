@@ -327,10 +327,10 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
 
         # Inputs from previous stage
-        mlr_pipeline_id: cpg_utils.Path = inputs.as_dict(
+        pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
             target=get_multicohort().get_cohorts()[0],
-            stage=ManageDragenMlr,
-        )[f'{sequencing_group.name}_mlr_pipeline_id']
+            stage=ManageDragenPipeline,
+        )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
         ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
             job_name='DownloadMlrGvcfFromIca',
@@ -339,7 +339,7 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
             bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
             ica_cli_setup=ICA_CLI_SETUP,
             gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
-            pipeline_id_arguid_path=mlr_pipeline_id,
+            pipeline_id_arguid_path=pipeline_id_arguid_path,
         )
 
         return self.make_outputs(
