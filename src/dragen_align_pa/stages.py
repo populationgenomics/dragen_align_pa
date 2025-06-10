@@ -299,7 +299,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
 @stage(
     analysis_type='gvcf',
     analysis_keys=['gvcf'],
-    required_stages=[DownloadGvcfFromIca, ManageDragenMlr],
+    required_stages=[DownloadGvcfFromIca, ManageDragenMlr, ManageDragenPipeline],
 )
 class DownloadMlrGvcfFromIca(SequencingGroupStage):
     def expected_outputs(
