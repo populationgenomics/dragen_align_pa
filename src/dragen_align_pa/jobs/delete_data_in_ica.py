@@ -49,10 +49,11 @@ def _run(bucket: str, api_root: str) -> None:
     configuration.api_key['ApiKeyAuth'] = api_key
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
-        folder_id: str = api_instance.get_project_data_list(  # type: ignore[ReportUnknownVariableType]
+        api_response = api_instance.get_project_data_list(  # type: ignore[ReportUnknownVariableType]
             query_params=query_params,  # type: ignore[ReportUnknownVariableType]
             path_params=path_params,  # type: ignore[ReportUnknownVariableType]
         )
+        folder_id: str = api_response.body['items'][0]['data']['id']
         if folder_id:
             logger.info(f'I want to delete the folder {bucket} with folder ID {folder_id}')
             # api_instance.delete_data(  # type: ignore[ReportUnknownVariableType]
