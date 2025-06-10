@@ -408,7 +408,7 @@ class DeleteDataInIca(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
-        bucket_name: str = str(cohort.dataset.prefix())
+        bucket_name: str = str(cohort.dataset.prefix()).removeprefix('gs://')
 
         ica_delete_job: PythonJob = delete_data_in_ica.delete_data_in_ica(
             cohort=cohort,
