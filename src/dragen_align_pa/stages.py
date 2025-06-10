@@ -395,25 +395,38 @@ class DownloadDataFromIca(SequencingGroupStage):
         )
 
 
-@stage(required_stages=[DownloadCramFromIca, DownloadGvcfFromIca, DownloadMlrGvcfFromIca, DownloadDataFromIca])
-class DeleteDataInIca(CohortStage):
+# Change this to a sequencing group stage to be safer.
+@stage(
+    required_stages=[
+        PrepareIcaForDragenAnalysis,
+        DownloadCramFromIca,
+        DownloadGvcfFromIca,
+        DownloadMlrGvcfFromIca,
+        DownloadDataFromIca,
+    ]
+)
+class DeleteDataInIca(SequencingGroupStage):
     """
     Delete all the data in ICA for a dataset, so we don't pay storage costs once processing is finished
     """
 
-    def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
-        bucket_name: cpg_utils.Path = cohort.dataset.prefix()
+    def expected_outputs(self, sequencing_group: SequencingGroup) -> cpg_utils.Path:
+        bucket_name: cpg_utils.Path = sequencing_group.dataset.prefix()
         return bucket_name / GCP_FOLDER_FOR_ICA_PREP / 'placeholder_for_delete.txt'
 
-    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
-        outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
+        # Inputs from previous stage
+        ica_fid_path: cpg_utils.Path = inputs.as_path(target=sequencing_group, stage=PrepareIcaForDragenAnalysis)
 
-        bucket_name: str = str(cohort.dataset.prefix()).removeprefix('gs:/')
+        outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
+
+        bucket_name: str = str(sequencing_group.dataset.prefix()).removeprefix('gs:/')
 
         ica_delete_job: PythonJob = delete_data_in_ica.delete_data_in_ica(
-            cohort=cohort,
+            sequencing_group=sequencing_group,
             bucket=bucket_name,
+            ica_fid_path=ica_fid_path,
             api_root=ICA_REST_ENDPOINT,
         )
 
-        return self.make_outputs(target=cohort, data=outputs, jobs=ica_delete_job)
+        return self.make_outputs(target=sequencing_group, data=outputs, jobs=ica_delete_job)
