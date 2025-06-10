@@ -55,7 +55,11 @@ def _run(bucket: str, api_root: str) -> None:
             query_params=query_params,  # type: ignore[ReportUnknownVariableType]
             path_params=path_params,  # type: ignore[ReportUnknownVariableType]
         )
-        if folder_id := api_response.body['items'][0]['data']['id']:
+        try:
+            folder_id: str | None = api_response.body['items'][0]['data']['id']
+        except IndexError:
+            folder_id = None
+        if folder_id:
             path_params = path_params | {'dataId': folder_id}
             # The API returns None (invalid as defined by the sdk) but deletes the data anyway.
             with contextlib.suppress(ApiValueError):
