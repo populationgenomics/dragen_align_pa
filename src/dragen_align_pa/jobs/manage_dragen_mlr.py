@@ -125,8 +125,7 @@ def _run(  # noqa: PLR0915
             sg_name: str = sequencing_group.name
             mlr_pipeline_success_file: cpg_utils.Path = outputs[f'{sg_name}_mlr_success']
             mlr_pipeline_id_file: cpg_utils.Path = outputs[f'{sg_name}_mlr_pipeline_id']
-            logger.info(f'{pipeline_id_arguid_path_dict}')
-            with pipeline_id_arguid_path_dict[sg_name].open() as arguid_fh:
+            with pipeline_id_arguid_path_dict[f'{sg_name}_pipeline_id_and_arguid'].open() as arguid_fh:
                 ar_guid: str = json.load(arguid_fh)['ar_guid']
 
             output_prefix: str = f'ica://{dragen_align_project}/{bucket}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{sg_name}'  # noqa: E501
