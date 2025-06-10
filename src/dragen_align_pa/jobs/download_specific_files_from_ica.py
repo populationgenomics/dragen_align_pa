@@ -66,7 +66,7 @@ def download_data_from_ica(
 
                 # Get md5sum of the downloaded data file and compare it with the ICA md5sum
                 # Checking here because using icav2 package to download which doesn't automatically perform checksum matching
-                ica_md5_hash=$(cat $BATCH_TMPDIR/{sg_name}/{sg_name}.{data}.md5sum)
+                ica_md5_hash=$(cat $BATCH_TMPDIR/{sg_name}/{sg_name}.{data}.md5sum | awk '{{print $1}})
                 self_md5=$(cat $BATCH_TMPDIR/{sg_name}/{sg_name}.{data} | md5sum | cut -d " " -f1)
                 if [ "$self_md5" != "$ica_md5_hash" ]; then
                     echo "Error: MD5 checksums do not match!"
