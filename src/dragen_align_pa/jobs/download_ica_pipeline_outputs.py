@@ -30,11 +30,13 @@ def download_bulk_data_from_ica(
     ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
     bucket: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
     logger.info(f'Downloading bulk ICA data for {sequencing_group.name}.')
+    is_bioheart: bool = 'bioheart' in sequencing_group.dataset.name
+
     job.command(
         command(
             rf"""
             function download_extra_data {{
-            files_and_ids=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}_${{ar_guid}}_-${{pipeline_id}}/{sequencing_group.name}/ -o json | jq -r '.items[] | select(.details.name | test(".cram|.gvcf") | not) | "\(.details.name) \(.id)"')
+            files_and_ids=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}${{ar_guid}}-${{pipeline_id}}/{sequencing_group.name}/ -o json | jq -r '.items[] | select(.details.name | test(".cram|.gvcf") | not) | "\(.details.name) \(.id)"')
             while IFS= read -r line; do
                 name=$(echo "$line" | awk '{{print $1}}')
                 id=$(echo "$line" | awk '{{print $2}}')
@@ -51,7 +53,12 @@ def download_bulk_data_from_ica(
                 gcloud storage cp {pipeline_id_arguid_path} .
                 pipeline_id=$(cat $pipeline_id_arguid_filename | jq -r .pipeline_id)
                 echo "Pipeline ID: $pipeline_id"
-                ar_guid=$(cat $pipeline_id_arguid_filename | jq -r .ar_guid)
+                if {is_bioheart}
+                then
+                    ar_guid=''
+                else
+                    ar_guid=$(cat $pipeline_id_arguid_filename | jq -r .ar_guid)
+                fi
 
             retry download_extra_data
             """,  # noqa: E501
