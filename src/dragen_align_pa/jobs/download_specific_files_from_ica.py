@@ -39,7 +39,6 @@ def download_data_from_ica(
     authenticate_cloud_credentials_in_job(job=job)
 
     ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
-    data: str
     index: Literal['crai', 'tbi'] = 'crai' if filetype == 'cram' else 'tbi'
     md5: str = 'md5sum'
     if filetype == 'cram':
