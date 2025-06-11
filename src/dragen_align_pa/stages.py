@@ -125,12 +125,15 @@ class ManageDragenPipeline(CohortStage):
         sg_bucket: cpg_utils.Path = cohort.dataset.prefix()
         prefix: cpg_utils.Path = sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE
         results: dict[str, cpg_utils.Path] = {f'{cohort.name}_errors': prefix / f'{cohort.name}_errors.log'}
+        is_bioheart: bool = 'bioheart' in cohort.dataset.name
         for sequencing_group in cohort.get_sequencing_groups():
             sg_name: str = sequencing_group.name
-            results |= {
-                f'{sg_name}_success': prefix / f'{sg_name}_pipeline_success.json',
-                f'{sg_name}_pipeline_id_and_arguid': prefix / f'{sg_name}_pipeline_id_and_arguid.json',
-            }
+            results |= {f'{sg_name}_success': prefix / f'{sg_name}_pipeline_success.json'}
+            if is_bioheart:
+                results |= {f'{sg_name}_pipeline_id_and_arguid': prefix / f'{sg_name}_pipeline_id.json'}
+            else:
+                results |= {f'{sg_name}_pipeline_id_and_arguid': prefix / f'{sg_name}_pipeline_id_and_arguid.json'}
+
         return results
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:
