@@ -1,4 +1,5 @@
 import json
+import subprocess
 from math import ceil
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -17,6 +18,11 @@ SECRET_CLIENT = secretmanager.SecretManagerServiceClient()
 SECRET_PROJECT: Final = 'cpg-common'
 SECRET_NAME: Final = 'illumina_cpg_workbench_api'
 SECRET_VERSION: Final = 'latest'
+
+
+def delete_pipeline_id_file(pipeline_id_file: str) -> None:
+    logger.info(f'Deleting the pipeline run ID file {pipeline_id_file}')
+    subprocess.run(['gcloud', 'storage', 'rm', pipeline_id_file], check=True)  # noqa: S603, S607
 
 
 def calculate_needed_storage(

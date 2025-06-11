@@ -1,16 +1,14 @@
 from typing import Literal
 
 import icasdk
+from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_analysis_api
 from loguru import logger
 
 from dragen_align_pa import utils
 
 
-def run(
-    ica_pipeline_id: str | dict[str, str],
-    api_root: str,
-) -> str:
+def run(ica_pipeline_id: str | dict[str, str], api_root: str, is_mlr: bool = False) -> str:
     """Monitor a pipeline running in ICA
 
     Args:
@@ -35,7 +33,10 @@ def run(
     logger.info(f'Monitoring pipeline run {pipeline_id} which of type {type(pipeline_id)}')
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
-        path_params: dict[str, str] = {'projectId': project_id}
+        if not is_mlr:
+            path_params: dict[str, str] = {'projectId': project_id}
+        else:
+            path_params = {'projectId': config_retrieve(['ica', 'projects', 'dragen_mlr_project_id'])}
 
         return utils.check_ica_pipeline_status(
             api_instance=api_instance,

@@ -1,13 +1,14 @@
 from typing import Literal
 
 import icasdk
+from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_analysis_api
 from loguru import logger
 
 from dragen_align_pa import utils
 
 
-def run(ica_pipeline_id: str, api_root: str) -> dict[str, str]:
+def run(ica_pipeline_id: str, api_root: str, is_mlr: bool = False) -> dict[str, str]:
     """Cancel a running ICA pipeline via the API
 
     Args:
@@ -28,7 +29,11 @@ def run(ica_pipeline_id: str, api_root: str) -> dict[str, str]:
     configuration = icasdk.Configuration(host=api_root)
     configuration.api_key['ApiKeyAuth'] = api_key
 
-    path_parameters: dict[str, str] = {'projectId': project_id} | {'analysisId': ica_pipeline_id}
+    if not is_mlr:
+        path_parameters: dict[str, str] = {'projectId': project_id}
+    else:
+        path_parameters = {'projectId': config_retrieve(['ica', 'projects', 'dragen_mlr_project_id'])}
+    path_parameters = path_parameters | {'analysisId': ica_pipeline_id}
 
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)

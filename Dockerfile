@@ -1,7 +1,7 @@
 FROM australia-southeast1-docker.pkg.dev/cpg-common/images/cpg_hail_gcloud:0.2.134.cpg1
 
 # Dragen align pa pipeline version.
-ENV VERSION=1.0.2
+ENV VERSION=2.0.0
 
 ARG ICA_CLI_VERSION=${ICA_CLI_VERSION:-2.34.0}
 
@@ -25,8 +25,12 @@ RUN apt update && apt install -y \
 WORKDIR /dragen_align_pa
 
 # Add in the additional requirements that are most likely to change.
-COPY LICENSE pyproject.toml README.md .
+COPY LICENSE pyproject.toml README.md ./
 COPY src src/
+COPY third_party third_party/
+
 
 RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
-    && pip install .
+    && pip install . \
+    && pip install third_party/popgen_cli-2.1.0-py3-none-any.whl \
+    && pip install typing-extensions==4.12.0

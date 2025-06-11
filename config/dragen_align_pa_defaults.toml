@@ -5,6 +5,7 @@ output_prefix = "ica"
 sequencing_type = "genome"
 input_cohorts = [ "COH0000",]
 last_stages = ['DownloadDataFromIca']
+skip_stages = ['DeleteDataInIca']
 
 # used to make sure we don't repeat previously completed stages
 check_expected_outputs = true
@@ -12,11 +13,16 @@ check_expected_outputs = true
 # the method to register outputs, can be missing - will not generate metamist analysis entries
 status_reporter = 'metamist'
 
-
 [images]
 # This image contains the entire pipeline code. The version is automatically bumped by bump-my-version (or other version
 # incrememt tools), but you may need to change the final -1 suffix to the correct suffix.
-ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:1.0.2-1"
+ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:2.0.0-1"
+
+# Projects in ICA to run different analyses
+[ica.projects]
+dragen_align = "main_dragen_project"
+dragen_mlr = "mlr_job_project"
+dragen_mlr_project_id = "mlr_project_id"
 
 # Flags to manage existing pipeline runs: set the appropriate flag to true and resubmit the job to cancel or resume monitoring.
 [ica.management]
@@ -66,3 +72,8 @@ gatk = ''
 cross_cont_vcf = 'fil.1a7a2d0442854127e5d608da2935b1b0'
 coverage_region_1 = 'fil.ad60897bc97e4646f28c08da33ba0a20'
 coverage_region_2 = 'fil.c4ade57f5ffe4baff28d08da33ba0a20'
+
+[ica.mlr]
+config_json = "fil.28f1c8b9408a47cb595608dd9d8fcae1"
+mlr_hash_table = "ica://ourdna-dragen-mlr-jobs/data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9"
+analysis_instance_tier = "economy"
