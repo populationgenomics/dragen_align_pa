@@ -122,6 +122,8 @@ def _run(  # noqa: PLR0915
     mlr_hash_table: str = config_retrieve(['ica', 'mlr', 'mlr_hash_table'])
 
     is_bioheart: bool = 'bioheart' in cohort.dataset.name
+    logger.info(f'Dataset name is: {cohort.dataset.name}')
+    logger.info(f'Is Bioheart = {"bioheart" in cohort.dataset.name}')
 
     running_pipelines: list[str] = []
     cancelled_pipelines: list[str] = []
