@@ -88,12 +88,13 @@ def download_data_from_ica(
                 mkdir -p $BATCH_TMPDIR/{sg_name}
                 pipeline_id_arguid_filename=$(basename {pipeline_id_arguid_path})
                 gcloud storage cp {pipeline_id_arguid_path} .
-                pipeline_id=$(cat $pipeline_id_arguid_filename | jq -r .pipeline_id)
                 echo "Pipeline ID: $pipeline_id"
                 if {is_bioheart}
                 then
+                    pipeline_id=$(cat $pipeline_id_arguid_filename)
                     ar_guid=''
                 else
+                    pipeline_id=$(cat $pipeline_id_arguid_filename | jq -r .pipeline_id)
                     ar_guid=$(cat $pipeline_id_arguid_filename | jq -r .ar_guid)
                 fi
 
