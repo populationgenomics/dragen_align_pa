@@ -96,7 +96,7 @@ def download_data_from_ica(
                     ar_guid=''
                 else
                     pipeline_id=$(cat $pipeline_id_arguid_filename | jq -r .pipeline_id)
-                    ar_guid=$(cat $pipeline_id_arguid_filename | jq -r .ar_guid)
+                    ar_guid=_$(cat $pipeline_id_arguid_filename | jq -r .ar_guid)_
                 fi
 
                 retry download_individual_files

@@ -57,7 +57,7 @@ def download_bulk_data_from_ica(
                 then
                     ar_guid=''
                 else
-                    ar_guid=$(cat $pipeline_id_arguid_filename | jq -r .ar_guid)
+                    ar_guid=_$(cat $pipeline_id_arguid_filename | jq -r .ar_guid)_
                 fi
 
             retry download_extra_data
