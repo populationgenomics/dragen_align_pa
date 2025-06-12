@@ -4,7 +4,7 @@ import time
 
 import cpg_utils
 from cpg_flow.targets import Cohort
-from cpg_utils.config import config_retrieve, get_driver_image
+from cpg_utils.config import config_retrieve, get_driver_image, try_get_ar_guid
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
@@ -139,7 +139,10 @@ def _run(  # noqa: PLR0915
             mlr_pipeline_success_file: cpg_utils.Path = outputs[f'{sg_name}_mlr_success']
             mlr_pipeline_id_file: cpg_utils.Path = outputs[f'{sg_name}_mlr_pipeline_id']
             with pipeline_id_arguid_path_dict[f'{sg_name}_pipeline_id_and_arguid'].open() as arguid_fh:
-                ar_guid: str = json.load(arguid_fh)['ar_guid']
+                if is_bioheart:
+                    ar_guid: str = try_get_ar_guid()
+                else:
+                    ar_guid = json.load(arguid_fh)['ar_guid']
 
             output_prefix: str = f'ica://{dragen_align_project}/{bucket}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{sg_name}'  # noqa: E501
 
