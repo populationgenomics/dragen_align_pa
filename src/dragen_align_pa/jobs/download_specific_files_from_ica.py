@@ -33,7 +33,8 @@ def download_data_from_ica(
     pipeline_id_arguid_path: cpg_utils.Path,
 ) -> BashJob:
     sg_name: str = sequencing_group.name
-    is_bioheart: bool = 'bioheart' in sequencing_group.dataset.name
+    # Bash hackiness
+    is_bioheart: str = f'{"bioheart" in sequencing_group.dataset.name}'.lower()
     logger.info(f'Downloading {filetype} and {filetype} index for {sg_name}')
 
     job: BashJob = _initalise_download_job(sequencing_group=sequencing_group, job_name=job_name)
