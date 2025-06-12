@@ -43,8 +43,8 @@ def _submit_mlr_run(
     else:
         with pipeline_id_arguid_path.open() as pid_arguid_fhandle:
             data: dict[str, str] = json.load(pid_arguid_fhandle)
-            pipeline_id: str = data['pipeline_id']
-            ar_guid: str = f'_{data["ar_guid"]}_'
+            pipeline_id = data['pipeline_id']
+            ar_guid = f'_{data["ar_guid"]}_'
 
     mlr_analysis_command: str = f"""
         # General authentication
