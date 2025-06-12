@@ -38,8 +38,7 @@ def _submit_mlr_run(
     # Therefore the paths need to be corrected for that
     if is_bioheart:
         with pipeline_id_arguid_path.open() as pid_arguid_fhandle:
-            data: dict[str, str] = json.load(pid_arguid_fhandle)
-            pipeline_id: str = data['pipeline_id']
+            pipeline_id: str = pid_arguid_fhandle.readline().strip()
             ar_guid: str = ''
     else:
         with pipeline_id_arguid_path.open() as pid_arguid_fhandle:
