@@ -4,7 +4,7 @@ import time
 
 import cpg_utils
 from cpg_flow.targets import Cohort
-from cpg_utils.config import config_retrieve, get_driver_image
+from cpg_utils.config import config_retrieve, get_driver_image, try_get_ar_guid
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
@@ -32,17 +32,25 @@ def _submit_mlr_run(
     mlr_config_json: str,
     mlr_hash_table: str,
     output_prefix: str,
+    is_bioheart: bool,
 ) -> str:
-    with pipeline_id_arguid_path.open() as pid_arguid_fhandle:
-        data: dict[str, str] = json.load(pid_arguid_fhandle)
-        pipeline_id: str = data['pipeline_id']
-        ar_guid: str = data['ar_guid']
+    # All of bioheart was run through alignment and genotyping before the implementation of the ar_guid in ICA
+    # Therefore the paths need to be corrected for that
+    if is_bioheart:
+        with pipeline_id_arguid_path.open() as pid_arguid_fhandle:
+            pipeline_id: str = pid_arguid_fhandle.readline().strip()
+            ar_guid: str = ''
+    else:
+        with pipeline_id_arguid_path.open() as pid_arguid_fhandle:
+            data: dict[str, str] = json.load(pid_arguid_fhandle)
+            pipeline_id = data['pipeline_id']
+            ar_guid = f'_{data["ar_guid"]}_'
 
     mlr_analysis_command: str = f"""
         # General authentication
         {ica_cli_setup}
-        cram_path=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}_{ar_guid}_-{pipeline_id}/{sg_name}/ --data-type FILE --file-name {sg_name}.cram --match-mode EXACT -o json | jq -r '.items[].details.path')
-        gvcf_path=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}_{ar_guid}_-{pipeline_id}/{sg_name}/ --data-type FILE --file-name {sg_name}.hard-filtered.gvcf.gz --match-mode EXACT -o json | jq -r '.items[].details.path')
+        cram_path=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/ --data-type FILE --file-name {sg_name}.cram --match-mode EXACT -o json | jq -r '.items[].details.path')
+        gvcf_path=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/ --data-type FILE --file-name {sg_name}.hard-filtered.gvcf.gz --match-mode EXACT -o json | jq -r '.items[].details.path')
         cram="ica://OurDNA-DRAGEN-378${{cram_path}}"
         gvcf="ica://OurDNA-DRAGEN-378${{gvcf_path}}"
 
@@ -57,7 +65,7 @@ def _submit_mlr_run(
         --run-id {sg_name}-mlr \
         --sample-id {sg_name} \
         --input-ht-folder-url {mlr_hash_table} \
-        --output-folder-url {output_prefix}/{sg_name}_{ar_guid}_-{pipeline_id}/{sg_name} \
+        --output-folder-url {output_prefix}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name} \
         --input-align-file-url ${{cram}} \
         --input-gvcf-file-url ${{gvcf}} \
         --analysis-instance-tier {config_retrieve(['ica', 'mlr', 'analysis_instance_tier'])} > /dev/null 2>&1
@@ -112,6 +120,10 @@ def _run(  # noqa: PLR0915
     mlr_config_json: str = config_retrieve(['ica', 'mlr', 'config_json'])
     mlr_hash_table: str = config_retrieve(['ica', 'mlr', 'mlr_hash_table'])
 
+    is_bioheart: bool = 'bioheart' in cohort.dataset.name
+    logger.info(f'Dataset name is: {cohort.dataset.name}')
+    logger.info(f'Is Bioheart = {"bioheart" in cohort.dataset.name}')
+
     running_pipelines: list[str] = []
     cancelled_pipelines: list[str] = []
     failed_pipelines: list[str] = []
@@ -126,7 +138,10 @@ def _run(  # noqa: PLR0915
             mlr_pipeline_success_file: cpg_utils.Path = outputs[f'{sg_name}_mlr_success']
             mlr_pipeline_id_file: cpg_utils.Path = outputs[f'{sg_name}_mlr_pipeline_id']
             with pipeline_id_arguid_path_dict[f'{sg_name}_pipeline_id_and_arguid'].open() as arguid_fh:
-                ar_guid: str = json.load(arguid_fh)['ar_guid']
+                if is_bioheart:
+                    ar_guid: str = try_get_ar_guid()
+                else:
+                    ar_guid = json.load(arguid_fh)['ar_guid']
 
             output_prefix: str = f'ica://{dragen_align_project}/{bucket}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{sg_name}'  # noqa: E501
 
@@ -156,6 +171,7 @@ def _run(  # noqa: PLR0915
                     mlr_config_json=mlr_config_json,
                     mlr_hash_table=mlr_hash_table,
                     output_prefix=output_prefix,
+                    is_bioheart=is_bioheart,
                 )
                 with mlr_pipeline_id_file.open('w') as mlr_fhandle:
                     mlr_fhandle.write(json.dumps({'pipeline_id': mlr_analysis_id, 'ar_guid': ar_guid}))

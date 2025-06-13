@@ -33,6 +33,8 @@ def download_data_from_ica(
     pipeline_id_arguid_path: cpg_utils.Path,
 ) -> BashJob:
     sg_name: str = sequencing_group.name
+    # Bash hackiness
+    is_bioheart: str = f'{"bioheart" in sequencing_group.dataset.name}'.lower()
     logger.info(f'Downloading {filetype} and {filetype} index for {sg_name}')
 
     job: BashJob = _initalise_download_job(sequencing_group=sequencing_group, job_name=job_name)
@@ -56,9 +58,9 @@ def download_data_from_ica(
         command(
             f"""
                 function download_individual_files {{
-                main_data=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}_${{ar_guid}}_-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.{data} --match-mode EXACT -o json | jq -r '.items[].id')
-                index=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}_${{ar_guid}}_-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.{data}.{index} --match-mode EXACT -o json | jq -r '.items[].id')
-                md5=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}_${{ar_guid}}_-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.{data}.{md5} --match-mode EXACT -o json | jq -r '.items[].id')
+                main_data=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}${{ar_guid}}-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.{data} --match-mode EXACT -o json | jq -r '.items[].id')
+                index=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}${{ar_guid}}-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.{data}.{index} --match-mode EXACT -o json | jq -r '.items[].id')
+                md5=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}${{ar_guid}}-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.{data}.{md5} --match-mode EXACT -o json | jq -r '.items[].id')
                 icav2 projectdata download $main_data $BATCH_TMPDIR/{sg_name}/{sg_name}.{data} --exclude-source-path
                 icav2 projectdata download $index $BATCH_TMPDIR/{sg_name}/{sg_name}.{data}.{index} --exclude-source-path
                 icav2 projectdata download $md5 $BATCH_TMPDIR/{sg_name}/{sg_name}.{data}.md5sum --exclude-source-path
@@ -87,9 +89,15 @@ def download_data_from_ica(
                 mkdir -p $BATCH_TMPDIR/{sg_name}
                 pipeline_id_arguid_filename=$(basename {pipeline_id_arguid_path})
                 gcloud storage cp {pipeline_id_arguid_path} .
-                pipeline_id=$(cat $pipeline_id_arguid_filename | jq -r .pipeline_id)
                 echo "Pipeline ID: $pipeline_id"
-                ar_guid=$(cat $pipeline_id_arguid_filename | jq -r .ar_guid)
+                if {is_bioheart}
+                then
+                    pipeline_id=$(cat $pipeline_id_arguid_filename)
+                    ar_guid=''
+                else
+                    pipeline_id=$(cat $pipeline_id_arguid_filename | jq -r .pipeline_id)
+                    ar_guid=_$(cat $pipeline_id_arguid_filename | jq -r .ar_guid)_
+                fi
 
                 retry download_individual_files
                 """,  # noqa: E501
