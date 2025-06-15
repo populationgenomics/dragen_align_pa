@@ -16,7 +16,7 @@ status_reporter = 'metamist'
 [images]
 # This image contains the entire pipeline code. The version is automatically bumped by bump-my-version (or other version
 # incrememt tools), but you may need to change the final -1 suffix to the correct suffix.
-ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:2.0.1-1"
+ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:2.0.2-1"
 
 # Projects in ICA to run different analyses
 [ica.projects]
