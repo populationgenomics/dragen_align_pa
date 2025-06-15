@@ -402,6 +402,7 @@ class DownloadDataFromIca(SequencingGroupStage):
 @stage(
     required_stages=[
         PrepareIcaForDragenAnalysis,
+        UploadDataToIca,
         DownloadCramFromIca,
         DownloadGvcfFromIca,
         DownloadMlrGvcfFromIca,
@@ -420,6 +421,7 @@ class DeleteDataInIca(SequencingGroupStage):
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
         # Inputs from previous stage
         ica_fid_path: cpg_utils.Path = inputs.as_path(target=sequencing_group, stage=PrepareIcaForDragenAnalysis)
+        alignment_fid_paths: cpg_utils.Path = inputs.as_path(target=sequencing_group, stage=UploadDataToIca)
 
         outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
 
@@ -429,6 +431,7 @@ class DeleteDataInIca(SequencingGroupStage):
             sequencing_group=sequencing_group,
             bucket=bucket_name,
             ica_fid_path=ica_fid_path,
+            alignment_fid_paths=alignment_fid_paths,
             api_root=ICA_REST_ENDPOINT,
         )
 
