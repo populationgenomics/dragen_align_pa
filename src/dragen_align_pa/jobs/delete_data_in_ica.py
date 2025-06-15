@@ -25,32 +25,41 @@ def _initalise_delete_job(sequencing_group: SequencingGroup) -> PythonJob:
 
 
 def delete_data_in_ica(
-    sequencing_group: SequencingGroup, bucket: str, ica_fid_path: cpg_utils.Path, api_root: str
+    sequencing_group: SequencingGroup,
+    bucket: str,
+    ica_fid_path: cpg_utils.Path,
+    alignment_fid_paths: cpg_utils.Path,
+    api_root: str,
 ) -> PythonJob:
     delete_job: PythonJob = _initalise_delete_job(sequencing_group=sequencing_group)
     delete_job.call(
         _run,
         bucket=bucket,
         ica_fid_path=ica_fid_path,
+        alignment_fid_paths=alignment_fid_paths,
         api_root=api_root,
     )
     return delete_job
 
 
-def _run(bucket: str, ica_fid_path: cpg_utils.Path, api_root: str) -> None:
+def _run(bucket: str, ica_fid_path: cpg_utils.Path, alignment_fid_paths: cpg_utils.Path, api_root: str) -> None:
     secrets: dict[Literal['projectID', 'apiKey'], str] = utils.get_ica_secrets()
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
 
     path_params: dict[str, str] = {'projectId': project_id}
+    fids: list[str] | None = []
 
     configuration = icasdk.Configuration(host=api_root)
     configuration.api_key['ApiKeyAuth'] = api_key
+    with ica_fid_path.open() as fid_handle:
+        fids.append(json.load(fid_handle)['analysis_output_fid'])
+    with alignment_fid_paths.open() as alignment_fid_handle:
+        fids = fids + [value for value in json.load(alignment_fid_handle).values()]
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
-        with ica_fid_path.open() as fid_handle:
-            folder_id: str = json.load(fid_handle)['analysis_output_fid']
-            path_params = path_params | {'dataId': folder_id}
+        for f_id in fids:
+            path_params = path_params | {'dataId': f_id}
             try:
                 # The API returns None (invalid as defined by the sdk) but deletes the data anyway.
                 with contextlib.suppress(ApiValueError):
@@ -59,6 +68,4 @@ def _run(bucket: str, ica_fid_path: cpg_utils.Path, api_root: str) -> None:
                     )
             # Used to catch instances where the data has been deleted already
             except ApiException:
-                logger.info(
-                    f"The folder {bucket} with folder ID {folder_id} doesn't exist. Has it already been deleted?"
-                )
+                logger.info(f"The folder {bucket} with folder ID {f_id} doesn't exist. Has it already been deleted?")
