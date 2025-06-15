@@ -48,14 +48,14 @@ def _run(bucket: str, ica_fid_path: cpg_utils.Path, alignment_fid_paths: cpg_uti
     api_key: str = secrets['apiKey']
 
     path_params: dict[str, str] = {'projectId': project_id}
-    fids: list[str] | None = []
+    fids: list[str] = []
 
     configuration = icasdk.Configuration(host=api_root)
     configuration.api_key['ApiKeyAuth'] = api_key
     with ica_fid_path.open() as fid_handle:
         fids.append(json.load(fid_handle)['analysis_output_fid'])
     with alignment_fid_paths.open() as alignment_fid_handle:
-        fids = fids + [value for value in json.load(alignment_fid_handle).values()]
+        fids = fids + list(json.load(alignment_fid_handle).values())
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
         for f_id in fids:
