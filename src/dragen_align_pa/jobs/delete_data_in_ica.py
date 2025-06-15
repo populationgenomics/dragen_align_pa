@@ -58,16 +58,14 @@ def _run(bucket: str, ica_fid_path: cpg_utils.Path, alignment_fid_paths: cpg_uti
         fids = fids + [value for value in json.load(alignment_fid_handle).values()]
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
-            for f_id in fids:
-                path_params = path_params | {'dataId': f_id}
-                try:
-                    # The API returns None (invalid as defined by the sdk) but deletes the data anyway.
-                    with contextlib.suppress(ApiValueError):
-                        api_instance.delete_data(  # type: ignore[ReportUnknownVariableType]
-                            path_params=path_params  # type: ignore[ReportUnknownVariableType]
-                        )
-                # Used to catch instances where the data has been deleted already
-                except ApiException:
-                    logger.info(
-                        f"The folder {bucket} with folder ID {f_id} doesn't exist. Has it already been deleted?"
+        for f_id in fids:
+            path_params = path_params | {'dataId': f_id}
+            try:
+                # The API returns None (invalid as defined by the sdk) but deletes the data anyway.
+                with contextlib.suppress(ApiValueError):
+                    api_instance.delete_data(  # type: ignore[ReportUnknownVariableType]
+                        path_params=path_params  # type: ignore[ReportUnknownVariableType]
                     )
+            # Used to catch instances where the data has been deleted already
+            except ApiException:
+                logger.info(f"The folder {bucket} with folder ID {f_id} doesn't exist. Has it already been deleted?")
