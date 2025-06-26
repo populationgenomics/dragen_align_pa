@@ -161,25 +161,23 @@ def _run(  # noqa: PLR0915
                     retried_pipelines.append(sg_name)
                     logger.info(f'Retrying Dragen pipeline for sequencing group: {sg_name}')
 
-            # If some pipelines have been cancelled, abort this pipeline
-            # This code will only trigger if a 'cancel pipeline' run is submitted before this master pipeline run is
-            # cancelled in Hail Batch
-            if cancelled_pipelines:
-                # If there are both cancelled and failed pipelines,
-                # write the failed pipelines to the error log before exiting.
-                if failed_pipelines:
-                    with open('tmp_errors.log') as tmp_log_handle:
-                        lines: list[str] = tmp_log_handle.readlines()
-                        with outputs[f'{cohort.name}_errors'].open('a') as gcp_error_log_file:
-                            gcp_error_log_file.write('\n'.join(lines))
-                raise Exception(f'The following pipelines have been cancelled: {" ".join(cancelled_pipelines)}')
+        # If some pipelines have been cancelled, abort this pipeline
+        # This code will only trigger if a 'cancel pipeline' run is submitted before this master pipeline run is
+        # cancelled in Hail Batch
+        if cancelled_pipelines:
+            # If there are both cancelled and failed pipelines,
+            # write the failed pipelines to the error log before exiting.
+            if failed_pipelines:
+                with open('tmp_errors.log') as tmp_log_handle:
+                    lines: list[str] = tmp_log_handle.readlines()
+                    with outputs[f'{cohort.name}_errors'].open('a') as gcp_error_log_file:
+                        gcp_error_log_file.write('\n'.join(lines))
+            raise Exception(f'The following pipelines have been cancelled: {" ".join(cancelled_pipelines)}')
 
-            # If more than 5% of pipelines are failing, exit now so we can investigate
-            if failed_pipelines and float(len(failed_pipelines)) / float(len(cohort.get_sequencing_groups())) > 0.05:  # noqa: PLR2004
-                raise Exception(
-                    f'More than 5% of pipelines have failed. Failing pipelines: {" ".join(failed_pipelines)}'
-                )
-            # Catch just in case everything is finished on the first pass through the loop
+        # If more than 5% of pipelines are failing, exit now so we can investigate
+        if failed_pipelines and float(len(failed_pipelines)) / float(len(cohort.get_sequencing_groups())) > 0.05:  # noqa: PLR2004
+            raise Exception(f'More than 5% of pipelines have failed. Failing pipelines: {" ".join(failed_pipelines)}')
+        # Catch just in case everything is finished on the first pass through the loop
         if (len(completed_pipelines) + len(cancelled_pipelines) + len(failed_pipelines)) == len(
             cohort.get_sequencing_groups()
         ):
