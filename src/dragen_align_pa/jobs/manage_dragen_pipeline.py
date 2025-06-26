@@ -104,7 +104,7 @@ def _run(  # noqa: PLR0915
 
             # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
             if not pipeline_id_arguid_file_exists:
-                ica_pipeline_id: str = _submit_new_ica_pipeline(
+                ica_pipeline_id = _submit_new_ica_pipeline(
                     sg_name=sg_name,
                     ica_fids_path=str(ica_fids_path[sg_name]),
                     analysis_output_fid_path=str(analysis_output_fids_path[sg_name]),
@@ -150,7 +150,7 @@ def _run(  # noqa: PLR0915
                 )
                 # Try again one time in case of transient Dragen errors
                 if sg_name not in retried_pipelines:
-                    ica_pipeline_id: str = _submit_new_ica_pipeline(
+                    ica_pipeline_id = _submit_new_ica_pipeline(
                         sg_name=sg_name,
                         ica_fids_path=str(ica_fids_path[sg_name]),
                         analysis_output_fid_path=str(analysis_output_fids_path[sg_name]),
