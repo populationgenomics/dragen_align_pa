@@ -54,7 +54,7 @@ analysis-runner \
 --config config.toml \
 --output-dir ica-test \
 --description "Description for analysis-runner" \
---image "australia-southeast1-docker.pkg.dev/cpg-common/images-dev/dragen_align_pa:2.0.2-1" \
+--image "australia-southeast1-docker.pkg.dev/cpg-common/images-dev/dragen_align_pa:2.0.3-1" \
 dragen_align_pa
 ```
 Note that the `--output-dir` flag is required by `analysis-runner`, but is not used in this workflow. No outputs are written to the location, so any placeholder value can be entered here.

@@ -64,6 +64,7 @@ def _run(  # noqa: PLR0915
     running_pipelines: list[str] = []
     cancelled_pipelines: list[str] = []
     failed_pipelines: list[str] = []
+    retried_pipelines: list[str] = []
     # If a sequencing group is in this list, we can skip checking its status
     completed_pipelines: list[str] = []
     while (len(completed_pipelines) + len(cancelled_pipelines) + len(failed_pipelines)) < len(
@@ -88,9 +89,22 @@ def _run(  # noqa: PLR0915
             ):
                 continue
 
+            # Get a pipeline ID for each sequencing group, if it exists.
+            ica_pipeline_id: str = ''
+            if pipeline_id_arguid_file_exists := pipeline_id_arguid_file.exists():
+                with pipeline_id_arguid_file.open('r') as pipeline_fid_handle:
+                    ica_pipeline_id = json.load(pipeline_fid_handle)['pipeline_id']
+
+            # Handle cancelling a pipeline firrst
+            # Cancel a running job in ICA
+            if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False) and ica_pipeline_id:
+                logger.info(f'Cancelling pipeline run: {ica_pipeline_id} for sequencing group {sg_name}')
+                cancel_ica_pipeline_run.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
+                delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
+
             # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
-            if not pipeline_id_arguid_file.exists():
-                ica_pipeline_id: str = _submit_new_ica_pipeline(
+            if not pipeline_id_arguid_file_exists:
+                ica_pipeline_id = _submit_new_ica_pipeline(
                     sg_name=sg_name,
                     ica_fids_path=str(ica_fids_path[sg_name]),
                     analysis_output_fid_path=str(analysis_output_fids_path[sg_name]),
@@ -102,11 +116,6 @@ def _run(  # noqa: PLR0915
                 # Get an existing pipeline ID
                 with pipeline_id_arguid_file.open('r') as pipeline_fid_handle:
                     ica_pipeline_id = json.load(pipeline_fid_handle)['pipeline_id']
-                # Cancel a running job in ICA
-                if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False):
-                    logger.info(f'Cancelling pipeline run: {ica_pipeline_id} for sequencing group {sg_name}')
-                    cancel_ica_pipeline_run.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
-                    delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
 
             pipeline_status: str = monitor_dragen_pipeline.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
 
@@ -139,11 +148,19 @@ def _run(  # noqa: PLR0915
                 logger.error(
                     f'The pipeline {ica_pipeline_id} has failed, deleting pipeline ID file {sg_name}_pipeline_id'
                 )
+                # Try again one time in case of transient Dragen errors
+                if sg_name not in retried_pipelines:
+                    ica_pipeline_id = _submit_new_ica_pipeline(
+                        sg_name=sg_name,
+                        ica_fids_path=str(ica_fids_path[sg_name]),
+                        analysis_output_fid_path=str(analysis_output_fids_path[sg_name]),
+                        api_root=api_root,
+                    )
+                    with pipeline_id_arguid_file.open('w') as f:
+                        f.write(json.dumps({'pipeline_id': ica_pipeline_id, 'ar_guid': ar_guid}))
+                    retried_pipelines.append(sg_name)
+                    logger.info(f'Retrying Dragen pipeline for sequencing group: {sg_name}')
 
-            # ICA has a max concurrent running pipeline limit of 20, but I have observed it as low as 16 before.
-            # Once we reach this number of running pipelines, we don't need to check on the status of others.
-            if len(running_pipelines) >= 16:  # noqa: PLR2004
-                continue
         # If some pipelines have been cancelled, abort this pipeline
         # This code will only trigger if a 'cancel pipeline' run is submitted before this master pipeline run is
         # cancelled in Hail Batch
