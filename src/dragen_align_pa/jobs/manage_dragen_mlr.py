@@ -172,61 +172,60 @@ def _run(  # noqa: PLR0915
                 cancel_ica_pipeline_run.run(ica_pipeline_id=mlr_analysis_id, api_root=api_root, is_mlr=True)
                 delete_pipeline_id_file(pipeline_id_file=str(mlr_pipeline_id_file))
             else:
-                # Can't cancel a run if we don't have a pipeline ID file
-                continue
+                # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
+                if not mlr_pipeline_id_file_exists:
+                    logger.info(f'Submitting MLR pipeline run for {sg_name}')
+                    mlr_analysis_id = _submit_mlr_run(
+                        pipeline_id_arguid_path=pipeline_id_arguid_path_dict[f'{sg_name}_pipeline_id_and_arguid'],
+                        bucket=bucket,
+                        ica_analysis_output_folder=ica_analysis_output_folder,
+                        sg_name=sg_name,
+                        ica_cli_setup=ica_cli_setup,
+                        mlr_project=mlr_project,
+                        mlr_config_json=mlr_config_json,
+                        mlr_hash_table=mlr_hash_table,
+                        output_prefix=output_prefix,
+                        is_bioheart=is_bioheart,
+                    )
+                    logger.info(f'MLR pipeline ID for {sg_name} is {mlr_analysis_id}')
+                    with mlr_pipeline_id_file.open('w') as mlr_fhandle:
+                        mlr_fhandle.write(json.dumps({'pipeline_id': mlr_analysis_id, 'ar_guid': ar_guid}))
 
-            # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
-            if not mlr_pipeline_id_file_exists:
-                logger.info(f'Submitting MLR pipeline run for {sg_name}')
-                mlr_analysis_id = _submit_mlr_run(
-                    pipeline_id_arguid_path=pipeline_id_arguid_path_dict[f'{sg_name}_pipeline_id_and_arguid'],
-                    bucket=bucket,
-                    ica_analysis_output_folder=ica_analysis_output_folder,
-                    sg_name=sg_name,
-                    ica_cli_setup=ica_cli_setup,
-                    mlr_project=mlr_project,
-                    mlr_config_json=mlr_config_json,
-                    mlr_hash_table=mlr_hash_table,
-                    output_prefix=output_prefix,
-                    is_bioheart=is_bioheart,
+                mlr_pipeline_status: str = monitor_dragen_pipeline.run(
+                    ica_pipeline_id=mlr_analysis_id, api_root=api_root, is_mlr=True
                 )
-                logger.info(f'MLR pipeline ID for {sg_name} is {mlr_analysis_id}')
-                with mlr_pipeline_id_file.open('w') as mlr_fhandle:
-                    mlr_fhandle.write(json.dumps({'pipeline_id': mlr_analysis_id, 'ar_guid': ar_guid}))
 
-            mlr_pipeline_status: str = monitor_dragen_pipeline.run(
-                ica_pipeline_id=mlr_analysis_id, api_root=api_root, is_mlr=True
-            )
+                if mlr_pipeline_status == 'INPROGRESS':
+                    running_pipelines.append(sg_name)
 
-            if mlr_pipeline_status == 'INPROGRESS':
-                running_pipelines.append(sg_name)
+                elif mlr_pipeline_status == 'SUCCEEDED':
+                    logger.info(f'Pipeline run {mlr_analysis_id} has succeeded for {sg_name}')
+                    completed_pipelines.append(sg_name)
+                    # Testing fix
+                    if sg_name in running_pipelines:
+                        running_pipelines.remove(sg_name)
+                    # Write the success to GCP
+                    with mlr_pipeline_success_file.open('w') as success_file:
+                        success_file.write(
+                            f'ICA pipeline {mlr_analysis_id} has succeeded for sequencing group {sg_name}.'
+                        )
 
-            elif mlr_pipeline_status == 'SUCCEEDED':
-                logger.info(f'Pipeline run {mlr_analysis_id} has succeeded for {sg_name}')
-                completed_pipelines.append(sg_name)
-                # Testing fix
-                if sg_name in running_pipelines:
-                    running_pipelines.remove(sg_name)
-                # Write the success to GCP
-                with mlr_pipeline_success_file.open('w') as success_file:
-                    success_file.write(f'ICA pipeline {mlr_analysis_id} has succeeded for sequencing group {sg_name}.')
+                elif mlr_pipeline_status in ['ABORTING', 'ABORTED']:
+                    logger.info(f'The pipeline run {mlr_analysis_id} has been cancelled for sample {sg_name}.')
+                    cancelled_pipelines.append(sg_name)
+                    if sg_name in running_pipelines:
+                        running_pipelines.remove(sg_name)
+                    delete_pipeline_id_file(pipeline_id_file=str(mlr_pipeline_id_file))
 
-            elif mlr_pipeline_status in ['ABORTING', 'ABORTED']:
-                logger.info(f'The pipeline run {mlr_analysis_id} has been cancelled for sample {sg_name}.')
-                cancelled_pipelines.append(sg_name)
-                if sg_name in running_pipelines:
-                    running_pipelines.remove(sg_name)
-                delete_pipeline_id_file(pipeline_id_file=str(mlr_pipeline_id_file))
-
-            elif mlr_pipeline_status in ['FAILED', 'FAILEDFINAL']:
-                # Log failed ICA pipeline to a file somewhere
-                if sg_name in running_pipelines:
-                    running_pipelines.remove(sg_name)
-                failed_pipelines.append(sg_name)
-                delete_pipeline_id_file(pipeline_id_file=str(mlr_pipeline_id_file))
-                logger.error(
-                    f'The pipeline {mlr_analysis_id} has failed, deleting pipeline ID file {sg_name}_pipeline_id'
-                )
+                elif mlr_pipeline_status in ['FAILED', 'FAILEDFINAL']:
+                    # Log failed ICA pipeline to a file somewhere
+                    if sg_name in running_pipelines:
+                        running_pipelines.remove(sg_name)
+                    failed_pipelines.append(sg_name)
+                    delete_pipeline_id_file(pipeline_id_file=str(mlr_pipeline_id_file))
+                    logger.error(
+                        f'The pipeline {mlr_analysis_id} has failed, deleting pipeline ID file {sg_name}_pipeline_id'
+                    )
 
         # If some pipelines have been cancelled, abort this pipeline
         # This code will only trigger if a 'cancel pipeline' run is submitted before this master pipeline run is
