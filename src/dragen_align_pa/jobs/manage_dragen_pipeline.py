@@ -101,55 +101,9 @@ def _run(  # noqa: PLR0915
                 logger.info(f'Cancelling pipeline run: {ica_pipeline_id} for sequencing group {sg_name}')
                 cancel_ica_pipeline_run.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
                 delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
-
-            # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
-            if not pipeline_id_arguid_file_exists:
-                ica_pipeline_id = _submit_new_ica_pipeline(
-                    sg_name=sg_name,
-                    ica_fids_path=str(ica_fids_path[sg_name]),
-                    analysis_output_fid_path=str(analysis_output_fids_path[sg_name]),
-                    api_root=api_root,
-                )
-                with pipeline_id_arguid_file.open('w') as f:
-                    f.write(json.dumps({'pipeline_id': ica_pipeline_id, 'ar_guid': ar_guid}))
             else:
-                # Get an existing pipeline ID
-                with pipeline_id_arguid_file.open('r') as pipeline_fid_handle:
-                    ica_pipeline_id = json.load(pipeline_fid_handle)['pipeline_id']
-
-            pipeline_status: str = monitor_dragen_pipeline.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
-
-            if pipeline_status == 'INPROGRESS':
-                running_pipelines.append(sg_name)
-
-            elif pipeline_status == 'SUCCEEDED':
-                logger.info(f'Pipeline run {ica_pipeline_id} has succeeded for {sg_name}')
-                completed_pipelines.append(sg_name)
-                # Testing fix
-                if sg_name in running_pipelines:
-                    running_pipelines.remove(sg_name)
-                # Write the success to GCP
-                with pipeline_success_file.open('w') as success_file:
-                    success_file.write(f'ICA pipeline {ica_pipeline_id} has succeeded for sequencing group {sg_name}.')
-
-            elif pipeline_status in ['ABORTING', 'ABORTED']:
-                logger.info(f'The pipeline run {ica_pipeline_id} has been cancelled for sample {sg_name}.')
-                cancelled_pipelines.append(sg_name)
-                if sg_name in running_pipelines:
-                    running_pipelines.remove(sg_name)
-                delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
-
-            elif pipeline_status in ['FAILED', 'FAILEDFINAL']:
-                # Log failed ICA pipeline to a file somewhere
-                if sg_name in running_pipelines:
-                    running_pipelines.remove(sg_name)
-                failed_pipelines.append(sg_name)
-                delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
-                logger.error(
-                    f'The pipeline {ica_pipeline_id} has failed, deleting pipeline ID file {sg_name}_pipeline_id'
-                )
-                # Try again one time in case of transient Dragen errors
-                if sg_name not in retried_pipelines:
+                # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
+                if not pipeline_id_arguid_file_exists:
                     ica_pipeline_id = _submit_new_ica_pipeline(
                         sg_name=sg_name,
                         ica_fids_path=str(ica_fids_path[sg_name]),
@@ -158,8 +112,56 @@ def _run(  # noqa: PLR0915
                     )
                     with pipeline_id_arguid_file.open('w') as f:
                         f.write(json.dumps({'pipeline_id': ica_pipeline_id, 'ar_guid': ar_guid}))
-                    retried_pipelines.append(sg_name)
-                    logger.info(f'Retrying Dragen pipeline for sequencing group: {sg_name}')
+                else:
+                    # Get an existing pipeline ID
+                    with pipeline_id_arguid_file.open('r') as pipeline_fid_handle:
+                        ica_pipeline_id = json.load(pipeline_fid_handle)['pipeline_id']
+
+                pipeline_status: str = monitor_dragen_pipeline.run(ica_pipeline_id=ica_pipeline_id, api_root=api_root)
+
+                if pipeline_status == 'INPROGRESS':
+                    running_pipelines.append(sg_name)
+
+                elif pipeline_status == 'SUCCEEDED':
+                    logger.info(f'Pipeline run {ica_pipeline_id} has succeeded for {sg_name}')
+                    completed_pipelines.append(sg_name)
+                    # Testing fix
+                    if sg_name in running_pipelines:
+                        running_pipelines.remove(sg_name)
+                    # Write the success to GCP
+                    with pipeline_success_file.open('w') as success_file:
+                        success_file.write(
+                            f'ICA pipeline {ica_pipeline_id} has succeeded for sequencing group {sg_name}.'
+                        )
+
+                elif pipeline_status in ['ABORTING', 'ABORTED']:
+                    logger.info(f'The pipeline run {ica_pipeline_id} has been cancelled for sample {sg_name}.')
+                    cancelled_pipelines.append(sg_name)
+                    if sg_name in running_pipelines:
+                        running_pipelines.remove(sg_name)
+                    delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
+
+                elif pipeline_status in ['FAILED', 'FAILEDFINAL']:
+                    # Log failed ICA pipeline to a file somewhere
+                    if sg_name in running_pipelines:
+                        running_pipelines.remove(sg_name)
+                    failed_pipelines.append(sg_name)
+                    delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
+                    logger.error(
+                        f'The pipeline {ica_pipeline_id} has failed, deleting pipeline ID file {sg_name}_pipeline_id'
+                    )
+                    # Try again one time in case of transient Dragen errors
+                    if sg_name not in retried_pipelines:
+                        ica_pipeline_id = _submit_new_ica_pipeline(
+                            sg_name=sg_name,
+                            ica_fids_path=str(ica_fids_path[sg_name]),
+                            analysis_output_fid_path=str(analysis_output_fids_path[sg_name]),
+                            api_root=api_root,
+                        )
+                        with pipeline_id_arguid_file.open('w') as f:
+                            f.write(json.dumps({'pipeline_id': ica_pipeline_id, 'ar_guid': ar_guid}))
+                        retried_pipelines.append(sg_name)
+                        logger.info(f'Retrying Dragen pipeline for sequencing group: {sg_name}')
 
         # If some pipelines have been cancelled, abort this pipeline
         # This code will only trigger if a 'cancel pipeline' run is submitted before this master pipeline run is
