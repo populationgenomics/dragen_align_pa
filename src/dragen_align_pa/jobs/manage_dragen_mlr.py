@@ -177,6 +177,7 @@ def _run(  # noqa: PLR0915
 
             # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
             if not mlr_pipeline_id_file_exists:
+                logger.info(f'Submitting MLR pipeline run for {sg_name}')
                 mlr_analysis_id = _submit_mlr_run(
                     pipeline_id_arguid_path=pipeline_id_arguid_path_dict[f'{sg_name}_pipeline_id_and_arguid'],
                     bucket=bucket,
@@ -189,6 +190,7 @@ def _run(  # noqa: PLR0915
                     output_prefix=output_prefix,
                     is_bioheart=is_bioheart,
                 )
+                logger.info(f'MLR pipeline ID for {sg_name} is {mlr_analysis_id}')
                 with mlr_pipeline_id_file.open('w') as mlr_fhandle:
                     mlr_fhandle.write(json.dumps({'pipeline_id': mlr_analysis_id, 'ar_guid': ar_guid}))
 
