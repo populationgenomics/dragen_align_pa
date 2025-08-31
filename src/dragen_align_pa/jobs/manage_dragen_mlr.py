@@ -69,8 +69,9 @@ def _submit_mlr_run(
         --output-folder-url {output_prefix}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name} \
         --input-align-file-url ${{cram}} \
         --input-gvcf-file-url ${{gvcf}} \
-        --analysis-instance-tier {config_retrieve(['ica', 'mlr', 'analysis_instance_tier'])} # > /dev/null 2>&1
+        --analysis-instance-tier {config_retrieve(['ica', 'mlr', 'analysis_instance_tier'])}
 
+        cat {sg_name}/sample-{sg_name}-run-{sg_name}-mlr.json
         cat {sg_name}/sample-{sg_name}-run-{sg_name}-mlr.json | jq -r ".id"
     """  # noqa: E501
     logger.info(f'{mlr_analysis_command}')
