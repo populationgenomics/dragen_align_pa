@@ -68,13 +68,14 @@ def _submit_mlr_run(
         --output-folder-url {output_prefix}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name} \
         --input-align-file-url ${{cram}} \
         --input-gvcf-file-url ${{gvcf}} \
-        --analysis-instance-tier {config_retrieve(['ica', 'mlr', 'analysis_instance_tier'])} > /dev/null 2>&1
+        --analysis-instance-tier {config_retrieve(['ica', 'mlr', 'analysis_instance_tier'])} # > /dev/null 2>&1
 
         cat {sg_name}/sample-{sg_name}-run-{sg_name}-mlr.json | jq -r ".id"
     """  # noqa: E501
     mlr_analysis_id: str = (
         subprocess.run(mlr_analysis_command, shell=True, capture_output=True, check=False).stdout.decode().strip()
     )
+    exit(1)
 
     return mlr_analysis_id
 
@@ -175,6 +176,18 @@ def _run(  # noqa: PLR0915
                 # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
                 if not mlr_pipeline_id_file_exists:
                     logger.info(f'Submitting MLR pipeline run for {sg_name}')
+                    logger.info(f"""Submission information:
+                                pipeline_id_arguid_path={pipeline_id_arguid_path_dict}['{sg_name}_pipeline_id_and_arguid'],
+                        bucket={bucket},
+                        ica_analysis_output_folder={ica_analysis_output_folder},
+                        sg_name={sg_name},
+                        ica_cli_setup={ica_cli_setup},
+                        mlr_project={mlr_project},
+                        mlr_config_json={mlr_config_json},
+                        mlr_hash_table={mlr_hash_table},
+                        output_prefix={output_prefix},
+                        is_bioheart={is_bioheart},
+                                """)
                     mlr_analysis_id = _submit_mlr_run(
                         pipeline_id_arguid_path=pipeline_id_arguid_path_dict[f'{sg_name}_pipeline_id_and_arguid'],
                         bucket=bucket,
