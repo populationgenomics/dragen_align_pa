@@ -179,3 +179,6 @@ cython_debug/
 # local
 local_test/
 prod_runs/
+
+# Mac
+.DS_Store
