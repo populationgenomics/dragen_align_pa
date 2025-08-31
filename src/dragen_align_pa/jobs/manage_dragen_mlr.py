@@ -45,6 +45,7 @@ def _submit_mlr_run(
             data: dict[str, str] = json.load(pid_arguid_fhandle)
             pipeline_id = data['pipeline_id']
             ar_guid = f'_{data["ar_guid"]}_'
+            logger.info(f'Pipeline id: {pipeline_id}, ar_guid: {ar_guid}')
 
     mlr_analysis_command: str = f"""
         # General authentication
@@ -72,6 +73,7 @@ def _submit_mlr_run(
 
         cat {sg_name}/sample-{sg_name}-run-{sg_name}-mlr.json | jq -r ".id"
     """  # noqa: E501
+    logger.info(f'{mlr_analysis_command}')
     mlr_analysis_id: str = (
         subprocess.run(mlr_analysis_command, shell=True, capture_output=True, check=False).stdout.decode().strip()
     )
