@@ -177,7 +177,7 @@ def _run(  # noqa: PLR0915
                 if not mlr_pipeline_id_file_exists:
                     logger.info(f'Submitting MLR pipeline run for {sg_name}')
                     logger.info(f"""Submission information:
-                                pipeline_id_arguid_path={pipeline_id_arguid_path_dict}['{sg_name}_pipeline_id_and_arguid'],
+                                pipeline_id_arguid_path={pipeline_id_arguid_path_dict['{sg_name}_pipeline_id_and_arguid']},
                         bucket={bucket},
                         ica_analysis_output_folder={ica_analysis_output_folder},
                         sg_name={sg_name},
