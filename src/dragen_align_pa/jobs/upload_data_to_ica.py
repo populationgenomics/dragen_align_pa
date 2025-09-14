@@ -16,6 +16,7 @@ def _initalise_upload_job(sequencing_group: SequencingGroup) -> BashJob:
 
     upload_job.image(image=get_driver_image())
     upload_job.storage(calculate_needed_storage(cram=str(sequencing_group.cram)))
+    upload_job.spot(is_spot=False)
 
     return upload_job
 
