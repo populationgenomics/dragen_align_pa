@@ -19,6 +19,7 @@ def _initalise_download_job(sequencing_group: SequencingGroup, job_name: str) ->
     download_job.image(image=get_driver_image())
     download_job.storage(calculate_needed_storage(cram=str(sequencing_group.cram)))
     download_job.memory('8Gi')
+    download_job.spot(is_spot=False)
 
     return download_job
 

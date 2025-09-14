@@ -15,6 +15,7 @@ def _initalise_bulk_download_job(sequencing_group: SequencingGroup) -> BashJob:
         attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'ICA'},  # type: ignore[ReportUnknownVariableType]
     )
     bulk_download_job.image(image=get_driver_image())
+    bulk_download_job.spot(is_spot=False)
     return bulk_download_job
 
 
