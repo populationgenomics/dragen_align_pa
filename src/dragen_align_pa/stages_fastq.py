@@ -2,7 +2,7 @@ from cpg_flow.stage import CohortStage, SequencingGroupStage, StageInput, StageO
 from cpg_flow.targets import Cohort, SequencingGroup
 
 
-class IntakeQc(CohortStage):
+class IntakeQcFastQ(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> None:
         pass
 
@@ -10,7 +10,7 @@ class IntakeQc(CohortStage):
         pass
 
 
-class PrepareIcaForAnalysis(CohortStage):
+class PrepareIcaForAnalysiFastQ(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> None:
         pass
 
