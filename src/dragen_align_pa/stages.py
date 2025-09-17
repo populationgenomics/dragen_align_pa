@@ -49,6 +49,25 @@ logger.remove(0)
 logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
 
 
+
+@stage
+class CheckFastQMd5Sum(CohortStage):
+    """
+    Check integrity of FASTQ files after upload to ICA.
+    Run Illumina's md5sum pipeline on provided FASTQ files and compare the results with the provided md5sums.
+    """
+
+    def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
+        sg_bucket: cpg_utils.Path = cohort.dataset.prefix()
+        return {
+            'md5_list': sg_bucket / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_fastq_md5_check.txt',
+            '_SUCCESS': sg_bucket / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_fastq_md5_check_SUCCESS',
+        }
+
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:
+                pass
+
+
 # No need to register this stage in Metamist I think, just ICA prep
 @stage
 class PrepareIcaForDragenAnalysis(SequencingGroupStage):
