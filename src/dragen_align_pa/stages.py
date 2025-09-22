@@ -399,6 +399,29 @@ class DownloadDataFromIca(SequencingGroupStage):
         )
 
 
+@stage(required_stages=[DownloadDataFromIca])
+class RunMultiQc(CohortStage):
+    def expected_outputs(self, cohort: Cohort) -> dict[str, str]:
+        return {
+            'multiqc_data': f'qc/dragen_3_7_8{cohort.name}_multiqc_data.json',
+            'multiqc_report': f'qc/dragen_3_7_8/{cohort.name}_multiqc_report.html',
+        }
+
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+        outputs: dict[str, str] = self.expected_outputs(cohort=cohort)
+
+        # Inputs from previous stages
+        dragen_metric_prefixes: cpg_utils.Path = (
+            cohort.dataset.prefix() / GCP_FOLDER_FOR_ICA_DOWNLOAD / 'dragen_metrics'
+        )
+
+        multiqc_job: BashJob = run_multiqc.run_multiqc(
+            cohort=cohort, dragen_metric_prefixes=dragen_metric_prefixes, outputs=outputs
+        )
+
+        return self.make_outputs(target=cohort, data=outputs, jobs=multiqc_job)
+
+
 # Change this to a sequencing group stage to be safer.
 @stage(
     required_stages=[
@@ -408,6 +431,7 @@ class DownloadDataFromIca(SequencingGroupStage):
         DownloadGvcfFromIca,
         DownloadMlrGvcfFromIca,
         DownloadDataFromIca,
+        RunMultiQc,
     ]
 )
 class DeleteDataInIca(SequencingGroupStage):
@@ -437,26 +461,3 @@ class DeleteDataInIca(SequencingGroupStage):
         )
 
         return self.make_outputs(target=sequencing_group, data=outputs, jobs=ica_delete_job)
-
-
-@stage(required_stages=[DownloadDataFromIca])
-class RunMultiQc(CohortStage):
-    def expected_outputs(self, cohort: Cohort) -> dict[str, str]:
-        return {
-            'multiqc_data': f'qc/dragen_3_7_8{cohort.name}_multiqc_data.json',
-            'multiqc_report': f'qc/dragen_3_7_8/{cohort.name}_multiqc_report.html',
-        }
-
-    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
-        outputs: dict[str, str] = self.expected_outputs(cohort=cohort)
-
-        # Inputs from previous stages
-        dragen_metric_prefixes: cpg_utils.Path = (
-            cohort.dataset.prefix() / GCP_FOLDER_FOR_ICA_DOWNLOAD / 'dragen_metrics'
-        )
-
-        multiqc_job: BashJob = run_multiqc.run_multiqc(
-            cohort=cohort, dragen_metric_prefixes=dragen_metric_prefixes, outputs=outputs
-        )
-
-        return self.make_outputs(target=cohort, data=outputs, jobs=multiqc_job)
