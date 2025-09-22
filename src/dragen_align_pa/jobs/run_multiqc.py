@@ -31,8 +31,8 @@ def run_multiqc(cohort: Cohort, dragen_metric_prefixes: cpg_utils.Path, outputs:
         --cl-config "max_table_rows: 10000"
 
         cp $BATCH_TMPDIR/output/{cohort.name}.html {multiqc_job.html}
-        mv $BATCH_TMPDIR/output/{cohort.name}/multiqc_data.json $BATCH_TMPDIR/output/{cohort.name}/{cohort.name}_multiqc_data.json
-        cp $BATCH_TMPDIR/output/{cohort.name}/{cohort.name}_multiqc_data.json {multiqc_job.json}
+        mv $BATCH_TMPDIR/output/{cohort.name}_data/multiqc_data.json $BATCH_TMPDIR/output/{cohort.name}_data/{cohort.name}_multiqc_data.json
+        cp $BATCH_TMPDIR/output/{cohort.name}_data/{cohort.name}_multiqc_data.json {multiqc_job.json}
         """
         )
     )
