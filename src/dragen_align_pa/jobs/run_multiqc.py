@@ -25,13 +25,15 @@ def run_multiqc(cohort: Cohort, dragen_metric_prefixes: cpg_utils.Path, outputs:
         gcloud storage ls {dragen_metric_prefixes}/*/*.csv | grep -E '{sequencing_groups}' > files
         cat files | gcloud storage cp -I $BATCH_TMPDIR/input_data
 
-        multiqc -f $BATCH_TMPDIR/input_data -o $BATCH_TMPDIR/output \\
+        multiqc $BATCH_TMPDIR/input_data \\
+        -o $BATCH_TMPDIR/output \\
         --title MultiQC Report for <b>{cohort.name}</b> \\
-        --filename {cohort.name}.html \\
+        --filename {cohort.name} \\
         --cl-config "max_table_rows: 10000"
 
-        cp output/{cohort.name}.html {multiqc_job.html}
-        cp output/report_data/multiqc_data.json {multiqc_job.json}
+        mv $BATCH_TMPDIR/output/{cohort.name} $BATCH_TMPDIR/output/{cohort.name}.html
+        cp $BATCH_TMPDIR/output/{cohort.name}.html {multiqc_job.html}
+        cp $BATCH_TMPDIR/output/report_data/multiqc_data.json {multiqc_job.json}
         """
         )
     )
@@ -39,9 +41,3 @@ def run_multiqc(cohort: Cohort, dragen_metric_prefixes: cpg_utils.Path, outputs:
     get_batch().write_output(resource=multiqc_job.json, dest=output_path(outputs['multiqc_report']))
 
     return multiqc_job
-
-
-# while read line
-#         do
-#             gcloud storage cp $line $BATCH_TMPDIR/input_data
-#         done < files
