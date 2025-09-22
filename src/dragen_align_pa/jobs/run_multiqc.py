@@ -22,7 +22,7 @@ def run_multiqc(cohort: Cohort, dragen_metric_prefixes: cpg_utils.Path, outputs:
         command=command(
             f"""
         mkdir $BATCH_TMPDIR/input_data
-        gcloud storage ls {dragen_metric_prefixes}/*/*.csv | grep -Ev '{sequencing_groups}' > files
+        gcloud storage ls {dragen_metric_prefixes}/*/*.csv | grep -E '{sequencing_groups}' > files
         while read line
         do
             gcloud storage cp $line $BATCH_TMPDIR/input_data
