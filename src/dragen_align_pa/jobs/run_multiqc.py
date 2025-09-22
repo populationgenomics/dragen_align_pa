@@ -25,7 +25,7 @@ def run_multiqc(cohort: Cohort, dragen_metric_prefixes: cpg_utils.Path, outputs:
         gcloud storage ls {dragen_metric_prefixes}/*/*.csv | grep -E '{sequencing_groups}' > files
         cat files | gcloud storage cp -I $BATCH_TMPDIR/input_data
 
-        multiqc $BATCH_TMPDIR/input_data \\
+        multiqc $BATCH_TMPDIR/input_data/ \\
         -o $BATCH_TMPDIR/output \\
         --title MultiQC Report for <b>{cohort.name}</b> \\
         --filename {cohort.name} \\
