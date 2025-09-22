@@ -403,7 +403,7 @@ class DownloadDataFromIca(SequencingGroupStage):
 class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:
         return {
-            'multiqc_data': f'qc/dragen_3_7_8{cohort.name}_multiqc_data.json',
+            'multiqc_data': f'qc/dragen_3_7_8/{cohort.name}_multiqc_data.json',
             'multiqc_report': f'qc/dragen_3_7_8/{cohort.name}_multiqc_report.html',
         }
 
