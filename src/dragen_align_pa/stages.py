@@ -439,7 +439,7 @@ class DeleteDataInIca(SequencingGroupStage):
         return self.make_outputs(target=sequencing_group, data=outputs, jobs=ica_delete_job)
 
 
-@stage(required_stages=[DownloadDataFromIca])
+@stage(required_stages=[DownloadDataFromIca, DeleteDataInIca])
 class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:
         return {
@@ -459,4 +459,4 @@ class RunMultiQc(CohortStage):
             cohort=cohort, dragen_metric_prefixes=dragen_metric_prefixes, outputs=outputs
         )
 
-        return self.make_outputs(target=cohort, data=outputs, job=multiqc_job)
+        return self.make_outputs(target=cohort, data=outputs, jobs=multiqc_job)
