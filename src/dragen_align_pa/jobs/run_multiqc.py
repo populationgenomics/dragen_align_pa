@@ -24,17 +24,13 @@ def run_multiqc(cohort: Cohort, dragen_metric_prefixes: cpg_utils.Path, outputs:
         mkdir -p $BATCH_TMPDIR/input_data $BATCH_TMPDIR/output
         gcloud storage ls {dragen_metric_prefixes}/*/*.csv | grep -E '{sequencing_groups}' | gcloud storage cp -I $BATCH_TMPDIR/input_data
 
-        ls $BATCH_TMPDIR/input_data
-
-        which multiqc
-
         multiqc $BATCH_TMPDIR/input_data/ \\
         -o $BATCH_TMPDIR/output \\
         --title 'MultiQC Report for <b>{cohort.name}</b>' \\
         --filename {cohort.name} \\
         --cl-config "max_table_rows: 10000"
 
-        mv $BATCH_TMPDIR/output/{cohort.name} $BATCH_TMPDIR/output/{cohort.name}.html
+        ls $BATCH_TMPDIR/output/{cohort.name}_data
         cp $BATCH_TMPDIR/output/{cohort.name}.html {multiqc_job.html}
         cp $BATCH_TMPDIR/output/report_data/multiqc_data.json {multiqc_job.json}
         """
