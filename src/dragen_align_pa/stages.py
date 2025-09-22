@@ -12,7 +12,7 @@ from cpg_flow.stage import (
 )
 from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
-from cpg_utils.config import config_retrieve
+from cpg_utils.config import config_retrieve, output_path
 from loguru import logger
 
 from dragen_align_pa.jobs import (
@@ -402,9 +402,12 @@ class DownloadDataFromIca(SequencingGroupStage):
 @stage(required_stages=[DownloadDataFromIca])
 class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:
+        bucket_name: cpg_utils.Path = cohort.dataset.prefix()
         return {
-            'multiqc_data': f'qc/dragen_3_7_8/{cohort.name}_multiqc_data.json',
-            'multiqc_report': f'qc/dragen_3_7_8/{cohort.name}_multiqc_report.html',
+            'multiqc_data': output_path(f'{bucket_name}/qc/dragen_3_7_8/{cohort.name}_multiqc_data.json'),
+            'multiqc_report': output_path(
+                f'{bucket_name}/qc/dragen_3_7_8/{cohort.name}_multiqc_report.html', category='web'
+            ),
         }
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
