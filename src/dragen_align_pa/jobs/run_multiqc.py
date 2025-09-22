@@ -1,6 +1,6 @@
 import cpg_utils
 from cpg_flow.targets import Cohort
-from cpg_utils.config import get_driver_image, output_path
+from cpg_utils.config import get_driver_image
 from cpg_utils.hail_batch import command, get_batch
 from hailtop.batch.job import BashJob
 
@@ -36,7 +36,7 @@ def run_multiqc(cohort: Cohort, dragen_metric_prefixes: cpg_utils.Path, outputs:
         """
         )
     )
-    get_batch().write_output(resource=multiqc_job.html, dest=output_path(outputs['multiqc_report'], category='web'))
-    get_batch().write_output(resource=multiqc_job.json, dest=output_path(outputs['multiqc_data']))
+    get_batch().write_output(resource=multiqc_job.html, dest=outputs['multiqc_report'])
+    get_batch().write_output(resource=multiqc_job.json, dest=outputs['multiqc_data'])
 
     return multiqc_job
