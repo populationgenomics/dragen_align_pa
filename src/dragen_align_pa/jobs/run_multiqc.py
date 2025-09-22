@@ -17,11 +17,12 @@ def _initalise_multiqc_job(cohort: Cohort) -> BashJob:
 def run_multiqc(cohort: Cohort, dragen_metric_prefixes: cpg_utils.Path, outputs: dict[str, str]) -> BashJob:
     multiqc_job: BashJob = _initalise_multiqc_job(cohort=cohort)
 
+    sequencing_groups: str = ('|').join(cohort.get_sequencing_group_ids())
     multiqc_job.command(
         command=command(
             f"""
         mkdir $BATCH_TMPDIR/input_data
-        gcloud storage cp {dragen_metric_prefixes}/*/*.csv $BATCH_TMPDIR/input_data
+        gcloud storage rsync -v {sequencing_groups} {dragen_metric_prefixes}/*/*.csv $BATCH_TMPDIR/input_data
 
         multiqc -f $BATCH_TMPDIR/input_data -o output \\
         --title MultiQC Report for <b>{cohort.name}</b> \\
