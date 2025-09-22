@@ -23,10 +23,7 @@ def run_multiqc(cohort: Cohort, dragen_metric_prefixes: cpg_utils.Path, outputs:
             f"""
         mkdir -p $BATCH_TMPDIR/input_data $BATCH_TMPDIR/output
         gcloud storage ls {dragen_metric_prefixes}/*/*.csv | grep -E '{sequencing_groups}' > files
-        while read line
-        do
-            gcloud storage cp $line $BATCH_TMPDIR/input_data
-        done < files
+        cat files | gcloud storage cp -I $BATCH_TMPDIR/input_data
 
         multiqc -f $BATCH_TMPDIR/input_data -o $BATCH_TMPDIR/output \\
         --title MultiQC Report for <b>{cohort.name}</b> \\
@@ -42,3 +39,9 @@ def run_multiqc(cohort: Cohort, dragen_metric_prefixes: cpg_utils.Path, outputs:
     get_batch().write_output(resource=multiqc_job.json, dest=output_path(outputs['multiqc_report']))
 
     return multiqc_job
+
+
+# while read line
+#         do
+#             gcloud storage cp $line $BATCH_TMPDIR/input_data
+#         done < files
