@@ -26,6 +26,8 @@ def run_multiqc(cohort: Cohort, dragen_metric_prefixes: cpg_utils.Path, outputs:
 
         ls $BATCH_TMPDIR/input_data
 
+        which multiqc
+
         multiqc $BATCH_TMPDIR/input_data/ \\
         -o $BATCH_TMPDIR/output \\
         --title MultiQC Report for <b>{cohort.name}</b> \\
