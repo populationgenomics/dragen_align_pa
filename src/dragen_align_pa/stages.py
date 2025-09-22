@@ -403,8 +403,8 @@ class DownloadDataFromIca(SequencingGroupStage):
 class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:
         # bucket_name: cpg_utils.Path = cohort.dataset.prefix()
-        multiqc_data: str = output_path(f'qc/dragen_3_7_8/{cohort.name}_multiqc_data.json')
-        multiqc_report: str = output_path(f'qc/dragen_3_7_8/{cohort.name}_multiqc_report.html', category='web')
+        multiqc_data: str = output_path(f'ica/qc/dragen_3_7_8/{cohort.name}_multiqc_data.json')
+        multiqc_report: str = output_path(f'ica/qc/dragen_3_7_8/{cohort.name}_multiqc_report.html', category='web')
         return {
             'multiqc_data': multiqc_data,
             'multiqc_report': multiqc_report,
