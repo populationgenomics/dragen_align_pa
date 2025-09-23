@@ -61,7 +61,7 @@ def submit_dragen_run(
                 AnalysisParameterInput(code='cnv_segmentation_mode', value='SLM'),
                 AnalysisParameterInput(code='enable_sv', value='true'),
                 AnalysisParameterInput(code='enable_cyp2d6', value='true'),
-                AnalysisParameterInput(code='repeat_genotype_enable', value='false'),
+                AnalysisParameterInput(code='repeat_genotype_enable', value='true'),
                 AnalysisParameterInput(
                     code='additional_args',
                     value="--read-trimmers polyg --soft-read-trimmers none --vc-hard-filter 'DRAGENHardQUAL:all:QUAL<5.0;LowDepth:all:DP<=1' --vc-frd-max-effective-depth 40 --vc-enable-joint-detection true --qc-coverage-ignore-overlaps true --qc-coverage-count-soft-clipped-bases true --qc-coverage-reports-1 cov_report,cov_report --qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0'",  # noqa: E501
