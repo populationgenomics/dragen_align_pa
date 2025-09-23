@@ -33,7 +33,7 @@ def run_multiqc(cohort: Cohort, dragen_metric_prefixes: cpg_utils.Path, outputs:
         cp $BATCH_TMPDIR/output/{cohort.name}.html {multiqc_job.html}
         mv $BATCH_TMPDIR/output/{cohort.name}_data/multiqc_data.json $BATCH_TMPDIR/output/{cohort.name}_data/{cohort.name}_multiqc_data.json
         cp $BATCH_TMPDIR/output/{cohort.name}_data/{cohort.name}_multiqc_data.json {multiqc_job.json}
-        """
+        """  # noqa: E501
         )
     )
     get_batch().write_output(resource=multiqc_job.html, dest=outputs['multiqc_report'])

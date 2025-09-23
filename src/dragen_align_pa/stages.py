@@ -402,14 +402,14 @@ class DownloadDataFromIca(SequencingGroupStage):
 @stage(required_stages=[DownloadDataFromIca])
 class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:
-        multiqc_data: str = output_path(f'qc/dragen_3_7_8/{cohort.name}_multiqc_data.json')
-        multiqc_report: str = output_path(f'qc/dragen_3_7_8/{cohort.name}_multiqc_report.html', category='web')
+        multiqc_data: str = output_path(f'dragen_3_7_8/qc/{cohort.name}_multiqc_data.json')
+        multiqc_report: str = output_path(f'dragen_3_7_8/qc/{cohort.name}_multiqc_report.html', category='web')
         return {
             'multiqc_data': multiqc_data,
             'multiqc_report': multiqc_report,
         }
 
-    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         outputs: dict[str, str] = self.expected_outputs(cohort=cohort)
 
         # Inputs from previous stages
