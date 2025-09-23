@@ -402,8 +402,8 @@ class DownloadDataFromIca(SequencingGroupStage):
 @stage(required_stages=[DownloadDataFromIca])
 class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:
-        multiqc_data: str = output_path(f'dragen_3_7_8/qc/{cohort.name}_multiqc_data.json')
-        multiqc_report: str = output_path(f'dragen_3_7_8/qc/{cohort.name}_multiqc_report.html', category='web')
+        multiqc_data: str = output_path(f'{DRAGEN_VERSION}/qc/{cohort.name}_multiqc_data.json')
+        multiqc_report: str = output_path(f'{DRAGEN_VERSION}/qc/{cohort.name}_multiqc_report.html', category='web')
         return {
             'multiqc_data': multiqc_data,
             'multiqc_report': multiqc_report,
