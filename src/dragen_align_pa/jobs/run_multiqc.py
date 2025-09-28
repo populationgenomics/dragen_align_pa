@@ -27,7 +27,7 @@ def run_multiqc(cohort: Cohort, dragen_metric_prefixes: cpg_utils.Path, outputs:
         multiqc $BATCH_TMPDIR/input_data/ \\
         -o $BATCH_TMPDIR/output \\
         --title 'MultiQC Report for <b>{cohort.name}</b>' \\
-        --filename {cohort.name} \\
+        --filename "{cohort.name}" \\
         --cl-config "max_table_rows: 10000"
 
         cp $BATCH_TMPDIR/output/{cohort.name}.html {multiqc_job.html}
