@@ -68,9 +68,8 @@ class PrepareIcaForDragenAnalysis(SequencingGroupStage):
 
         ica_prep_job: PythonJob = prepare_ica_for_analysis.run_ica_prep_job(
             sequencing_group=sequencing_group,
-            output=str(outputs),
+            output=outputs,
             api_root=ICA_REST_ENDPOINT,
-            sg_name=sequencing_group.name,
             bucket_name=bucket_name,
         )
 

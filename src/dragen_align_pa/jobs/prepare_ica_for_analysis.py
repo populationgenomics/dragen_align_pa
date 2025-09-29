@@ -1,10 +1,15 @@
 from typing import Literal
 
+import icasdk
 from cpg_flow.targets import SequencingGroup
+from cpg_utils import Path
 from cpg_utils.config import config_retrieve, get_driver_image
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
+from icasdk.apis.tags import project_data_api
 from loguru import logger
+
+from dragen_align_pa.utils import create_upload_object_id, get_ica_secrets
 
 
 def _initalise_ica_prep_job(sequencing_group: SequencingGroup) -> PythonJob:
@@ -19,9 +24,8 @@ def _initalise_ica_prep_job(sequencing_group: SequencingGroup) -> PythonJob:
 
 def run_ica_prep_job(
     sequencing_group: SequencingGroup,
-    output: str,
+    output: Path,
     api_root: str,
-    sg_name: str,
     bucket_name: str,
 ) -> PythonJob:
     job: PythonJob = _initalise_ica_prep_job(sequencing_group=sequencing_group)
@@ -30,7 +34,7 @@ def run_ica_prep_job(
         _run,
         ica_analysis_output_folder=config_retrieve(['ica', 'data_prep', 'output_folder']),
         api_root=api_root,
-        sg_name=sg_name,
+        sg_name=sequencing_group.name,
         bucket_name=bucket_name,
     ).as_json()
 
@@ -57,11 +61,6 @@ def _run(
     Returns:
         dict [str, str] noting the analysis ID.
     """
-    import icasdk
-    from icasdk.apis.tags import project_data_api
-
-    from dragen_align_pa.utils import create_upload_object_id, get_ica_secrets
-
     secrets: dict[Literal['projectID', 'apiKey'], str] = get_ica_secrets()
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
