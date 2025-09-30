@@ -1,11 +1,14 @@
 # This is an example config file detailing all the optioons used for running the realignment pipeline
 [workflow]
 name = 'dragen_align_pa'
-output_prefix = "ica"
+output_prefix = ""
 sequencing_type = "genome"
 input_cohorts = [ "COH0000",]
 last_stages = ['DownloadDataFromIca']
 skip_stages = ['DeleteDataInIca']
+
+# Can be fastq or CRAM, depending on the source of the reads for alignment
+reads_type = "fastq"
 
 # used to make sure we don't repeat previously completed stages
 check_expected_outputs = true
@@ -45,8 +48,6 @@ reference_tags = ['test_reference_tags']
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]
 dragen_version = 'dragen_3_7_8'
-# F1 instance pipeline
-# dragen_3_7_8 = 'cd8e4fde-e410-4ae5-b8c0-dac0aea9d74a'
 # F2 instance pipeline
 dragen_3_7_8 = 'cbac3d1f-737f-44f2-9a40-f7f2589b5fad'
 # Dragen hash table for 3.7.8

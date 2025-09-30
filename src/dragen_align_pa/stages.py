@@ -29,6 +29,7 @@ from dragen_align_pa.jobs import (
 if TYPE_CHECKING:
     from hailtop.batch.job import BashJob, PythonJob
 
+BUCKET: Final = cpg_utils.to_path(output_path(suffix=''))
 DRAGEN_VERSION: Final = config_retrieve(['ica', 'pipelines', 'dragen_version'])
 GCP_FOLDER_FOR_ICA_PREP: Final = f'ica/{DRAGEN_VERSION}/prepare'
 GCP_FOLDER_FOR_RUNNING_PIPELINE: Final = f'ica/{DRAGEN_VERSION}/pipelines'
@@ -59,18 +60,16 @@ class PrepareIcaForDragenAnalysis(SequencingGroupStage):
     """
 
     def expected_outputs(self, sequencing_group: SequencingGroup) -> cpg_utils.Path:
-        sg_bucket: cpg_utils.Path = sequencing_group.dataset.prefix()
-        return sg_bucket / GCP_FOLDER_FOR_ICA_PREP / f'{sequencing_group.name}_output_fid.json'
+        return BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{sequencing_group.name}_output_fid.json'
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:  # noqa: ARG002
-        bucket_name: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
         outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
 
         ica_prep_job: PythonJob = prepare_ica_for_analysis.run_ica_prep_job(
             sequencing_group=sequencing_group,
             output=outputs,
             api_root=ICA_REST_ENDPOINT,
-            bucket_name=bucket_name,
+            bucket_name=BUCKET,
         )
 
         return self.make_outputs(
