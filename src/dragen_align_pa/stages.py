@@ -53,27 +53,33 @@ logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
 
 # No need to register this stage in Metamist I think, just ICA prep
 @stage
-class PrepareIcaForDragenAnalysis(SequencingGroupStage):
+class PrepareIcaForDragenAnalysis(CohortStage):
     """Set up ICA for a single realignment run.
 
     Creates a folder ID for the Dragen output to be written into.
     """
 
-    def expected_outputs(self, sequencing_group: SequencingGroup) -> cpg_utils.Path:
-        return BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{sequencing_group.name}_output_fid.json'
+    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:
+        results: dict[str, cpg_utils.Path] = {
+            **{
+                sg_name: BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{sg_name}_output_fid.json'
+                for sg_name in cohort.get_sequencing_group_ids()
+            }
+        }
+        return results
 
-    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:  # noqa: ARG002
-        outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:  # noqa: ARG002
+        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
         ica_prep_job: PythonJob = prepare_ica_for_analysis.run_ica_prep_job(
-            sequencing_group=sequencing_group,
+            cohort=cohort,
             output=outputs,
             api_root=ICA_REST_ENDPOINT,
             bucket_name=BUCKET,
         )
 
         return self.make_outputs(
-            target=sequencing_group,
+            target=cohort,
             data=outputs,
             jobs=ica_prep_job,
         )
