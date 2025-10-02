@@ -11,10 +11,9 @@ RUN apt update && apt install -y \
     procps \
     jq && \
     rm -r /var/lib/apt/lists/* && \
-    rm -r /var/cache/apt/* 
-    # && \
+    rm -r /var/cache/apt/* && \
     # Download and check the ICA CLI.
-RUN wget -q https://stratus-documentation-us-east-1-public.s3.amazonaws.com/cli/${ICA_CLI_VERSION}/ica-linux-amd64.sha256 -O /tmp/ica-linux-amd64.sha256 && \
+    wget -q https://stratus-documentation-us-east-1-public.s3.amazonaws.com/cli/${ICA_CLI_VERSION}/ica-linux-amd64.sha256 -O /tmp/ica-linux-amd64.sha256 && \
     wget -q https://stratus-documentation-us-east-1-public.s3.amazonaws.com/cli/${ICA_CLI_VERSION}/ica-linux-amd64.zip -O /tmp/ica-linux-amd64.zip && \
     sed -i 's|target/ica-linux-amd64.zip|/tmp/ica-linux-amd64.zip|' /tmp/ica-linux-amd64.sha256 && \
     sha256sum -c /tmp/ica-linux-amd64.sha256 && \
