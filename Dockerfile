@@ -15,6 +15,7 @@ RUN apt update && apt install -y \
     # Download and check the ICA CLI.
     wget -q https://stratus-documentation-us-east-1-public.s3.amazonaws.com/cli/${ICA_CLI_VERSION}/ica-linux-amd64.sha256 -O /tmp/ica-linux-amd64.sha256 && \
     wget -q https://stratus-documentation-us-east-1-public.s3.amazonaws.com/cli/${ICA_CLI_VERSION}/ica-linux-amd64.zip -O /tmp/ica-linux-amd64.zip && \
+    ls -lh && \
     sed -i 's|/home/ec2-user/workspace/ontrolPlane_ICA_CLI_release_2.39/target/ica-linux-amd64.zip|/tmp/ica-linux-amd64.zip|' /tmp/ica-linux-amd64.sha256 && \
     sha256sum -c /tmp/ica-linux-amd64.sha256 && \
     unzip -d /tmp /tmp/ica-linux-amd64.zip && \
