@@ -19,6 +19,7 @@ from dragen_align_pa.jobs import (
     delete_data_in_ica,
     download_ica_pipeline_outputs,
     download_specific_files_from_ica,
+    fastq_intake_qc,
     manage_dragen_mlr,
     manage_dragen_pipeline,
     prepare_ica_for_analysis,
@@ -49,6 +50,26 @@ set -x
 
 logger.remove(0)
 logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
+
+
+@stage
+class FastqIntakeQc(CohortStage):
+    """Generate md5 sums for each uploaded fastq file.
+
+    Check these sums against the supplied md5sums to check for any corruption in transit.
+    """
+
+    def expected_outputs(self, cohort: Cohort) -> None:
+        pass
+
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+        if config_retrieve(['workflow', 'reads_type']) == 'fastq':
+            outputs: None = self.expected_outputs(cohort=cohort)
+            md5job: PythonJob = fastq_intake_qc.run_md5_job(cohort=cohort, api_root=ICA_REST_ENDPOINT)
+
+            return self.make_outputs(target=cohort, data=outputs, jobs=md5job)
+
+        return None
 
 
 # No need to register this stage in Metamist I think, just ICA prep

@@ -24,6 +24,11 @@ def _initalise_ica_prep_job(cohort: Cohort) -> PythonJob:
     return prepare_ica_job
 
 
+# Create a fastq-list file and write it into the analysis output folder by folder id
+def _create_fastq_list_file(ica_folder_id: str) -> None:
+    pass
+
+
 def run_ica_prep_job(
     cohort: Cohort,
     output: dict[str, cpg_utils.Path],
@@ -92,7 +97,8 @@ def _run(
             logger.info(f'Created folder ID {object_id} for analysis outputs for sequencing group {sg_name}')
             ica_analysis_outputs_dict |= {sg_name: {'analysis_output_fid': object_id}}
 
-    if config_retrieve(['workflow', 'reads_type']) == 'fastq':
-        pass
+            # Write the fastq-list csv into the analysis output folder for each sample
+            if config_retrieve(['workflow', 'reads_type']) == 'fastq':
+                _create_fastq_list_file(ica_folder_id=object_id)
 
     return ica_analysis_outputs_dict
