@@ -73,7 +73,7 @@ class FastqIntakeQc(CohortStage):
 
 
 # No need to register this stage in Metamist I think, just ICA prep
-@stage
+@stage(required_stages=[FastqIntakeQc])
 class PrepareIcaForDragenAnalysis(CohortStage):
     """Set up ICA for a single realignment run.
 
