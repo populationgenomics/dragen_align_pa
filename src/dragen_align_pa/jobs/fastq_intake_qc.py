@@ -51,8 +51,7 @@ def _run(cohort: Cohort, api_root: str) -> list[str]:
             path_params=path_parameters,
             query_params={'filename': supplied_checksum_data['Filenames'].to_list(), 'filenameMatchMode': 'EXACT'},
         )
-        fastq_ids.append(
-            api_response.body['items'][item]['data']['id'] for item in list(range(len(api_response.body['items'])))
-        )
+        for item in list(range(len(api_response.body['items']))):
+            fastq_ids.append(api_response.body[item]['data']['id'])
 
     return fastq_ids
