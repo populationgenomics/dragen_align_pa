@@ -29,7 +29,7 @@ def run_md5_job(cohort: Cohort, api_root: str) -> PythonJob:
 
 def _run(cohort: Cohort, api_root: str) -> None:
     manifest_file_path: cpg_utils.Path = config_retrieve(['workflow', 'manifest_gcp_path'])
-    with manifest_file_path.open() as manifest_fh:
+    with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
         supplied_checksum_data: pd.DataFrame = pd.read_csv(manifest_fh, usecols=['Filename', 'Checksum'])
 
     secrets: dict[Literal['projectID', 'apiKey'], str] = get_ica_secrets()
