@@ -8,6 +8,7 @@ from cpg_utils.config import config_retrieve, get_driver_image
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
+from loguru import logger
 
 from dragen_align_pa.utils import get_ica_secrets
 
@@ -23,11 +24,12 @@ def _initalise_md5_job(cohort: Cohort) -> PythonJob:
 
 def run_md5_job(cohort: Cohort, api_root: str) -> PythonJob:
     job: PythonJob = _initalise_md5_job(cohort=cohort)
-    _run(cohort=cohort, api_root=api_root)
+    fastq_ids: list[str] = _run(cohort=cohort, api_root=api_root)
+    logger.info(fastq_ids)
     return job
 
 
-def _run(cohort: Cohort, api_root: str) -> None:
+def _run(cohort: Cohort, api_root: str) -> list[str]:
     manifest_file_path: cpg_utils.Path = config_retrieve(['workflow', 'manifest_gcp_path'])
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
         supplied_checksum_data: pd.DataFrame = pd.read_csv(manifest_fh, usecols=['Filenames', 'Checksum'])
@@ -47,4 +49,4 @@ def _run(cohort: Cohort, api_root: str) -> None:
             query_params={'filename': supplied_checksum_data['Filenames'].to_list(), 'filenameMatchMode': 'EXACT'},
         ).body['items'][0]['data']['id']
 
-    print(fastq_ids)
+    return fastq_ids
