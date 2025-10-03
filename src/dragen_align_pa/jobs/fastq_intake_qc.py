@@ -22,9 +22,11 @@ def _initalise_md5_job(cohort: Cohort) -> PythonJob:
     return md5_job
 
 
-def run_md5_job(cohort: Cohort, api_root: str) -> PythonJob:
+def run_md5_job(cohort: Cohort, outputs: cpg_utils.Path, api_root: str) -> PythonJob:
     job: PythonJob = _initalise_md5_job(cohort=cohort)
     fastq_ids: list[str] = _run(cohort=cohort, api_root=api_root)
+    with outputs.open('w') as output_fh:
+        output_fh.write('\n'.join(fastq_ids))
     logger.info(fastq_ids)
     return job
 

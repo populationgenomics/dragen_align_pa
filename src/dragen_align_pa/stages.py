@@ -59,13 +59,13 @@ class FastqIntakeQc(CohortStage):
     Check these sums against the supplied md5sums to check for any corruption in transit.
     """
 
-    def expected_outputs(self, cohort: Cohort) -> None:
-        pass
+    def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
+        return BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_fastq_ids.txt'
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         if config_retrieve(['workflow', 'reads_type']) == 'fastq':
-            outputs: None = self.expected_outputs(cohort=cohort)
-            md5job: PythonJob = fastq_intake_qc.run_md5_job(cohort=cohort, api_root=ICA_REST_ENDPOINT)
+            outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
+            md5job: PythonJob = fastq_intake_qc.run_md5_job(cohort=cohort, outputs=outputs, api_root=ICA_REST_ENDPOINT)
 
             return self.make_outputs(target=cohort, data=outputs, jobs=md5job)
 
