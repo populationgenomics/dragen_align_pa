@@ -46,9 +46,13 @@ def _run(cohort: Cohort, api_root: str) -> list[str]:
 
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
-        fastq_ids: list[str] = api_instance.get_project_data_list(
+        fastq_ids: list[str] = []
+        api_response = api_instance.get_project_data_list(
             path_params=path_parameters,
             query_params={'filename': supplied_checksum_data['Filenames'].to_list(), 'filenameMatchMode': 'EXACT'},
-        ).body['items'][0]['data']['id']
+        )
+        fastq_ids.append(
+            api_response.body['items'][item]['data']['id'] for item in range(o, len(api_response.body['items']))
+        )
 
     return fastq_ids
