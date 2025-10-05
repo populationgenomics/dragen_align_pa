@@ -10,6 +10,8 @@ skip_stages = ['DeleteDataInIca']
 # Can be fastq or CRAM, depending on the source of the reads for alignment
 reads_type = "fastq"
 
+manifest_gcp_path = ""
+
 # used to make sure we don't repeat previously completed stages
 check_expected_outputs = true
 
@@ -52,6 +54,9 @@ dragen_version = 'dragen_3_7_8'
 dragen_3_7_8 = 'cbac3d1f-737f-44f2-9a40-f7f2589b5fad'
 # Dragen hash table for 3.7.8
 dragen_ht_id = 'fil.854d49a151a24edae5d708da2935b1b0'
+
+#md5sum pipeline
+md5_pipeline_id = "cbc8cf45-851f-49a8-bd50-3c66d205ab97"
 
 # IDs for all CRAM references that were previously used to generate the CRAM files that are to be realigned
 [ica.cram_references]
