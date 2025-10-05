@@ -33,7 +33,7 @@ def _get_fastq_ica_id_list(
             path_params=path_parameters,  # pyright: ignore[reportArgumentType]
             query_params={'filename': fastq_filenames, 'filenameMatchMode': 'EXACT'},
         )  # type: ignore
-        for item in list(range(len(api_response.body['items']))):
+        for item in list(range(len(api_response.body['items']))):  # pyright: ignore[reportUnknownArgumentType]
             fastq_ids.append(api_response.body['items'][item]['data']['id'])  # pyright: ignore[reportUnknownArgumentType]
 
     return fastq_ids
@@ -70,6 +70,6 @@ def _run(cohort: Cohort, api_root: str) -> str:
 
     # Trigger md5sum pipeline in ICA
     md5_pipeline_id: str = run_intake_qc_pipeline.run_md5_pipeline(
-        ica_fastq_ids=fastq_ids, api_config=configuration, project_id=project_id
+        cohort_name=cohort.name, ica_fastq_ids=fastq_ids, api_config=configuration, project_id=project_id
     )
     return md5_pipeline_id
