@@ -12,6 +12,7 @@ from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
 def run_md5_pipeline(
     cohort_name: str, ica_fastq_ids: list[str], api_config: icasdk.Configuration, project_id: str
 ) -> str:
+    print(f'{ica_fastq_ids}')
     header_params: dict[Any, Any] = {}
     body = CreateNextflowAnalysis(
         userReference=cohort_name,
