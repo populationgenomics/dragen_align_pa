@@ -9,10 +9,12 @@ from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
 
 
-def run_md5_pipeline(ica_fastq_ids: list[str], api_config: icasdk.Configuration, project_id: str) -> str:
+def run_md5_pipeline(
+    cohort_name: str, ica_fastq_ids: list[str], api_config: icasdk.Configuration, project_id: str
+) -> str:
     header_params: dict[Any, Any] = {}
     body = CreateNextflowAnalysis(
-        userReference='',
+        userReference=cohort_name,
         pipelineId=config_retrieve(['ica', 'pipelines', 'md5_pipeline_id']),
         tags=AnalysisTag(
             technicalTags=[*config_retrieve(['ica', 'tags', 'technical_tags']), 'md5sum'],

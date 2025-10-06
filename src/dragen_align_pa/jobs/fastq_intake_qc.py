@@ -41,7 +41,9 @@ def _get_fastq_ica_id_list(
 
 def run_md5_job(cohort: Cohort, outputs: cpg_utils.Path, api_root: str) -> PythonJob:
     job: PythonJob = _initalise_md5_job(cohort=cohort)
-    fastq_ids: str = _run(cohort=cohort, api_root=api_root)
+    fastq_ids = job.call(_run, cohort=cohort, api_root=api_root).as_str()
+
+    # fastq_ids: str = _run(cohort=cohort, api_root=api_root)
     with outputs.open('w') as output_fh:
         output_fh.write('\n'.join(fastq_ids))
     logger.info(fastq_ids)
