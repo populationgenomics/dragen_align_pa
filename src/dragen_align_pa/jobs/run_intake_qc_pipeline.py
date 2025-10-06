@@ -22,7 +22,7 @@ def run_md5_pipeline(
             userTags=config_retrieve(['ica', 'tags', 'user_tags']),
             referenceTags=config_retrieve(['ica', 'tags', 'reference_tags']),
         ),
-        outputParentFolderId='',
+        outputParentFolderId='fol.4975ee93b6694319d41e08ddfb9bf5a9',
         analysisInput=NextflowAnalysisInput(inputs=[AnalysisDataInput(parameterCode='in', dataIds=ica_fastq_ids)]),
     )
 
