@@ -10,18 +10,23 @@ from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
 
 
 def run_md5_pipeline(
-    cohort_name: str, ica_fastq_ids: list[str], api_config: icasdk.Configuration, project_id: str
+    cohort_name: str,
+    ica_fastq_ids: list[str],
+    api_config: icasdk.Configuration,
+    project_id: str,
+    ar_guid: str,
+    md5_outputs_folder_id: str,
 ) -> str:
     header_params: dict[Any, Any] = {}
     body = CreateNextflowAnalysis(
-        userReference=f'{cohort_name}_md5',
+        userReference=f'{cohort_name}_{ar_guid}',
         pipelineId=config_retrieve(['ica', 'pipelines', 'md5_pipeline_id']),
         tags=AnalysisTag(
             technicalTags=[*config_retrieve(['ica', 'tags', 'technical_tags']), 'md5sum'],
             userTags=config_retrieve(['ica', 'tags', 'user_tags']),
             referenceTags=config_retrieve(['ica', 'tags', 'reference_tags']),
         ),
-        outputParentFolderId='fol.4975ee93b6694319d41e08ddfb9bf5a9',
+        outputParentFolderId=md5_outputs_folder_id,
         analysisInput=NextflowAnalysisInput(inputs=[AnalysisDataInput(parameterCode='in', dataIds=ica_fastq_ids)]),
     )
 

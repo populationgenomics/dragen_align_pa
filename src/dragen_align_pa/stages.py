@@ -105,7 +105,9 @@ class FastqIntakeQc(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         if config_retrieve(['workflow', 'reads_type']) == 'fastq':
             outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
-            md5job: PythonJob = fastq_intake_qc.run_md5_job(cohort=cohort, outputs=outputs, api_root=ICA_REST_ENDPOINT)
+            md5job: PythonJob = fastq_intake_qc.run_md5_job(
+                cohort=cohort, outputs=outputs, api_root=ICA_REST_ENDPOINT, bucket=BUCKET
+            )
 
             return self.make_outputs(target=cohort, data=outputs, jobs=md5job)
 

@@ -17,15 +17,22 @@ def manage_md5_pipeline(
     api_root: str,
     api_config: Configuration,
     project_id: str,
-) -> str:
+    md5_outputs_folder_id: str,
+) -> cpg_utils.Path:
     # Does a pipeline exist? If not, we need to submit one
     if not (md5_pipeline := outputs['md5sum_pipeline_run']).exists():
+        ar_guid: str = try_get_ar_guid()
         # Trigger md5sum pipeline in ICA
         md5_pipeline_id: str = run_intake_qc_pipeline.run_md5_pipeline(
-            cohort_name=cohort_name, ica_fastq_ids=ica_fastq_ids, api_config=api_config, project_id=project_id
+            cohort_name=cohort_name,
+            ica_fastq_ids=ica_fastq_ids,
+            api_config=api_config,
+            project_id=project_id,
+            ar_guid=ar_guid,
+            md5_outputs_folder_id=md5_outputs_folder_id,
         )
         with md5_pipeline.open('w') as pipeline_fh:
-            pipeline_fh.write(json.dumps({'pipeline_id': md5_pipeline_id, 'ar_guid': try_get_ar_guid()}))
+            pipeline_fh.write(json.dumps({'pipeline_id': md5_pipeline_id, 'ar_guid': ar_guid}))
 
     # What is the status of the pipeline, did it fail and we need to resubmit?
     else:
@@ -40,9 +47,11 @@ def manage_md5_pipeline(
                 logger.info(f'md5 pipeline has status: {md5_status}')
                 delete_pipeline_id_file(pipeline_id_file=str(md5_pipeline))
             elif md5_status == 'SUCCEEDED':
-                return md5_pipeline_id
+                with outputs['md5sum_pipeline_success'].open('w') as success_fh:
+                    success_fh.write('')
+                return md5_pipeline
             else:
                 time.sleep(300)
                 md5_status = monitor_dragen_pipeline.run(ica_pipeline_id=md5_pipeline_id, api_root=api_root)
 
-    return md5_pipeline_id
+    return md5_pipeline
