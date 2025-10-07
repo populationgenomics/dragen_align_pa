@@ -47,7 +47,8 @@ def _create_md5_output_folder(
     cohort_name: str,
     path_parameters: dict[str, str],
 ) -> str:
-    folder_path: str = f'/{bucket}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{cohort_name}'
+    bucket_name: str = str(bucket).removeprefix('gs://')
+    folder_path: str = f'/{bucket_name}{config_retrieve(["ica", "data_prep", "output_folder"])}/{cohort_name}'
     return create_upload_object_id(
         api_instance=api_instance,
         path_params=path_parameters,

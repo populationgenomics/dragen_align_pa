@@ -28,9 +28,11 @@ def run_ica_prep_job(
     cohort: Cohort,
     output: dict[str, cpg_utils.Path],
     api_root: str,
-    bucket_name: Path,
+    bucket_path: Path,
 ) -> PythonJob:
     job: PythonJob = _initalise_ica_prep_job(cohort=cohort)
+
+    bucket_name: str = str(bucket_path).removeprefix('gs://')
 
     output_fids = job.call(
         _run,
