@@ -48,7 +48,7 @@ def _create_md5_output_folder(
     path_parameters: dict[str, str],
 ) -> str:
     bucket_name: str = str(bucket).removeprefix('gs://')
-    folder_path: str = f'/{bucket_name}{config_retrieve(["ica", "data_prep", "output_folder"])}/{cohort_name}'
+    folder_path: str = f'/{bucket_name}{config_retrieve(["ica", "data_prep", "output_folder"])}'
     return create_upload_object_id(
         api_instance=api_instance,
         path_params=path_parameters,
@@ -61,7 +61,7 @@ def _create_md5_output_folder(
 
 def run_md5_job(cohort: Cohort, outputs: dict[str, cpg_utils.Path], api_root: str, bucket: cpg_utils.Path) -> PythonJob:
     job: PythonJob = _initalise_md5_job(cohort=cohort)
-    md5_pipeline_file = job.call(_run, cohort=cohort, outputs=outputs, api_root=api_root, bucket=bucket).as_json()
+    md5_pipeline_file = job.call(_run, cohort=cohort, outputs=outputs, api_root=api_root, bucket=bucket)
 
     return job
 
