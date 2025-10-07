@@ -59,6 +59,28 @@ def _create_md5_output_folder(
     )
 
 
+def _get_md5_pipeline_outputs(
+    md5_folder_id: str, path_parameters: dict[str, str], api_instance: project_data_api.ProjectDataApi
+) -> str:
+    # Get the ID
+    api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
+        path_params=path_parameters,  # pyright: ignore[reportArgumentType]
+        query_params={'filename': 'all_md5.txt', 'filenameMatchMode': 'EXACT', 'parentFolderId': md5_folder_id},  # pyright: ignore[reportArgumentType]
+    )  # type: ignore
+    md5sum_results_id: str = api_response.body['items'][0]['data']['id']  # pyright: ignore[reportUnknownVariableType]
+
+    # Get a pre-signed URL
+    url_api_response = api_instance.create_download_url_for_data(  # pyright: ignore[reportUnknownVariableType]
+        path_params=path_parameters | {'dataId': md5sum_results_id}  # pyright: ignore[reportArgumentType]
+    )  # type: ignore
+
+    print(url_api_response.body)
+
+    # download_url: str = api_response.body[]
+    exit(1)
+    return 'x'
+
+
 def run_md5_job(cohort: Cohort, outputs: dict[str, cpg_utils.Path], api_root: str, bucket: cpg_utils.Path) -> PythonJob:
     job: PythonJob = _initalise_md5_job(cohort=cohort)
     md5_pipeline_file = job.call(_run, cohort=cohort, outputs=outputs, api_root=api_root, bucket=bucket)
@@ -98,15 +120,19 @@ def _run(cohort: Cohort, outputs: dict[str, cpg_utils.Path], api_root: str, buck
             bucket=bucket, api_instance=api_instance, cohort_name=cohort_name, path_parameters=path_parameters
         )
 
-    md5_pipeline_file: cpg_utils.Path = manage_md5_pipeline.manage_md5_pipeline(
-        cohort_name=cohort_name,
-        ica_fastq_ids=fastq_ids,
-        outputs=outputs,
-        api_root=api_root,
-        api_config=configuration,
-        project_id=project_id,
-        md5_outputs_folder_id=md5_outputs_folder_id,
-    )
+        md5_pipeline_file: cpg_utils.Path = manage_md5_pipeline.manage_md5_pipeline(
+            cohort_name=cohort_name,
+            ica_fastq_ids=fastq_ids,
+            outputs=outputs,
+            api_root=api_root,
+            api_config=configuration,
+            project_id=project_id,
+            md5_outputs_folder_id=md5_outputs_folder_id,
+        )
+
+        md5_results_id: str = _get_md5_pipeline_outputs(
+            md5_folder_id=md5_outputs_folder_id, path_parameters=path_parameters, api_instance=api_instance
+        )
 
     # Pull all_md5.txt from ICA
     # compare the md5sums to the supplied sums new stage??.
