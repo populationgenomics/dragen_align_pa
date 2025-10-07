@@ -137,7 +137,7 @@ class UploadDataToIca(SequencingGroupStage):
 
 
 @stage(
-    required_stages=[PrepareIcaForDragenAnalysis, UploadDataToIca],
+    required_stages=[PrepareIcaForDragenAnalysis, UploadDataToIca, FastqIntakeQc],
 )
 class ManageDragenPipeline(CohortStage):
     """

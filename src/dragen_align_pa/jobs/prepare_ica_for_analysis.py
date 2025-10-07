@@ -79,7 +79,7 @@ def _run(
 
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
-        folder_path = f'/{bucket_name}/{ica_analysis_output_folder}'
+        folder_path: str = f'/{bucket_name}/{ica_analysis_output_folder}'
         for sg_name in cohort.get_sequencing_group_ids():
             object_id: str = create_upload_object_id(
                 api_instance=api_instance,
