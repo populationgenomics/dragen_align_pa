@@ -52,28 +52,8 @@ logger.remove(0)
 logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
 
 
-@stage
-class FastqIntakeQc(CohortStage):
-    """Generate md5 sums for each uploaded fastq file.
-
-    Check these sums against the supplied md5sums to check for any corruption in transit.
-    """
-
-    def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
-        return BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_fastq_ids.txt'
-
-    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
-        if config_retrieve(['workflow', 'reads_type']) == 'fastq':
-            outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
-            md5job: PythonJob = fastq_intake_qc.run_md5_job(cohort=cohort, outputs=outputs, api_root=ICA_REST_ENDPOINT)
-
-            return self.make_outputs(target=cohort, data=outputs, jobs=md5job)
-
-        return None
-
-
 # No need to register this stage in Metamist I think, just ICA prep
-@stage(required_stages=[FastqIntakeQc])
+@stage()
 class PrepareIcaForDragenAnalysis(CohortStage):
     """Set up ICA for a single realignment run.
 
@@ -104,6 +84,32 @@ class PrepareIcaForDragenAnalysis(CohortStage):
             data=outputs,
             jobs=ica_prep_job,
         )
+
+
+@stage(required_stages=[PrepareIcaForDragenAnalysis])
+class FastqIntakeQc(CohortStage):
+    """Generate md5 sums for each uploaded fastq file.
+
+    Check these sums against the supplied md5sums to check for any corruption in transit.
+    """
+
+    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:
+        intake_qc_results: dict[str, cpg_utils.Path] = {
+            'fastq_ids_outpath': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_fastq_ids.txt',
+            'ica_md5sum_file': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_ica_md5sum.md5sum',
+            'md5sum_pipeline_run': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_ica_md5sum_pipeline.json',
+            'md5sum_pipeline_success': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_success',
+        }
+        return intake_qc_results
+
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+        if config_retrieve(['workflow', 'reads_type']) == 'fastq':
+            outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
+            md5job: PythonJob = fastq_intake_qc.run_md5_job(cohort=cohort, outputs=outputs, api_root=ICA_REST_ENDPOINT)
+
+            return self.make_outputs(target=cohort, data=outputs, jobs=md5job)
+
+        return None
 
 
 @stage

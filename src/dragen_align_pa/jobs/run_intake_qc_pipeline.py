@@ -14,7 +14,7 @@ def run_md5_pipeline(
 ) -> str:
     header_params: dict[Any, Any] = {}
     body = CreateNextflowAnalysis(
-        userReference=f'md5 verification of {cohort_name}',
+        userReference=f'{cohort_name}_md5',
         pipelineId=config_retrieve(['ica', 'pipelines', 'md5_pipeline_id']),
         tags=AnalysisTag(
             technicalTags=[*config_retrieve(['ica', 'tags', 'technical_tags']), 'md5sum'],
