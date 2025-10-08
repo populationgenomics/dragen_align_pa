@@ -67,6 +67,7 @@ def _get_md5_pipeline_outputs(
         path_params=path_parameters,  # pyright: ignore[reportArgumentType]
         query_params={'filename': ['all_md5.txt'], 'filenameMatchMode': 'EXACT', 'parentFolderId': [md5_folder_id]},  # pyright: ignore[reportArgumentType]
     )  # type: ignore
+    print(api_response.body)
     md5sum_results_id: str = api_response.body['items'][0]['data']['id']  # pyright: ignore[reportUnknownVariableType]
 
     # Get a pre-signed URL
