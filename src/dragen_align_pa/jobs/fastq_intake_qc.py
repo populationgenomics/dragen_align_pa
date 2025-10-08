@@ -67,6 +67,8 @@ def _get_md5_pipeline_outputs(
 ) -> str:
     # Get the ID
     with md5_pipeline_file.open('r') as pipeline_fh:
+        for line in pipeline_fh:
+            print(line)
         pipeline_id: str = json.load(pipeline_fh)['pipeline_id']
         ar_guid: str = json.load(pipeline_fh)['ar_guid']
     api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
