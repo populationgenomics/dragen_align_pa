@@ -1,3 +1,4 @@
+import json
 from typing import Literal
 
 import cpg_utils
@@ -42,13 +43,11 @@ def _get_fastq_ica_id_list(
 
 
 def _create_md5_output_folder(
-    bucket: cpg_utils.Path,
+    folder_path: str,
     api_instance: project_data_api.ProjectDataApi,
     cohort_name: str,
     path_parameters: dict[str, str],
 ) -> str:
-    bucket_name: str = str(bucket).removeprefix('gs://')
-    folder_path: str = f'/{bucket_name}{config_retrieve(["ica", "data_prep", "output_folder"])}'
     return create_upload_object_id(
         api_instance=api_instance,
         path_params=path_parameters,
@@ -60,12 +59,23 @@ def _create_md5_output_folder(
 
 
 def _get_md5_pipeline_outputs(
-    md5_folder_id: str, path_parameters: dict[str, str], api_instance: project_data_api.ProjectDataApi
+    folder_path: str,
+    path_parameters: dict[str, str],
+    api_instance: project_data_api.ProjectDataApi,
+    md5_pipeline_file: cpg_utils.Path,
+    cohort_name: str,
 ) -> str:
     # Get the ID
+    with md5_pipeline_file.open() as pipeline_fh:
+        pipeline_id: str = json.load(pipeline_fh)['pipeline_id']
+        ar_guid: str = json.load(pipeline_fh)['ar_guid']
     api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
         path_params=path_parameters,  # pyright: ignore[reportArgumentType]
-        query_params={'filename': ['all_md5.txt'], 'filenameMatchMode': 'EXACT', 'parentFolderId': [md5_folder_id]},  # pyright: ignore[reportArgumentType]
+        query_params={
+            'filename': ['all_md5.txt'],
+            'filenameMatchMode': 'EXACT',
+            'parentFolderPath': f'{folder_path}/{cohort_name}_{ar_guid}-{pipeline_id}',
+        },  # pyright: ignore[reportArgumentType]
     )  # type: ignore
     print(api_response.body)
     md5sum_results_id: str = api_response.body['items'][0]['data']['id']  # pyright: ignore[reportUnknownVariableType]
@@ -117,8 +127,11 @@ def _run(cohort: Cohort, outputs: dict[str, cpg_utils.Path], api_root: str, buck
             path_parameters=path_parameters,
         )
 
+        bucket_name: str = str(bucket).removeprefix('gs://')
+        folder_path: str = f'/{bucket_name}{config_retrieve(["ica", "data_prep", "output_folder"])}'
+
         md5_outputs_folder_id: str = _create_md5_output_folder(
-            bucket=bucket, api_instance=api_instance, cohort_name=cohort_name, path_parameters=path_parameters
+            folder_path=folder_path, api_instance=api_instance, cohort_name=cohort_name, path_parameters=path_parameters
         )
 
         md5_pipeline_file: cpg_utils.Path = manage_md5_pipeline.manage_md5_pipeline(
@@ -132,7 +145,11 @@ def _run(cohort: Cohort, outputs: dict[str, cpg_utils.Path], api_root: str, buck
         )
 
         md5_results_id: str = _get_md5_pipeline_outputs(
-            md5_folder_id=md5_outputs_folder_id, path_parameters=path_parameters, api_instance=api_instance
+            folder_path=folder_path,
+            path_parameters=path_parameters,
+            api_instance=api_instance,
+            md5_pipeline_file=md5_pipeline_file,
+            cohort_name=cohort_name,
         )
 
     # Pull all_md5.txt from ICA
