@@ -75,7 +75,7 @@ def _get_md5_pipeline_outputs(
         query_params={
             'filename': ['all_md5.txt'],
             'filenameMatchMode': 'EXACT',
-            'parentFolderPath': f'{folder_path}/{cohort_name}_{ar_guid}-{pipeline_id}',
+            'parentFolderPath': f'/{folder_path}/{cohort_name}_{ar_guid}-{pipeline_id}/',
         },  # pyright: ignore[reportArgumentType]
     )  # type: ignore
     print(api_response.body)
