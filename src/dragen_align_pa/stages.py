@@ -25,11 +25,13 @@ from dragen_align_pa.jobs import (
     prepare_ica_for_analysis,
     run_multiqc,
     upload_data_to_ica,
+    validate_md5_sums,
 )
 
 if TYPE_CHECKING:
     from hailtop.batch.job import BashJob, PythonJob
 
+READS_TYPE: Final = config_retrieve(['workflow', 'reads_type']).lower()
 BUCKET: Final = cpg_utils.to_path(output_path(suffix=''))
 DRAGEN_VERSION: Final = config_retrieve(['ica', 'pipelines', 'dragen_version'])
 GCP_FOLDER_FOR_ICA_PREP: Final = f'ica/{DRAGEN_VERSION}/prepare'
@@ -103,13 +105,34 @@ class FastqIntakeQc(CohortStage):
         return intake_qc_results
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
-        if config_retrieve(['workflow', 'reads_type']) == 'fastq':
+        if READS_TYPE == 'fastq':
             outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
             md5job: PythonJob = fastq_intake_qc.run_md5_job(
                 cohort=cohort, outputs=outputs, api_root=ICA_REST_ENDPOINT, bucket=BUCKET
             )
 
             return self.make_outputs(target=cohort, data=outputs, jobs=md5job)
+
+        return None
+
+
+@stage(required_stages=[FastqIntakeQc])
+class ValidateMd5Sums(CohortStage):
+    def expected_outputs(self, cohort: Cohort) -> None:
+        pass
+
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+        outputs: None = self.expected_outputs(cohort=cohort)
+
+        if READS_TYPE == 'fastq':
+            ica_md5sum_file_path: cpg_utils.Path = inputs.as_path(
+                target=cohort, stage=FastqIntakeQc, key='ica_md5sum_file'
+            )
+            md5_validation_job: PythonJob = validate_md5_sums.validate_md5_sums(
+                ica_md5sum_file_path=ica_md5sum_file_path, cohort=cohort
+            )
+
+            return self.make_outputs(target=cohort, data=outputs, jobs=md5_validation_job)
 
         return None
 

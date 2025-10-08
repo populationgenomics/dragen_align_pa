@@ -87,7 +87,7 @@ def _get_md5_pipeline_outputs(
         path_params=path_parameters | {'dataId': md5sum_results_id}  # pyright: ignore[reportArgumentType]
     )  # type: ignore
 
-    md5_file_contents = requests.get(url_api_response.body['url']).text
+    md5_file_contents = requests.get(url=url_api_response.body['url']).text
     with md5_outpath.open('w') as md5_path_fh:
         md5_path_fh.write(md5_file_contents)
     return md5_outpath
