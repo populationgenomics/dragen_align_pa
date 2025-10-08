@@ -95,8 +95,9 @@ def _get_md5_pipeline_outputs(
 
 def run_md5_job(cohort: Cohort, outputs: dict[str, cpg_utils.Path], api_root: str, bucket: cpg_utils.Path) -> PythonJob:
     job: PythonJob = _initalise_md5_job(cohort=cohort)
-    md5_pipeline_file = job.call(_run, cohort=cohort, outputs=outputs, api_root=api_root, bucket=bucket)
-
+    md5_pipeline_file = job.call(_run, cohort=cohort, outputs=outputs, api_root=api_root, bucket=bucket).as_str()
+    with outputs['md5sum_pipeline_success'].open('w') as success_fh:
+        success_fh.write(md5_pipeline_file)
     return job
 
 
