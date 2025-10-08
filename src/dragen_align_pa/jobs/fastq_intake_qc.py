@@ -71,13 +71,12 @@ def _get_md5_pipeline_outputs(
         pipeline_data: dict[str, str] = json.load(pipeline_fh)
         pipeline_id: str = pipeline_data['pipeline_id']
         ar_guid: str = pipeline_data['ar_guid']
-    print(f'/{folder_path}/{cohort_name}/{cohort_name}_{ar_guid}-{pipeline_id}/')
     api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
         path_params=path_parameters,  # pyright: ignore[reportArgumentType]
         query_params={
             'filename': ['all_md5.txt'],
             'filenameMatchMode': 'EXACT',
-            'parentFolderPath': f'/{folder_path}/{cohort_name}/{cohort_name}_{ar_guid}-{pipeline_id}/',
+            'parentFolderPath': f'{folder_path}/{cohort_name}/{cohort_name}_{ar_guid}-{pipeline_id}/',
         },  # pyright: ignore[reportArgumentType]
     )  # type: ignore
     print(api_response.body)
