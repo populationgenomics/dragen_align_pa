@@ -48,7 +48,7 @@ def manage_md5_pipeline(
                 delete_pipeline_id_file(pipeline_id_file=str(md5_pipeline))
             elif md5_status == 'SUCCEEDED':
                 with outputs['md5sum_pipeline_success'].open('w') as success_fh:
-                    success_fh.write('')
+                    success_fh.write('success')
                 return md5_pipeline
             else:
                 time.sleep(300)

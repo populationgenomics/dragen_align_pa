@@ -4,6 +4,7 @@ from typing import Literal
 import cpg_utils
 import icasdk
 import pandas as pd
+import requests
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve, get_driver_image
 from cpg_utils.hail_batch import get_batch
@@ -64,9 +65,9 @@ def _get_md5_pipeline_outputs(
     api_instance: project_data_api.ProjectDataApi,
     md5_pipeline_file: cpg_utils.Path,
     cohort_name: str,
-) -> str:
+    md5_outpath: cpg_utils.Path,
+) -> cpg_utils.Path:
     # Get the ID
-    # TODO why doesn't this work?
     with md5_pipeline_file.open('r') as pipeline_fh:
         pipeline_data: dict[str, str] = json.load(pipeline_fh)
         pipeline_id: str = pipeline_data['pipeline_id']
@@ -79,7 +80,6 @@ def _get_md5_pipeline_outputs(
             'parentFolderPath': f'{folder_path}/{cohort_name}/{cohort_name}_{ar_guid}-{pipeline_id}/',
         },  # pyright: ignore[reportArgumentType]
     )  # type: ignore
-    print(api_response.body)
     md5sum_results_id: str = api_response.body['items'][0]['data']['id']  # pyright: ignore[reportUnknownVariableType]
 
     # Get a pre-signed URL
@@ -87,11 +87,10 @@ def _get_md5_pipeline_outputs(
         path_params=path_parameters | {'dataId': md5sum_results_id}  # pyright: ignore[reportArgumentType]
     )  # type: ignore
 
-    print(url_api_response.body)
-
-    # download_url: str = api_response.body[]
-    exit(1)
-    return 'x'
+    md5_file_contents = requests.get(url_api_response.body['url']).content
+    with md5_outpath.open() as md5_path_fh:
+        md5_path_fh.write(md5_file_contents)
+    return md5_outpath
 
 
 def run_md5_job(cohort: Cohort, outputs: dict[str, cpg_utils.Path], api_root: str, bucket: cpg_utils.Path) -> PythonJob:
@@ -146,14 +145,14 @@ def _run(cohort: Cohort, outputs: dict[str, cpg_utils.Path], api_root: str, buck
             md5_outputs_folder_id=md5_outputs_folder_id,
         )
 
-        md5_results_id: str = _get_md5_pipeline_outputs(
+        md5_results_id: cpg_utils.Path = _get_md5_pipeline_outputs(
             folder_path=folder_path,
             path_parameters=path_parameters,
             api_instance=api_instance,
             md5_pipeline_file=md5_pipeline_file,
             cohort_name=cohort_name,
+            md5_outpath=outputs['ica_md5sum_file'],
         )
 
-    # Pull all_md5.txt from ICA
     # compare the md5sums to the supplied sums new stage??.
-    return md5_pipeline_file
+    return md5_results_id

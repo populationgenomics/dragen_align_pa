@@ -76,7 +76,7 @@ class PrepareIcaForDragenAnalysis(CohortStage):
             cohort=cohort,
             output=outputs,
             api_root=ICA_REST_ENDPOINT,
-            bucket_name=BUCKET,
+            bucket_path=BUCKET,
         )
 
         return self.make_outputs(
