@@ -65,7 +65,7 @@ def _get_md5_pipeline_outputs(
     # Get the ID
     api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
         path_params=path_parameters,  # pyright: ignore[reportArgumentType]
-        query_params={'filename': ['all_md5.txt'], 'filenameMatchMode': 'EXACT', 'parentFolderId': md5_folder_id},  # pyright: ignore[reportArgumentType]
+        query_params={'filename': ['all_md5.txt'], 'filenameMatchMode': 'EXACT', 'parentFolderId': [md5_folder_id]},  # pyright: ignore[reportArgumentType]
     )  # type: ignore
     md5sum_results_id: str = api_response.body['items'][0]['data']['id']  # pyright: ignore[reportUnknownVariableType]
 
