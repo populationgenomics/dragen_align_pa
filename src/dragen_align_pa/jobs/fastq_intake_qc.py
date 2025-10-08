@@ -88,7 +88,7 @@ def _get_md5_pipeline_outputs(
     )  # type: ignore
 
     md5_file_contents = requests.get(url_api_response.body['url']).content
-    with md5_outpath.open() as md5_path_fh:
+    with md5_outpath.open('w') as md5_path_fh:
         md5_path_fh.write(md5_file_contents)
     return md5_outpath
 
