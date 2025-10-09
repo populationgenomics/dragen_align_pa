@@ -20,6 +20,7 @@ from dragen_align_pa.jobs import (
     download_ica_pipeline_outputs,
     download_specific_files_from_ica,
     fastq_intake_qc,
+    make_fastq_file_list,
     manage_dragen_mlr,
     manage_dragen_pipeline,
     prepare_ica_for_analysis,
@@ -137,6 +138,35 @@ class ValidateMd5Sums(CohortStage):
 
             return self.make_outputs(target=cohort, data=outputs, jobs=md5_validation_job)
 
+        return None
+
+
+@stage(required_stages=[PrepareIcaForDragenAnalysis, ValidateMd5Sums])
+class MakeFastqFileList(CohortStage):
+    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        results: dict[str, cpg_utils.Path] = {
+            **{
+                sg_name: BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{sg_name}_fastq_list.csv'
+                for sg_name in cohort.get_sequencing_group_ids()
+            }
+        }
+        return results
+
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+        if READS_TYPE == 'fastq':
+            outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
+
+            analysis_output_fids_path: dict[str, cpg_utils.Path] = inputs.as_path_by_target(
+                stage=PrepareIcaForDragenAnalysis
+            )
+
+            make_fastq_list_file_job: PythonJob = make_fastq_file_list.make_fastq_list_file(
+                outputs=outputs,
+                analysis_output_fids_path=analysis_output_fids_path,
+                cohort=cohort,
+                api_root=ICA_REST_ENDPOINT,
+            )
+            return self.make_outputs(target=cohort, data=outputs, jobs=make_fastq_list_file_job)  # pyright: ignore[reportArgumentType]
         return None
 
 
