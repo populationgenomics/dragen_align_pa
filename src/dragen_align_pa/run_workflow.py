@@ -33,7 +33,7 @@ def cli_main():
 
     stages = [DeleteDataInIca]  # type: ignore[ReportUnknownVariableType]
 
-    run_workflow(stages=stages, dry_run=args.dry_run)  # type: ignore[ReportUnknownVariableType]
+    run_workflow(name='dragen_align_pa', stages=stages, dry_run=args.dry_run)  # type: ignore[ReportUnknownVariableType]
 
 
 if __name__ == '__main__':
