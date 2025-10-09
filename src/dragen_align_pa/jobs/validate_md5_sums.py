@@ -1,5 +1,3 @@
-import subprocess
-
 import cpg_utils
 import pandas as pd
 from cpg_flow.targets import Cohort
@@ -20,15 +18,20 @@ def _initalise_md5sum_validation_job(cohort: Cohort) -> PythonJob:
 def validate_md5_sums(ica_md5sum_file_path: cpg_utils.Path, cohort: Cohort) -> PythonJob:
     job: PythonJob = _initalise_md5sum_validation_job(cohort=cohort)
 
+    job.call(_run, ica_md5sum_file_path=ica_md5sum_file_path)
+
     return job
 
 
-def _run(ica_md5sum_file_path) -> None:
+def _run(ica_md5sum_file_path: cpg_utils.Path) -> None:
     manifest_file_path: cpg_utils.Path = config_retrieve(['workflow', 'manifest_gcp_path'])
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
         supplied_manifest_data: pd.DataFrame = pd.read_csv(manifest_fh, usecols=['Filenames', 'Checksum'])
-        supplied_manifest_data.to_csv('supplied_checksum.txt', sep='\t', header=False, index=False)
-    with ica_md5sum_file_path.open('r') as ica_md5_fh, open('ica_md5.txt', 'w') as ica_out_fh:
-        for line in ica_md5_fh:
-            ica_out_fh.write(line)
-    md5_result = subprocess.run(['md5sum', '-c', 'supplied_checksum.txt', 'ica_md5.txt'], check=False)
+    with ica_md5sum_file_path.open('r') as ica_md5_fh:
+        ica_md5_data: pd.DataFrame = pd.read_csv(ica_md5_fh, sep='\t', names=['IcaChecksum', 'Filenames'])
+    merged_checksum_data: pd.DataFrame = supplied_manifest_data.join(ica_md5_data, on='Filenames', how='outer')
+    merged_checksum_data['Match'] = merged_checksum_data['Checksum'].equals(merged_checksum_data['IcaChecksum'])
+    if not merged_checksum_data['Match'].all():
+        raise Exception(
+            f'The following files have non-matching checksums: {(merged_checksum_data[merged_checksum_data["Match"]]["Filenames"])}'
+        )
