@@ -28,7 +28,7 @@ def _run(ica_md5sum_file_path: cpg_utils.Path) -> None:
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
         supplied_manifest_data: pd.DataFrame = pd.read_csv(manifest_fh, usecols=['Filenames', 'Checksum'])
     with ica_md5sum_file_path.open('r') as ica_md5_fh:
-        ica_md5_data: pd.DataFrame = pd.read_csv(ica_md5_fh, sep='\t', names=['IcaChecksum', 'Filenames'])
+        ica_md5_data: pd.DataFrame = pd.read_csv(ica_md5_fh, delim_whitespace=True, names=['IcaChecksum', 'Filenames'])
     print(f'supplied manifest {supplied_manifest_data}')
     print(f'ICA manifest {ica_md5_data}')
     merged_checksum_data: pd.DataFrame = supplied_manifest_data.join(ica_md5_data, on='Filenames', how='outer')
