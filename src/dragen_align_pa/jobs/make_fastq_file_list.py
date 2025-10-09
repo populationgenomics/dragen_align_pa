@@ -40,5 +40,6 @@ def _run(
         supplied_manifest_data: pd.DataFrame = pd.read_csv(manifest_fh)
 
     for sequencing_group in cohort.get_sequencing_groups():
-        print(sequencing_group.assays)
+        for assay in sequencing_group.assays:
+            print(assay.meta['reads'])
         #  assay_filenames: list[str] = [sequencing_group.assays[0].meta['reads'][read]['basename'] for read in sequencing_group.assays[0].meta['reads']]
