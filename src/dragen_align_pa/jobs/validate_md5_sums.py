@@ -15,15 +15,27 @@ def _initalise_md5sum_validation_job(cohort: Cohort) -> PythonJob:
     return job
 
 
-def validate_md5_sums(ica_md5sum_file_path: cpg_utils.Path, cohort: Cohort) -> PythonJob:
+def validate_md5_sums(
+    ica_md5sum_file_path: cpg_utils.Path,
+    cohort: Cohort,
+    possible_errors_path: cpg_utils.Path,
+    outputs: cpg_utils.Path,
+) -> PythonJob:
     job: PythonJob = _initalise_md5sum_validation_job(cohort=cohort)
 
-    job.call(_run, ica_md5sum_file_path=ica_md5sum_file_path)
+    validation_success: str = job.call(
+        _run,
+        ica_md5sum_file_path=ica_md5sum_file_path,
+        possible_errors_path=possible_errors_path,
+        cohort_name=cohort.name,
+    ).as_str()
+
+    get_batch().write_output(resource=validation_success, dest=outputs)
 
     return job
 
 
-def _run(ica_md5sum_file_path: cpg_utils.Path) -> None:
+def _run(ica_md5sum_file_path: cpg_utils.Path, possible_errors_path: cpg_utils.Path, cohort_name: str) -> str:
     manifest_file_path: cpg_utils.Path = config_retrieve(['workflow', 'manifest_gcp_path'])
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
         supplied_manifest_data: pd.DataFrame = pd.read_csv(
@@ -39,6 +51,10 @@ def _run(ica_md5sum_file_path: cpg_utils.Path) -> None:
     merged_checksum_data: pd.DataFrame = supplied_manifest_data.merge(ica_md5_data, on='Filenames', how='outer')
     merged_checksum_data['Match'] = merged_checksum_data['Checksum'].equals(merged_checksum_data['IcaChecksum'])
     if not merged_checksum_data['Match'].all():
+        error_log: cpg_utils.Path = possible_errors_path / f'{cohort_name}_md5_errors.log'
+        with error_log.open() as error_fh:
+            merged_checksum_data[~merged_checksum_data['Match']]['Filenames'].map(lambda x: error_fh.write(x))
         raise Exception(
-            f'The following files have non-matching checksums: {merged_checksum_data[~merged_checksum_data["Match"]]["Filenames"].map(lambda x: print(x))}'
+            f'The following files have non-matching checksums: {merged_checksum_data[~merged_checksum_data["Match"]]["Filenames"].map(lambda x: print(x))}. Check the log file at {error_log}.'  # noqa: E501
         )
+    return 'SUCCESS'

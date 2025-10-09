@@ -62,7 +62,7 @@ class PrepareIcaForDragenAnalysis(CohortStage):
     Creates a folder ID for the Dragen output to be written into.
     """
 
-    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:
+    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
         results: dict[str, cpg_utils.Path] = {
             **{
                 sg_name: BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{sg_name}_output_fid.json'
@@ -83,7 +83,7 @@ class PrepareIcaForDragenAnalysis(CohortStage):
 
         return self.make_outputs(
             target=cohort,
-            data=outputs,
+            data=outputs,  # pyright: ignore[reportArgumentType]
             jobs=ica_prep_job,
         )
 
@@ -95,7 +95,7 @@ class FastqIntakeQc(CohortStage):
     Check these sums against the supplied md5sums to check for any corruption in transit.
     """
 
-    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:
+    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
         intake_qc_results: dict[str, cpg_utils.Path] = {
             'fastq_ids_outpath': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_fastq_ids.txt',
             'ica_md5sum_file': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_ica_md5sum.md5sum',
@@ -104,14 +104,14 @@ class FastqIntakeQc(CohortStage):
         }
         return intake_qc_results
 
-    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         if READS_TYPE == 'fastq':
             outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
             md5job: PythonJob = fastq_intake_qc.run_md5_job(
                 cohort=cohort, outputs=outputs, api_root=ICA_REST_ENDPOINT, bucket=BUCKET
             )
 
-            return self.make_outputs(target=cohort, data=outputs, jobs=md5job)
+            return self.make_outputs(target=cohort, data=outputs, jobs=md5job)  # pyright: ignore[reportArgumentType]
 
         return None
 
@@ -119,7 +119,7 @@ class FastqIntakeQc(CohortStage):
 @stage(required_stages=[FastqIntakeQc])
 class ValidateMd5Sums(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
-        return BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_placeholder'
+        return BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_validation_success.txt'
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
@@ -129,7 +129,10 @@ class ValidateMd5Sums(CohortStage):
                 target=cohort, stage=FastqIntakeQc, key='ica_md5sum_file'
             )
             md5_validation_job: PythonJob = validate_md5_sums.validate_md5_sums(
-                ica_md5sum_file_path=ica_md5sum_file_path, cohort=cohort
+                ica_md5sum_file_path=ica_md5sum_file_path,
+                cohort=cohort,
+                possible_errors_path=BUCKET / GCP_FOLDER_FOR_ICA_PREP,
+                outputs=outputs,
             )
 
             return self.make_outputs(target=cohort, data=outputs, jobs=md5_validation_job)
@@ -175,7 +178,7 @@ class ManageDragenPipeline(CohortStage):
     4. Monitors the progress of the Dragen pipeline run.
     """  # noqa: E501
 
-    def expected_outputs(
+    def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         cohort: Cohort,
     ) -> dict[str, cpg_utils.Path]:
@@ -212,14 +215,14 @@ class ManageDragenPipeline(CohortStage):
 
         return self.make_outputs(
             target=cohort,
-            data=outputs,
+            data=outputs,  # pyright: ignore[reportArgumentType]
             jobs=management_job,
         )
 
 
 @stage(required_stages=[ManageDragenPipeline])
 class ManageDragenMlr(CohortStage):
-    def expected_outputs(
+    def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         cohort: Cohort,
     ) -> dict[str, cpg_utils.Path]:
@@ -252,7 +255,7 @@ class ManageDragenMlr(CohortStage):
             outputs=outputs,
         )
 
-        return self.make_outputs(target=cohort, data=outputs, jobs=mlr_job)
+        return self.make_outputs(target=cohort, data=outputs, jobs=mlr_job)  # pyright: ignore[reportArgumentType]
 
 
 @stage(
@@ -267,7 +270,7 @@ class DownloadCramFromIca(SequencingGroupStage):
     pipeline ID. If read outside the job, it will get the pipeline ID from the previous pipeline run.
     """  # noqa: E501
 
-    def expected_outputs(
+    def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         sequencing_group: SequencingGroup,
     ) -> dict[str, cpg_utils.Path]:
@@ -298,7 +301,7 @@ class DownloadCramFromIca(SequencingGroupStage):
 
         return self.make_outputs(
             target=sequencing_group,
-            data=outputs,
+            data=outputs,  # pyright: ignore[reportArgumentType]
             jobs=ica_download_job,
         )
 
@@ -309,7 +312,7 @@ class DownloadCramFromIca(SequencingGroupStage):
     required_stages=[ManageDragenPipeline],
 )
 class DownloadGvcfFromIca(SequencingGroupStage):
-    def expected_outputs(
+    def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         sequencing_group: SequencingGroup,
     ) -> dict[str, cpg_utils.Path]:
@@ -351,7 +354,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
 
         return self.make_outputs(
             target=sequencing_group,
-            data=outputs,
+            data=outputs,  # pyright: ignore[reportArgumentType]
             jobs=ica_download_job,
         )
 
@@ -362,7 +365,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
     required_stages=[DownloadGvcfFromIca, ManageDragenMlr, ManageDragenPipeline],
 )
 class DownloadMlrGvcfFromIca(SequencingGroupStage):
-    def expected_outputs(
+    def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         sequencing_group: SequencingGroup,
     ) -> dict[str, cpg_utils.Path]:
@@ -404,7 +407,7 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
 
         return self.make_outputs(
             target=sequencing_group,
-            data=outputs,
+            data=outputs,  # pyright: ignore[reportArgumentType]
             jobs=ica_download_job,
         )
 
@@ -457,7 +460,7 @@ class DownloadDataFromIca(SequencingGroupStage):
 
 @stage(required_stages=[DownloadDataFromIca])
 class RunMultiQc(CohortStage):
-    def expected_outputs(self, cohort: Cohort) -> dict[str, str]:
+    def expected_outputs(self, cohort: Cohort) -> dict[str, str]:  # pyright: ignore[reportIncompatibleMethodOverride]
         multiqc_data: str = output_path(f'{DRAGEN_VERSION}/qc/{cohort.name}_multiqc_data.json')
         multiqc_report: str = output_path(f'{DRAGEN_VERSION}/qc/{cohort.name}_multiqc_report.html', category='web')
         return {
@@ -477,7 +480,7 @@ class RunMultiQc(CohortStage):
             cohort=cohort, dragen_metric_prefixes=dragen_metric_prefixes, outputs=outputs
         )
 
-        return self.make_outputs(target=cohort, data=outputs, jobs=multiqc_job)
+        return self.make_outputs(target=cohort, data=outputs, jobs=multiqc_job)  # pyright: ignore[reportArgumentType]
 
 
 # Change this to a sequencing group stage to be safer.
