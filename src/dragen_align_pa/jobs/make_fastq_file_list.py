@@ -22,7 +22,9 @@ def make_fastq_list_file(
     api_root: str,
 ) -> PythonJob:
     job: PythonJob = _initalise_fastq_list_job(cohort=cohort)
-    _run(outputs=outputs, analysis_outputs_fid_path=analysis_output_fids_path, cohort=cohort, api_root=api_root)
+    output = _run(
+        outputs=outputs, analysis_outputs_fid_path=analysis_output_fids_path, cohort=cohort, api_root=api_root
+    )
 
     return job
 
