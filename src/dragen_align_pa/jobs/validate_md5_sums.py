@@ -29,6 +29,8 @@ def _run(ica_md5sum_file_path: cpg_utils.Path) -> None:
         supplied_manifest_data: pd.DataFrame = pd.read_csv(manifest_fh, usecols=['Filenames', 'Checksum'])
     with ica_md5sum_file_path.open('r') as ica_md5_fh:
         ica_md5_data: pd.DataFrame = pd.read_csv(ica_md5_fh, sep='\t', names=['IcaChecksum', 'Filenames'])
+    print(f'supplied manifest {supplied_manifest_data}')
+    print(f'ICA manifest {ica_md5_data}')
     merged_checksum_data: pd.DataFrame = supplied_manifest_data.join(ica_md5_data, on='Filenames', how='outer')
     merged_checksum_data['Match'] = merged_checksum_data['Checksum'].equals(merged_checksum_data['IcaChecksum'])
     if not merged_checksum_data['Match'].all():
