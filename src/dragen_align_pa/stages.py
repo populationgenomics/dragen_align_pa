@@ -119,7 +119,7 @@ class FastqIntakeQc(CohortStage):
 @stage(required_stages=[FastqIntakeQc])
 class ValidateMd5Sums(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
-        return (BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_placeholder',)
+        return BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_placeholder'
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
