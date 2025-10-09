@@ -156,8 +156,8 @@ class MakeFastqFileList(CohortStage):
         if READS_TYPE == 'fastq':
             outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
-            analysis_output_fids_path: dict[str, cpg_utils.Path] = inputs.as_path_by_target(
-                stage=PrepareIcaForDragenAnalysis
+            analysis_output_fids_path: dict[str, cpg_utils.Path] = inputs.as_dict(
+                stage=PrepareIcaForDragenAnalysis, target=cohort
             )
 
             make_fastq_list_file_job: PythonJob = make_fastq_file_list.make_fastq_list_file(
