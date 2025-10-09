@@ -100,7 +100,7 @@ class FastqIntakeQc(CohortStage):
             'fastq_ids_outpath': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_fastq_ids.txt',
             'ica_md5sum_file': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_ica_md5sum.md5sum',
             'md5sum_pipeline_run': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_ica_md5sum_pipeline.json',
-            'md5sum_pipeline_success': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_success',
+            'md5sum_pipeline_success': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_md5_pipeline_success',
         }
         return intake_qc_results
 
@@ -119,7 +119,7 @@ class FastqIntakeQc(CohortStage):
 @stage(required_stages=[FastqIntakeQc])
 class ValidateMd5Sums(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
-        return BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_validation_success.txt'
+        return BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_md5_validation_success.txt'
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
