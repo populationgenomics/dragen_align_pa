@@ -40,7 +40,7 @@ def _run(ica_md5sum_file_path: cpg_utils.Path) -> None:
     print(ica_md5_data)
     print(supplied_manifest_data.info(verbose=True))
     print(ica_md5_data.info(verbose=True))
-    merged_checksum_data: pd.DataFrame = supplied_manifest_data.join(ica_md5_data, on='Filenames', how='outer')
+    merged_checksum_data: pd.DataFrame = supplied_manifest_data.merge(ica_md5_data, on='Filenames', how='outer')
     merged_checksum_data['Match'] = merged_checksum_data['Checksum'].equals(merged_checksum_data['IcaChecksum'])
     if not merged_checksum_data['Match'].all():
         raise Exception(
