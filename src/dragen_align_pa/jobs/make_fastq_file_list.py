@@ -42,8 +42,10 @@ def _run(
     for sequencing_group in cohort.get_sequencing_groups():
         for assay in sequencing_group.assays:
             for item in assay.meta:
-                if 'reads' not in item:
-                    continue
-                for subitem in item:
-                    print(subitem['reads'])
+                print(type(item))
+                print(item)
+                # if 'reads' not in item:
+                #     continue
+                # for subitem in item:
+                #     print(subitem['reads'])
         #  assay_filenames: list[str] = [sequencing_group.assays[0].meta['reads'][read]['basename'] for read in sequencing_group.assays[0].meta['reads']]
