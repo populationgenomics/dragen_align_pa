@@ -45,5 +45,5 @@ def _run(
                 if 'reads' not in item:
                     continue
                 for subitem in item:
-                    print(subitem)
+                    print(subitem['reads'])
         #  assay_filenames: list[str] = [sequencing_group.assays[0].meta['reads'][read]['basename'] for read in sequencing_group.assays[0].meta['reads']]
