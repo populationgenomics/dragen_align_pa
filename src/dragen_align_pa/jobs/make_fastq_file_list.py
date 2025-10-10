@@ -41,4 +41,4 @@ def _run(
 
     for sequencing_group in cohort.get_sequencing_groups():
         for single_assay in sequencing_group.assays:
-            print(single_assay.meta['reads'])
+            print(single_assay.meta)
