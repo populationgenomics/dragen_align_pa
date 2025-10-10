@@ -41,5 +41,5 @@ def _run(
 
     for sequencing_group in cohort.get_sequencing_groups():
         for single_assay in sequencing_group.assays:
-            if 'reads' in single_assay.keys():
-                print(single_assay['reads'])
+            if 'reads' in single_assay.meta:
+                print(single_assay.meta['reads'])
