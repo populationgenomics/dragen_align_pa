@@ -1,3 +1,5 @@
+from typing import Any
+
 import cpg_utils
 import pandas as pd
 from cpg_flow.targets import Cohort
@@ -35,11 +37,31 @@ def _run(
     cohort: Cohort,
     api_root: str,
 ) -> None:
+    def _flatten_list(nested_list: list[Any]) -> list[Any]:
+        """
+        Recursively flattens a list that may contain nested lists.
+        Handles cases like [], ['read1'], [['read1']], [[]], and [['r1'], ['r2']].
+        """
+        if not nested_list:
+            return []
+        flat_list: list[Any] = []
+        for item in nested_list:
+            if isinstance(item, list):
+                # If the item is a list, recursively flatten it and extend the main list
+                flat_list.extend(_flatten_list(item))
+            else:
+                # If the item is not a list, append it directly
+                flat_list.append(item)
+        return flat_list
+
     manifest_file_path: cpg_utils.Path = config_retrieve(['workflow', 'manifest_gcp_path'])
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
         supplied_manifest_data: pd.DataFrame = pd.read_csv(manifest_fh)
 
     for sequencing_group in cohort.get_sequencing_groups():
+        all_reads_for_sg: list[Any] = []
         for single_assay in sequencing_group.assays:
             if 'reads' in single_assay.meta:
-                print(single_assay.meta['reads'])
+                reads_value = single_assay.meta.get('reads', [])
+                if isinstance(reads_value, list):
+                    all_reads_for_sg.extend(_flatten_list(reads_value))
