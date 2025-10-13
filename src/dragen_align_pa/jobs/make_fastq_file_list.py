@@ -37,6 +37,9 @@ def _run(
     cohort: Cohort,
     api_root: str,
 ) -> None:
+    # Somtimes the contents of sequiencing_group.assays.meta['reads'] is a nested list
+    # e.g., [['read1', 'read2']] instead of ['read1', 'read2']
+    # This function will recursively flatten them into a single list
     def _flatten_list(nested_list: list[Any]) -> list[Any]:
         """
         Recursively flattens a list that may contain nested lists.
@@ -65,3 +68,9 @@ def _run(
                 reads_value = single_assay.meta.get('reads', [])
                 if isinstance(reads_value, list):
                     all_reads_for_sg.extend(_flatten_list(reads_value))
+        if all_reads_for_sg:
+            # Filter the manifest DataFrame to include only rows where 'Filenames'
+            # match the reads found for the sequencing group.
+            df: pd.DataFrame = supplied_manifest_data[supplied_manifest_data['Filenames'].isin(all_reads_for_sg)]
+            if df.empty:
+                raise ValueError(f'No matching reads found in manifest for sequencing group {sequencing_group.id}')
