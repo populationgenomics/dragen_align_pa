@@ -110,7 +110,7 @@ def _run(
         all_reads_for_sg: list[Any] = []
         for single_assay in sequencing_group.assays if sequencing_group.assays else []:
             if 'reads' in single_assay.meta:
-                reads_value: list[Any] = single_assay.meta['reads'].get('basename', [])
+                reads_value: list[Any] = single_assay.meta.get('reads', [])
                 if isinstance(reads_value, list):
                     all_reads_for_sg.extend(_flatten_list(reads_value))
         if all_reads_for_sg:
