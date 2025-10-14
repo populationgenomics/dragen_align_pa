@@ -37,6 +37,7 @@ def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path],
             'Yield Gb': 'Yield_Gb',
         }
     )
+    print(df.columns.values)
     paired_df: pd.DataFrame = (
         df.groupby('Sample_Key')
         .agg(
