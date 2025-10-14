@@ -20,7 +20,7 @@ def _initalise_fastq_list_job(cohort: Cohort) -> PythonJob:
 
 def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path], sg_name: str) -> None:
     fastq_list_file_path: cpg_utils.Path = outputs[sg_name]
-    fastq_list_header: list[str] = ['RGID', 'RGSM', 'RGLB', 'LANE', 'Read1File', 'Read2File']
+    fastq_list_header: list[str] = ['RGID', 'RGSM', 'RGLB', 'Lane', 'Read1File', 'Read2File']
     adaptors: re.Pattern[str] = re.compile('_([ACGT]+-[ACGT]+)_')
     df['adaptors'] = df['Filenames'].str.extract(adaptors, expand=False)
     df['Sample_Key'] = df['Filenames'].str.replace(r'_R[12]\.fastq\.gz', '', regex=True)
@@ -55,9 +55,9 @@ def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path],
     # 4. Drop the temporary Sample_Key column as it's no longer needed.
     paired_df = paired_df.drop(columns=['Sample_Key'])
     # Probably need to update test manifest to match real manifest
-    paired_df['RDSM'] = sg_name
+    paired_df['RGSM'] = sg_name
     paired_df['RGID'] = (
-        paired_df['RDSM']
+        paired_df['RGSM']
         + '_'
         + paired_df['adaptors']
         + '_'
@@ -67,7 +67,7 @@ def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path],
         + '_'
         + paired_df['Flow cell']
     )
-    paired_df['Library'] = sg_name
+    paired_df['RGLB'] = sg_name
     print(paired_df.columns.values)
     paired_df = paired_df[fastq_list_header]
     with cpg_utils.to_path(fastq_list_file_path).open('w') as fastq_list_fh:
