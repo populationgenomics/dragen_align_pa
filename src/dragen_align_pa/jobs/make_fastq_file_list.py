@@ -25,6 +25,20 @@ def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path],
     df['adaptors'] = df['Filenames'].str.extract(adaptors, expand=False)
     df['Sample_Key'] = df['Filenames'].str.replace(r'_R[12]\.fastq\.gz', '', regex=True)
     df = df.sort_values('Filenames')
+    print(f'Using pandas version: {pd.__version__}')
+    # paired_df: pd.DataFrame = (
+    #     df.groupby('Sample_Key')
+    #     .agg(
+    #         # For columns that are the same for both files (like 'Sample ID'), we just take the first entry.
+    #         **{col: 'first' for col in df.columns if col not in ['Filenames', 'Checksum', 'Sample_Key']},
+    #         # For filenames and checksums, we take the first (R1) and last (R2) values from each group.
+    #         Read1File=('Filenames', 'first'),
+    #         Read2File=('Filenames', 'last'),
+    #         R1_Checksum=('Checksum', 'first'),
+    #         R2_Checksum=('Checksum', 'last'),
+    #     )
+    #     .reset_index()
+    # )
     agg_spec: dict[str, tuple[str, str]] = {
         col: (col, 'first') for col in df.columns if col not in ['Filenames', 'Checksum', 'Sample_Key']
     }
