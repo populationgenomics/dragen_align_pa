@@ -68,7 +68,7 @@ def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path],
         + paired_df['Flow cell']
     )
     paired_df['Library'] = sg_name
-    paired_df = paired_df.drop(columns=[paired_df.columns.values not in fastq_list_header])
+    paired_df = paired_df[fastq_list_header]
     with cpg_utils.to_path(fastq_list_file_path).open('w') as fastq_list_fh:
         df.to_csv(fastq_list_fh, sep=',', index=False, header=True)
 
