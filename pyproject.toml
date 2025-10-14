@@ -25,7 +25,8 @@ classifiers=[
 dependencies=[
     'cpg-flow>=v0.3.1',
     'loguru>=0.7.3',
-    'multiqc'
+    'multiqc',
+    'pandas',
 ]
 
 [project.urls]
