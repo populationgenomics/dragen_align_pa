@@ -25,32 +25,18 @@ def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path],
     df['adaptors'] = df['Filenames'].str.extract(adaptors, expand=False)
     df['Sample_Key'] = df['Filenames'].str.replace(r'_R[12]\.fastq\.gz', '', regex=True)
     df = df.sort_values('Filenames')
-    # paired_df: pd.DataFrame = (
-    #     df.groupby('Sample_Key')
-    #     .agg(
-    #         # For columns that are the same for both files (like 'Sample ID'), we just take the first entry.
-    #         **{col: 'first' for col in df.columns if col not in ['Filenames', 'Checksum', 'Sample_Key']},
-    #         # For filenames and checksums, we take the first (R1) and last (R2) values from each group.
-    #         Read1File=('Filenames', 'first'),
-    #         Read2File=('Filenames', 'last'),
-    #         R1_Checksum=('Checksum', 'first'),
-    #         R2_Checksum=('Checksum', 'last'),
-    #     )
-    #     .reset_index()
-    # )
     agg_spec: dict[str, tuple[str, str]] = {
         col: (col, 'first') for col in df.columns if col not in ['Filenames', 'Checksum', 'Sample_Key']
     }
     agg_spec.update(
         {
-            'R1_File': ('Filenames', 'first'),
-            'R2_File': ('Filenames', 'last'),
+            'Read1File': ('Filenames', 'first'),
+            'Read2File': ('Filenames', 'last'),
             'R1_Checksum': ('Checksum', 'first'),
             'R2_Checksum': ('Checksum', 'last'),
         }
     )
     paired_df: pd.DataFrame = df.groupby('Sample_Key').agg(**agg_spec).reset_index()
-    print(paired_df.columns.values)
 
     # 4. Drop the temporary Sample_Key column as it's no longer needed.
     paired_df = paired_df.drop(columns=['Sample_Key'])
@@ -68,6 +54,7 @@ def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path],
         + paired_df['Flow cell']
     )
     paired_df['Library'] = sg_name
+    print(paired_df.columns.values)
     paired_df = paired_df[fastq_list_header]
     with cpg_utils.to_path(fastq_list_file_path).open('w') as fastq_list_fh:
         df.to_csv(fastq_list_fh, sep=',', index=False, header=True)
