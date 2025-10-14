@@ -50,11 +50,11 @@ def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path],
         }
     )
     paired_df: pd.DataFrame = df.groupby('Sample_Key').agg(**agg_spec).reset_index()
-    print(paired_df.colnames)
+    print(paired_df.columns.values)
 
     # 4. Drop the temporary Sample_Key column as it's no longer needed.
     paired_df = paired_df.drop(columns=['Sample_Key'])
-
+    # Probably need to update test manifest to match real manifest
     paired_df['RDSM'] = sg_name
     paired_df['RGID'] = (
         paired_df['RDSM']
@@ -68,7 +68,7 @@ def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path],
         + paired_df['Flow cell']
     )
     paired_df['Library'] = sg_name
-    paired_df = paired_df.drop(columns=[paired_df.colnames not in fastq_list_header])
+    paired_df = paired_df.drop(columns=[paired_df.columns.values not in fastq_list_header])
     with cpg_utils.to_path(fastq_list_file_path).open('w') as fastq_list_fh:
         df.to_csv(fastq_list_fh, sep=',', index=False, header=True)
 
