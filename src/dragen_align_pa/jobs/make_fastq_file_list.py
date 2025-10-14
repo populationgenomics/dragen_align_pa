@@ -50,6 +50,7 @@ def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path],
         }
     )
     paired_df: pd.DataFrame = df.groupby('Sample_Key').agg(**agg_spec).reset_index()
+    print(paired_df.colnames)
 
     # 4. Drop the temporary Sample_Key column as it's no longer needed.
     paired_df = paired_df.drop(columns=['Sample_Key'])
