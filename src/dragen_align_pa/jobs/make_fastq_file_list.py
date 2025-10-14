@@ -90,15 +90,17 @@ def _run(
         """
         if not nested_list:
             return []
-        flat_list: list[Any] = []
-        for item in nested_list:
+        filenames: list[str] = []
+
+        items_to_process: list[Any] = nested_list if isinstance(nested_list, list) else [nested_list]
+
+        for item in items_to_process:
             if isinstance(item, list):
                 # If the item is a list, recursively flatten it and extend the main list
-                flat_list.extend(_flatten_list(item))
-            else:
-                # If the item is not a list, append it directly
-                flat_list.append(item)
-        return flat_list
+                filenames.extend(_flatten_list(item))
+            elif isinstance(item, dict) and 'basename' in item:
+                filenames.append(item['basename'])
+        return filenames
 
     manifest_file_path: cpg_utils.Path = config_retrieve(['workflow', 'manifest_gcp_path'])
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
