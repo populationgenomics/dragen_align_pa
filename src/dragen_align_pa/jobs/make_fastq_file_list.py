@@ -67,7 +67,7 @@ def make_fastq_list_file(
     cohort: Cohort,
 ) -> PythonJob:
     job: PythonJob = _initalise_fastq_list_job(cohort=cohort)
-    output = job.call(_run, outputs=outputs, cohort=cohort)
+    job.call(_run, outputs=outputs, cohort=cohort)
 
     return job
 
