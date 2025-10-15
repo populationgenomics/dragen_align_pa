@@ -73,7 +73,7 @@ def _run(
             bucket_name: str = str(bucket).removeprefix('gs://')
             folder_path: str = (
                 f'/{bucket_name}{config_retrieve(["ica", "data_prep", "output_folder"])}/{sequencing_group}'
-            )
+            ).strip()
 
             fastq_list_ica_file_id: str = create_upload_object_id(
                 api_instance=api_instance,
