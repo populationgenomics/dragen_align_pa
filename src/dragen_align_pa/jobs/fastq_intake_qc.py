@@ -38,7 +38,6 @@ def _get_fastq_ica_id_list(
     )  # type: ignore
     for item in list(range(len(api_response.body['items']))):  # pyright: ignore[reportUnknownArgumentType]
         fastq_ids.append(api_response.body['items'][item]['data']['id'])  # pyright: ignore[reportUnknownArgumentType]
-        print(api_response.body['items'][item]['data']['details'])
         fastq_ids_and_filenames.append(
             api_response.body['items'][item]['data']['id']
             + '\t'

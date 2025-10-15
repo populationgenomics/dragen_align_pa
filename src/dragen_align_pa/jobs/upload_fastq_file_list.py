@@ -3,13 +3,13 @@ from typing import Literal
 import cpg_utils
 import icasdk
 from cpg_flow.targets import Cohort
-from cpg_utils.config import get_driver_image
+from cpg_utils.config import config_retrieve, get_driver_image
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from icasdk import Configuration
 from icasdk.apis.tags import project_data_api
 
-from dragen_align_pa.utils import get_ica_secrets
+from dragen_align_pa.utils import create_upload_object_id, get_ica_secrets
 
 
 def _inisalise_fastq_upload_job(cohort: Cohort) -> PythonJob:
@@ -53,6 +53,7 @@ def _run(
     analysis_output_fids_path: str,
     fastq_list_file_path_dict: dict[str, cpg_utils.Path],
     api_root: str,
+    bucket: cpg_utils.Path,
 ) -> None:
     secrets: dict[Literal['projectID', 'apiKey'], str] = get_ica_secrets()
     project_id: str = secrets['projectID']
@@ -65,3 +66,30 @@ def _run(
         api_instance: project_data_api.ProjectDataApi = project_data_api.ProjectDataApi(  # pyright: ignore[reportUnknownVariableType]
             api_client
         )
+        for sequencing_group in cohort.get_sequencing_group_ids():
+            fastq_list_file_name: str = fastq_list_file_path_dict[sequencing_group].name
+            bucket_name: str = str(bucket).removeprefix('gs://')
+            folder_path: str = (
+                f'/{bucket_name}{config_retrieve(["ica", "data_prep", "output_folder"])}/{sequencing_group}'
+            )
+
+            fastq_list_ica_file_id: str = create_upload_object_id(
+                api_instance=api_instance,
+                path_params=path_parameters,
+                sg_name=sequencing_group,
+                file_name=fastq_list_file_name,
+                folder_path=folder_path,
+                object_type='FILE',
+            )
+            api_instance.upload_data_file_in_project(  # pyright: ignore[reportUnknownVariableType]
+                path_params=path_parameters,  # pyright: ignore[reportArgumentType]
+                data_id=create_upload_object_id(
+                    api_instance=api_instance,
+                    path_params=path_parameters,
+                    sg_name=sequencing_group,
+                    file_name=fastq_list_file_name,
+                    folder_path=folder_path,
+                    object_type='FILE',
+                ),
+                file=fastq_list_file_path_dict[sequencing_group].open('rb'),  # pyright: ignore[reportUnknownArgumentType]
+            )
