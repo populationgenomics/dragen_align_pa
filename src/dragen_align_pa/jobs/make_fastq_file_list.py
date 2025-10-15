@@ -22,38 +22,12 @@ def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path],
     fastq_list_file_path: cpg_utils.Path = outputs[sg_name]
     fastq_list_header: list[str] = ['RGID', 'RGSM', 'RGLB', 'Lane', 'Read1File', 'Read2File']
     adaptors: re.Pattern[str] = re.compile('_([ACGT]+-[ACGT]+)_')
+
     df['adaptors'] = df['Filenames'].str.extract(adaptors, expand=False)
     df['Sample_Key'] = df['Filenames'].str.replace(r'_R[12]\.fastq\.gz', '', regex=True)
     df = df.sort_values('Filenames')
-    print(f'Using pandas version: {pd.__version__}')
-
-    column_mapping = {col: col.replace(' ', '_') for col in df.columns if ' ' in col}
+    column_mapping: dict[str, str] = {col: col.replace(' ', '_') for col in df.columns if ' ' in col}
     df = df.rename(columns=column_mapping)
-    # df = df.rename(
-    #     columns={
-    #         'Sample ID': 'Sample_ID',
-    #         'Flow cell': 'Flow_cell',
-    #         'Machine ID': 'Machine_ID',
-    #         'Sequencing Facility': 'Sequencing_Facility',
-    #         'End Type': 'End_Type',
-    #         'Read Length': 'Read_Length',
-    #         'Yield Gb': 'Yield_Gb',
-    #     }
-    # )
-    print(df.columns.values)
-    # paired_df: pd.DataFrame = (
-    #     df.groupby('Sample_Key')
-    #     .agg(
-    #         # For columns that are the same for both files (like 'Sample ID'), we just take the first entry.
-    #         **{col: 'first' for col in df.columns if col not in ['Filenames', 'Checksum', 'Sample_Key']},
-    #         # For filenames and checksums, we take the first (R1) and last (R2) values from each group.
-    #         Read1File=('Filenames', 'first'),
-    #         Read2File=('Filenames', 'last'),
-    #         R1_Checksum=('Checksum', 'first'),
-    #         R2_Checksum=('Checksum', 'last'),
-    #     )
-    #     .reset_index()
-    # )
     agg_spec: dict[str, tuple[str, str]] = {
         col: (col, 'first') for col in df.columns if col not in ['Filenames', 'Checksum', 'Sample_Key']
     }
@@ -82,7 +56,7 @@ def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path],
         + paired_df['Flow_cell']
     )
     paired_df['RGLB'] = paired_df['Sample_ID']
-    print(paired_df.columns.values)
+
     paired_df = paired_df[fastq_list_header]
     with cpg_utils.to_path(fastq_list_file_path).open('w') as fastq_list_fh:
         paired_df.to_csv(fastq_list_fh, sep=',', index=False, header=True)
@@ -90,23 +64,17 @@ def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path],
 
 def make_fastq_list_file(
     outputs: dict[str, cpg_utils.Path],
-    analysis_output_fids_path: dict[str, cpg_utils.Path],
     cohort: Cohort,
-    api_root: str,
 ) -> PythonJob:
     job: PythonJob = _initalise_fastq_list_job(cohort=cohort)
-    output = job.call(
-        _run, outputs=outputs, analysis_outputs_fid_path=analysis_output_fids_path, cohort=cohort, api_root=api_root
-    )
+    output = job.call(_run, outputs=outputs, cohort=cohort)
 
     return job
 
 
 def _run(
     outputs: dict[str, cpg_utils.Path],
-    analysis_outputs_fid_path: dict[str, cpg_utils.Path],
     cohort: Cohort,
-    api_root: str,
 ) -> None:
     # Somtimes the contents of sequiencing_group.assays.meta['reads'] is a nested list
     # e.g., [['read1', 'read2']] instead of ['read1', 'read2']

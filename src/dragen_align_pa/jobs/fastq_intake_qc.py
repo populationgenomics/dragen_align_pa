@@ -31,15 +31,19 @@ def _get_fastq_ica_id_list(
     path_parameters: dict[str, str],
 ) -> list[str]:
     fastq_ids: list[str] = []
+    fastq_ids_and_filenames: list[str] = []
     api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
         path_params=path_parameters,  # pyright: ignore[reportArgumentType]
         query_params={'filename': fastq_filenames, 'filenameMatchMode': 'EXACT'},
     )  # type: ignore
     for item in list(range(len(api_response.body['items']))):  # pyright: ignore[reportUnknownArgumentType]
         fastq_ids.append(api_response.body['items'][item]['data']['id'])  # pyright: ignore[reportUnknownArgumentType]
+        fastq_ids_and_filenames.append(
+            api_response.body['items'][item]['data']['id'] + '\t' + api_response.body['items'][item]['data']['name']  # pyright: ignore[reportUnknownArgumentType]
+        )
 
     with fastq_ids_outpath.open('w') as fq_outpath:
-        fq_outpath.write('\n'.join(fastq_ids))
+        fq_outpath.write('\n'.join(fastq_ids_and_filenames))
     return fastq_ids
 
 

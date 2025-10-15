@@ -156,15 +156,9 @@ class MakeFastqFileList(CohortStage):
         if READS_TYPE == 'fastq':
             outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
-            analysis_output_fids_path: dict[str, cpg_utils.Path] = inputs.as_dict(
-                stage=PrepareIcaForDragenAnalysis, target=cohort
-            )
-
             make_fastq_list_file_job: PythonJob = make_fastq_file_list.make_fastq_list_file(
                 outputs=outputs,
-                analysis_output_fids_path=analysis_output_fids_path,
                 cohort=cohort,
-                api_root=ICA_REST_ENDPOINT,
             )
             return self.make_outputs(target=cohort, data=outputs, jobs=make_fastq_list_file_job)  # pyright: ignore[reportArgumentType]
         return None
@@ -173,8 +167,7 @@ class MakeFastqFileList(CohortStage):
 @stage
 class UploadDataToIca(SequencingGroupStage):
     def expected_outputs(self, sequencing_group: SequencingGroup) -> cpg_utils.Path:
-        sg_bucket: cpg_utils.Path = sequencing_group.dataset.prefix()
-        return sg_bucket / GCP_FOLDER_FOR_ICA_PREP / f'{sequencing_group.name}_fids.json'
+        return BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{sequencing_group.name}_fids.json'
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:  # noqa: ARG002
         output: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
@@ -190,6 +183,36 @@ class UploadDataToIca(SequencingGroupStage):
             data=output,
             jobs=upload_job,
         )
+
+
+@stage(required_stages=[MakeFastqFileList, PrepareIcaForDragenAnalysis])
+class UploadFastqFileList(CohortStage):
+    def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:  # pyright: ignore[reportIncompatibleMethodOverride]
+        results: cpg_utils.Path = BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_fastq_file_list_fid.json'
+        return results
+
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+        outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
+        if READS_TYPE == 'fastq':
+            fastq_list_file_path_dict: dict[str, cpg_utils.Path] = inputs.as_dict(
+                target=cohort,
+                stage=MakeFastqFileList,
+            )
+            analysis_output_fids_path: dict[str, cpg_utils.Path] = inputs.as_dict(
+                stage=PrepareIcaForDragenAnalysis, target=cohort
+            )
+
+            upload_fastq_list_job: BashJob = upload_data_to_ica.upload_data_to_ica(
+                sequencing_group=get_multicohort(cohort=cohort).get_sequencing_group_by_name(
+                    list(fastq_list_file_path_dict.keys())[0]
+                ),
+                ica_cli_setup=ICA_CLI_SETUP,
+                output=str(outputs),
+            )
+
+            return self.make_outputs(target=cohort, data=outputs, jobs=upload_fastq_list_job)  # pyright: ignore[reportArgumentType]
+
+        return None
 
 
 @stage(
