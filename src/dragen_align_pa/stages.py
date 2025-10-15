@@ -26,6 +26,7 @@ from dragen_align_pa.jobs import (
     prepare_ica_for_analysis,
     run_multiqc,
     upload_data_to_ica,
+    upload_fastq_file_list,
     validate_md5_sums,
 )
 
@@ -202,12 +203,12 @@ class UploadFastqFileList(CohortStage):
                 stage=PrepareIcaForDragenAnalysis, target=cohort
             )
 
-            upload_fastq_list_job: BashJob = upload_data_to_ica.upload_data_to_ica(
-                sequencing_group=get_multicohort(cohort=cohort).get_sequencing_group_by_name(
-                    list(fastq_list_file_path_dict.keys())[0]
-                ),
-                ica_cli_setup=ICA_CLI_SETUP,
-                output=str(outputs),
+            upload_fastq_list_job: PythonJob = upload_fastq_file_list.upload_fastq_file_list(
+                cohort=cohort,
+                outputs=outputs,
+                analysis_output_fids_path=analysis_output_fids_path,
+                fastq_list_file_path_dict=fastq_list_file_path_dict,
+                api_root=ICA_CLI_SETUP,
             )
 
             return self.make_outputs(target=cohort, data=outputs, jobs=upload_fastq_list_job)  # pyright: ignore[reportArgumentType]
