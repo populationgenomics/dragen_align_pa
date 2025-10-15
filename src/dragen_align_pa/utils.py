@@ -160,6 +160,7 @@ def create_upload_object_id(
     logger.info(f'{existing_object_id}')
     if existing_object_id:
         return existing_object_id
+    logger.info(f'Creating a new {object_type} object at {folder_path}/{file_name}')
     try:
         if object_type == 'FILE':
             body = CreateData(

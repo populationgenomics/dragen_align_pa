@@ -83,15 +83,15 @@ def _run(
                 folder_path=folder_path,
                 object_type='FILE',
             )
-            api_instance.upload_data_file_in_project(  # pyright: ignore[reportUnknownVariableType]
-                path_params=path_parameters,  # pyright: ignore[reportArgumentType]
-                data_id=create_upload_object_id(
-                    api_instance=api_instance,
-                    path_params=path_parameters,
-                    sg_name=sequencing_group,
-                    file_name=fastq_list_file_name,
-                    folder_path=folder_path,
-                    object_type='FILE',
-                ),
-                file=fastq_list_file_path_dict[sequencing_group].open('rb'),  # pyright: ignore[reportUnknownArgumentType]
-            )
+            # api_instance.upload_data_file_in_project(  # pyright: ignore[reportUnknownVariableType]
+            #     path_params=path_parameters,  # pyright: ignore[reportArgumentType]
+            #     data_id=create_upload_object_id(
+            #         api_instance=api_instance,
+            #         path_params=path_parameters,
+            #         sg_name=sequencing_group,
+            #         file_name=fastq_list_file_name,
+            #         folder_path=folder_path,
+            #         object_type='FILE',
+            #     ),
+            #     file=fastq_list_file_path_dict[sequencing_group].open('rb'),  # pyright: ignore[reportUnknownArgumentType]
+            # )
