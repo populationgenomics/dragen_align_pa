@@ -217,7 +217,7 @@ class UploadFastqFileList(CohortStage):
 
 
 @stage(
-    required_stages=[PrepareIcaForDragenAnalysis, UploadDataToIca, MakeFastqFileList],
+    required_stages=[PrepareIcaForDragenAnalysis, UploadDataToIca, UploadFastqFileList],
 )
 class ManageDragenPipeline(CohortStage):
     """
