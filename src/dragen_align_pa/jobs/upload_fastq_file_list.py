@@ -27,6 +27,7 @@ def upload_fastq_file_list(
     analysis_output_fids_path: dict[str, cpg_utils.Path],
     fastq_list_file_path_dict: dict[str, cpg_utils.Path],
     api_root: str,
+    bucket: cpg_utils.Path,
 ) -> PythonJob:
     """Upload the fastq file list to ICA and return the job.
 
@@ -43,6 +44,7 @@ def upload_fastq_file_list(
         analysis_output_fids_path=analysis_output_fids_path,
         fastq_list_file_path_dict=fastq_list_file_path_dict,
         api_root=api_root,
+        bucket=bucket,
     )
     return job
 

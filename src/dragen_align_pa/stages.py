@@ -209,6 +209,7 @@ class UploadFastqFileList(CohortStage):
                 analysis_output_fids_path=analysis_output_fids_path,
                 fastq_list_file_path_dict=fastq_list_file_path_dict,
                 api_root=ICA_CLI_SETUP,
+                bucket=BUCKET,
             )
 
             return self.make_outputs(target=cohort, data=outputs, jobs=upload_fastq_list_job)  # pyright: ignore[reportArgumentType]
