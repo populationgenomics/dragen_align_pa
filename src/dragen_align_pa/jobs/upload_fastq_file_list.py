@@ -90,5 +90,7 @@ def _run(
             ).body['url']  # type: ignore[ReportUnknownVariableType]
 
             with fastq_list_file_path_dict[sequencing_group].open('rb') as fastq_list_fh:
-                r = requests.post(url=upload_url, data=fastq_list_fh)
-                logger.info(f'Upload response: {r.status_code}, {r.text}')
+                response: requests.Response = requests.post(url=upload_url, data=fastq_list_fh, timeout=300)  # pyright: ignore[reportUnknownVariableType]
+                response.raise_for_status()
+                logger.info(f'Upload of {fastq_list_file_name} to ICA successful.')
+                logger.info(f'Upload response: {response.status_code}, {response.text}')
