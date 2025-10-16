@@ -65,6 +65,7 @@ def _run(
     configuration: Configuration = Configuration(host=api_root)
     configuration.api_key['ApiKeyAuth'] = api_key
     path_parameters: dict[str, str] = {'projectId': project_id}
+    sg_and_fastq_list: list[str] = []
 
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance: project_data_api.ProjectDataApi = project_data_api.ProjectDataApi(  # pyright: ignore[reportUnknownVariableType]
@@ -98,3 +99,8 @@ def _run(
                     logger.info(f'Upload response: {response.status_code}, {response.text}')
                 else:
                     logger.info('Error: Did not receive a valid response from ICA upload endpoint.')
+            sg_and_fastq_list.append(f'{sequencing_group}:{fastq_list_ica_file_id}')
+
+    # Write the sequencing group and fastq list ICA file IDs to the outputs path
+    with outputs.open('w') as out_fh:
+        out_fh.write('\n'.join(sg_and_fastq_list))
