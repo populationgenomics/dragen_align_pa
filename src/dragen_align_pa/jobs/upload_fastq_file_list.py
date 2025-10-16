@@ -26,7 +26,6 @@ def _inisalise_fastq_upload_job(cohort: Cohort) -> PythonJob:
 def upload_fastq_file_list(
     cohort: Cohort,
     outputs: cpg_utils.Path,
-    analysis_output_fids_path: dict[str, cpg_utils.Path],
     fastq_list_file_path_dict: dict[str, cpg_utils.Path],
     api_root: str,
     bucket: cpg_utils.Path,
@@ -43,7 +42,6 @@ def upload_fastq_file_list(
         _run,
         cohort=cohort,
         outputs=outputs,
-        analysis_output_fids_path=analysis_output_fids_path,
         fastq_list_file_path_dict=fastq_list_file_path_dict,
         api_root=api_root,
         bucket=bucket,
@@ -54,7 +52,6 @@ def upload_fastq_file_list(
 def _run(
     cohort: Cohort,
     outputs: cpg_utils.Path,
-    analysis_output_fids_path: str,
     fastq_list_file_path_dict: dict[str, cpg_utils.Path],
     api_root: str,
     bucket: cpg_utils.Path,

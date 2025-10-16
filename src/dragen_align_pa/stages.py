@@ -170,20 +170,21 @@ class UploadDataToIca(SequencingGroupStage):
     def expected_outputs(self, sequencing_group: SequencingGroup) -> cpg_utils.Path:
         return BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{sequencing_group.name}_fids.json'
 
-    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:  # noqa: ARG002
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         output: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
+        if READS_TYPE == 'cram':
+            upload_job: BashJob = upload_data_to_ica.upload_data_to_ica(
+                sequencing_group=sequencing_group,
+                ica_cli_setup=ICA_CLI_SETUP,
+                output=str(output),
+            )
 
-        upload_job: BashJob = upload_data_to_ica.upload_data_to_ica(
-            sequencing_group=sequencing_group,
-            ica_cli_setup=ICA_CLI_SETUP,
-            output=str(output),
-        )
-
-        return self.make_outputs(
-            target=sequencing_group,
-            data=output,
-            jobs=upload_job,
-        )
+            return self.make_outputs(
+                target=sequencing_group,
+                data=output,
+                jobs=upload_job,
+            )
+        return None
 
 
 @stage(required_stages=[MakeFastqFileList, PrepareIcaForDragenAnalysis])
@@ -199,14 +200,10 @@ class UploadFastqFileList(CohortStage):
                 target=cohort,
                 stage=MakeFastqFileList,
             )
-            analysis_output_fids_path: dict[str, cpg_utils.Path] = inputs.as_dict(
-                stage=PrepareIcaForDragenAnalysis, target=cohort
-            )
 
             upload_fastq_list_job: PythonJob = upload_fastq_file_list.upload_fastq_file_list(
                 cohort=cohort,
                 outputs=outputs,
-                analysis_output_fids_path=analysis_output_fids_path,
                 fastq_list_file_path_dict=fastq_list_file_path_dict,
                 api_root=ICA_REST_ENDPOINT,
                 bucket=BUCKET,
@@ -254,8 +251,17 @@ class ManageDragenPipeline(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
+        cram_ica_fids_path: dict[str, cpg_utils.Path] | None = None
+        fastq_list_file_path: dict[str, cpg_utils.Path] | None = None
+        fastq_ids_path: dict[str, cpg_utils.Path] | None = None
+
         # Inputs from previous stages
-        ica_fids_path: dict[str, cpg_utils.Path] = inputs.as_path_by_target(stage=UploadDataToIca)
+        if READS_TYPE == 'cram':
+            cram_ica_fids_path = inputs.as_path_by_target(stage=UploadDataToIca)
+        elif READS_TYPE == 'fastq':
+            fastq_list_file_path = inputs.as_path_by_target(stage=UploadFastqFileList)
+            fastq_ids_path = inputs.as_path_by_target(stage=FastqIntakeQc, key='fastq_ids_outpath')
+
         analysis_output_fids_path: dict[str, cpg_utils.Path] = inputs.as_path_by_target(
             stage=PrepareIcaForDragenAnalysis
         )
@@ -263,7 +269,9 @@ class ManageDragenPipeline(CohortStage):
         management_job: PythonJob = manage_dragen_pipeline.manage_ica_pipeline(
             cohort=cohort,
             outputs=outputs,
-            ica_fids_path=ica_fids_path,
+            cram_ica_fids_path=cram_ica_fids_path,
+            fastq_list_file_path=fastq_list_file_path,
+            fastq_ids_path=fastq_ids_path,
             analysis_output_fids_path=analysis_output_fids_path,
             api_root=ICA_REST_ENDPOINT,
         )

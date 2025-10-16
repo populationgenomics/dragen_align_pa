@@ -22,12 +22,33 @@ def _initalise_management_job(cohort: Cohort) -> PythonJob:
     return management_job
 
 
+def _submit_new_ica_pipeline(
+    sg_name: str,
+    cram_ica_fids_path: cpg_utils.Path | None,
+    fastq_list_file_path: cpg_utils.Path | None,
+    fastq_ids_path: cpg_utils.Path | None,
+    analysis_output_fid_path: cpg_utils.Path,
+    api_root: str,
+) -> str:
+    ica_pipeline_id: str = run_align_genotype_with_dragen.run(
+        cram_ica_fids_path=cram_ica_fids_path,
+        fastq_list_file_path=fastq_list_file_path,
+        fastq_ids_path=fastq_ids_path,
+        analysis_output_fid_path=analysis_output_fid_path,
+        api_root=api_root,
+        sg_name=sg_name,
+    )
+    return ica_pipeline_id
+
+
 def manage_ica_pipeline(
     cohort: Cohort,
     outputs: dict[str, cpg_utils.Path],
-    ica_fids_path: dict[str, cpg_utils.Path],
     analysis_output_fids_path: dict[str, cpg_utils.Path],
     api_root: str,
+    cram_ica_fids_path: dict[str, cpg_utils.Path] | None,
+    fastq_list_file_path: dict[str, cpg_utils.Path] | None,
+    fastq_ids_path: dict[str, cpg_utils.Path] | None,
 ) -> PythonJob:
     job: PythonJob = _initalise_management_job(cohort=cohort)
 
@@ -35,7 +56,9 @@ def manage_ica_pipeline(
         _run,
         cohort=cohort,
         outputs=outputs,
-        ica_fids_path=ica_fids_path,
+        cram_ica_fids_path=cram_ica_fids_path,
+        fastq_list_file_path=fastq_list_file_path,
+        fastq_ids_path=fastq_ids_path,
         analysis_output_fids_path=analysis_output_fids_path,
         api_root=api_root,
     )
@@ -46,8 +69,10 @@ def manage_ica_pipeline(
 def _run(  # noqa: PLR0915
     cohort: Cohort,
     outputs: dict[str, cpg_utils.Path],
-    ica_fids_path: dict[str, cpg_utils.Path],
+    cram_ica_fids_path: dict[str, cpg_utils.Path] | None,
     analysis_output_fids_path: dict[str, cpg_utils.Path],
+    fastq_list_file_path: dict[str, cpg_utils.Path] | None,
+    fastq_ids_path: dict[str, cpg_utils.Path] | None,
     api_root: str,
 ) -> None:
     logger.info(f'Starting management job for {cohort.name}')
@@ -106,8 +131,10 @@ def _run(  # noqa: PLR0915
                 if not pipeline_id_arguid_file_exists:
                     ica_pipeline_id = _submit_new_ica_pipeline(
                         sg_name=sg_name,
-                        ica_fids_path=str(ica_fids_path[sg_name]),
-                        analysis_output_fid_path=str(analysis_output_fids_path[sg_name]),
+                        cram_ica_fids_path=cram_ica_fids_path[sg_name] if cram_ica_fids_path else None,
+                        fastq_list_file_path=fastq_list_file_path[sg_name] if fastq_list_file_path else None,
+                        fastq_ids_path=fastq_ids_path[sg_name] if fastq_ids_path else None,
+                        analysis_output_fid_path=analysis_output_fids_path[sg_name],
                         api_root=api_root,
                     )
                     with pipeline_id_arguid_file.open('w') as f:
@@ -154,8 +181,10 @@ def _run(  # noqa: PLR0915
                     if sg_name not in retried_pipelines:
                         ica_pipeline_id = _submit_new_ica_pipeline(
                             sg_name=sg_name,
-                            ica_fids_path=str(ica_fids_path[sg_name]),
-                            analysis_output_fid_path=str(analysis_output_fids_path[sg_name]),
+                            cram_ica_fids_path=cram_ica_fids_path[sg_name] if cram_ica_fids_path else None,
+                            fastq_list_file_path=fastq_list_file_path[sg_name] if fastq_list_file_path else None,
+                            fastq_ids_path=fastq_ids_path[sg_name] if fastq_ids_path else None,
+                            analysis_output_fid_path=analysis_output_fids_path[sg_name],
                             api_root=api_root,
                         )
                         with pipeline_id_arguid_file.open('w') as f:
@@ -190,29 +219,3 @@ def _run(  # noqa: PLR0915
         lines = tmp_log_handle.readlines()
         with outputs[f'{cohort.name}_errors'].open('w') as gcp_error_log_file:
             gcp_error_log_file.write('\n'.join(lines))
-
-
-def _submit_new_ica_pipeline(
-    sg_name: str,
-    ica_fids_path: str,
-    analysis_output_fid_path: str,
-    api_root: str,
-) -> str:
-    ica_pipeline_id: str = run_align_genotype_with_dragen.run(
-        ica_fids_path=ica_fids_path,
-        analysis_output_fid_path=analysis_output_fid_path,
-        dragen_ht_id=config_retrieve(['ica', 'pipelines', 'dragen_ht_id']),
-        cram_reference_id=config_retrieve(
-            ['ica', 'cram_references', config_retrieve(['ica', 'cram_references', 'old_cram_reference'])]
-        ),
-        qc_cross_cont_vcf_id=config_retrieve(['ica', 'qc', 'cross_cont_vcf']),
-        qc_cov_region_1_id=config_retrieve(['ica', 'qc', 'coverage_region_1']),
-        qc_cov_region_2_id=config_retrieve(['ica', 'qc', 'coverage_region_2']),
-        dragen_pipeline_id=config_retrieve(['ica', 'pipelines', 'dragen_3_7_8']),
-        user_tags=config_retrieve(['ica', 'tags', 'user_tags']),
-        technical_tags=config_retrieve(['ica', 'tags', 'technical_tags']),
-        reference_tags=config_retrieve(['ica', 'tags', 'reference_tags']),
-        user_reference=f'{sg_name}_{try_get_ar_guid()}_',
-        api_root=api_root,
-    )
-    return ica_pipeline_id

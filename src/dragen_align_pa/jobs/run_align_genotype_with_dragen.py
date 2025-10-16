@@ -3,6 +3,7 @@ from typing import Any, Literal
 
 import cpg_utils
 import icasdk
+from cpg_utils.config import config_retrieve, try_get_ar_guid
 from icasdk.apis.tags import project_analysis_api
 from icasdk.model.analysis_data_input import AnalysisDataInput
 from icasdk.model.analysis_parameter_input import AnalysisParameterInput
@@ -15,21 +16,40 @@ from dragen_align_pa import utils
 
 
 def submit_dragen_run(
-    cram_id: str,
-    dragen_ht_id: str,
-    cram_reference_id: str,
-    qc_cross_cont_vcf_id: str,
-    qc_cov_region_1_id: str,
-    qc_cov_region_2_id: str,
-    dragen_pipeline_id: str,
-    ica_output_folder_id: str,
-    user_tags: list[str],
-    technical_tags: list[str],
-    reference_tags: list[str],
-    user_reference: str,
+    cram_ica_fids_path: cpg_utils.Path | None,
+    fastq_list_file_path: cpg_utils.Path | None,
+    fastq_ids_path: cpg_utils.Path | None,
     project_id: dict[str, str],
+    ica_output_folder_id: str,
     api_instance: project_analysis_api.ProjectAnalysisApi,
+    sg_name: str,
 ) -> str:
+    """Submit a Dragen alignment and genotyping run to ICA"""
+    dragen_ht_id: str = config_retrieve(['ica', 'pipelines', 'dragen_ht_id'])
+    qc_cross_cont_vcf_id: str = config_retrieve(['ica', 'qc', 'cross_cont_vcf'])
+    qc_cov_region_1_id: str = config_retrieve(['ica', 'qc', 'coverage_region_1'])
+    qc_cov_region_2_id: str = config_retrieve(['ica', 'qc', 'coverage_region_2'])
+    dragen_pipeline_id: str = config_retrieve(['ica', 'pipelines', 'dragen_3_7_8'])
+    user_tags: list[str] = config_retrieve(['ica', 'tags', 'user_tags'])
+    technical_tags: list[str] = config_retrieve(['ica', 'tags', 'technical_tags'])
+    reference_tags: list[str] = config_retrieve(['ica', 'tags', 'reference_tags'])
+    user_reference: str = f'{sg_name}_{try_get_ar_guid()}_'
+
+    cram_input: list[AnalysisDataInput] | None = []
+    fastq_input: list[AnalysisDataInput] | None = []
+    if cram_ica_fids_path:
+        with cram_ica_fids_path.open() as cram_ica_fids_handle:
+            cram_ica_fids: dict[str, str] = json.load(cram_ica_fids_handle)
+            cram_reference_id: str = config_retrieve(
+                ['ica', 'cram_references', config_retrieve(['ica', 'cram_references', 'old_cram_reference'])]
+            )
+            cram_input = [
+                AnalysisDataInput(parameterCode='crams', dataIds=[cram_ica_fids['cram_id']]),
+                AnalysisDataInput(parameterCode='cram_reference', dataIds=[cram_reference_id]),
+            ]
+    elif fastq_list_file_path and fastq_ids_path:
+        pass
+
     header_params: dict[Any, Any] = {}
     body = CreateNextflowAnalysis(
         userReference=user_reference,
@@ -42,12 +62,12 @@ def submit_dragen_run(
         outputParentFolderId=ica_output_folder_id,
         analysisInput=NextflowAnalysisInput(
             inputs=[
-                AnalysisDataInput(parameterCode='crams', dataIds=[cram_id]),
                 AnalysisDataInput(parameterCode='ref_tar', dataIds=[dragen_ht_id]),
-                AnalysisDataInput(parameterCode='cram_reference', dataIds=[cram_reference_id]),
                 AnalysisDataInput(parameterCode='qc_cross_cont_vcf', dataIds=[qc_cross_cont_vcf_id]),
                 AnalysisDataInput(parameterCode='qc_coverage_region_1', dataIds=[qc_cov_region_1_id]),
                 AnalysisDataInput(parameterCode='qc_coverage_region_2', dataIds=[qc_cov_region_2_id]),
+                *cram_input,
+                *fastq_input,
             ],
             parameters=[
                 AnalysisParameterInput(code='enable_map_align', value='true'),
@@ -82,19 +102,12 @@ def submit_dragen_run(
 
 
 def run(
-    ica_fids_path: str,
-    analysis_output_fid_path: str,
-    dragen_ht_id: str,
-    cram_reference_id: str,
-    qc_cross_cont_vcf_id: str,
-    qc_cov_region_1_id: str,
-    qc_cov_region_2_id: str,
-    dragen_pipeline_id: str,
-    user_tags: list[str],
-    technical_tags: list[str],
-    reference_tags: list[str],
-    user_reference: str,
+    cram_ica_fids_path: cpg_utils.Path | None,
+    fastq_list_file_path: cpg_utils.Path | None,
+    fastq_ids_path: cpg_utils.Path | None,
+    analysis_output_fid_path: cpg_utils.Path,
     api_root: str,
+    sg_name: str,
 ) -> str:
     """_summary_
 
@@ -119,30 +132,20 @@ def run(
     configuration = icasdk.Configuration(host=api_root)
     configuration.api_key['ApiKeyAuth'] = api_key
 
-    with open(cpg_utils.to_path(ica_fids_path)) as ica_fids_handle:
-        ica_fids: dict[str, str] = json.load(ica_fids_handle)
-
-    with open(cpg_utils.to_path(analysis_output_fid_path)) as analysis_outputs_fid_handle:
+    with analysis_output_fid_path.open() as analysis_outputs_fid_handle:
         analysis_output_fid: dict[str, str] = json.load(analysis_outputs_fid_handle)
 
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         path_params: dict[str, str] = {'projectId': project_id}
         analysis_run_id: str = submit_dragen_run(
-            cram_id=ica_fids['cram_fid'],
-            dragen_ht_id=dragen_ht_id,
-            cram_reference_id=cram_reference_id,
-            qc_cross_cont_vcf_id=qc_cross_cont_vcf_id,
-            qc_cov_region_1_id=qc_cov_region_1_id,
-            qc_cov_region_2_id=qc_cov_region_2_id,
-            dragen_pipeline_id=dragen_pipeline_id,
+            cram_ica_fids_path=cram_ica_fids_path,
+            fastq_list_file_path=fastq_list_file_path,
+            fastq_ids_path=fastq_ids_path,
             ica_output_folder_id=analysis_output_fid['analysis_output_fid'],
-            user_tags=user_tags,
-            technical_tags=technical_tags,
-            reference_tags=reference_tags,
-            user_reference=user_reference,
             project_id=path_params,
             api_instance=api_instance,
+            sg_name=sg_name,
         )
 
         logger.info(f'Submitted ICA run with pipeline ID: {analysis_run_id}')
