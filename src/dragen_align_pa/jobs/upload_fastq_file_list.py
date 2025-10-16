@@ -69,7 +69,7 @@ def _run(
             api_client
         )
         for sequencing_group in cohort.get_sequencing_group_ids():
-            fastq_list_file_name: str = fastq_list_file_path_dict[sequencing_group].name
+            fastq_list_file_name: str = fastq_list_file_path_dict[sequencing_group].name.strip()
             bucket_name: str = str(bucket).removeprefix('gs://')
             folder_path: str = (
                 f'/{bucket_name}{config_retrieve(["ica", "data_prep", "output_folder"])}/{sequencing_group}'
