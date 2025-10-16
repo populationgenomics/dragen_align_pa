@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 import cpg_utils
 import icasdk
@@ -9,11 +9,9 @@ from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from icasdk import Configuration
 from icasdk.apis.tags import project_data_api
+from loguru import logger
 
 from dragen_align_pa.utils import create_upload_object_id, get_ica_secrets
-
-if TYPE_CHECKING:
-    from _io import BufferedReader, _BufferedReaderStream
 
 
 def _inisalise_fastq_upload_job(cohort: Cohort) -> PythonJob:
@@ -91,19 +89,6 @@ def _run(
                 path_params=path_parameters | {'dataId': fastq_list_ica_file_id}  # pyright: ignore[reportArgumentType]
             ).body['url']  # type: ignore[ReportUnknownVariableType]
 
-            files: dict[str, BufferedReader[_BufferedReaderStream]] = {
-                fastq_list_file_name: fastq_list_file_path_dict[sequencing_group].open('rb')
-            }
-            requests.post(url=upload_url, files=files, timeout=300)
-            # api_instance.upload_data_file_in_project(  # pyright: ignore[reportUnknownVariableType]
-            #     path_params=path_parameters,  # pyright: ignore[reportArgumentType]
-            #     data_id=create_upload_object_id(
-            #         api_instance=api_instance,
-            #         path_params=path_parameters,
-            #         sg_name=sequencing_group,
-            #         file_name=fastq_list_file_name,
-            #         folder_path=folder_path,
-            #         object_type='FILE',
-            #     ),
-            #     file=fastq_list_file_path_dict[sequencing_group].open('rb'),  # pyright: ignore[reportUnknownArgumentType]
-            # )
+            with fastq_list_file_path_dict[sequencing_group].open('rb') as fastq_list_fh:
+                r = requests.post(url=upload_url, data=fastq_list_fh)
+                logger.info(f'Upload response: {r.status_code}, {r.text}')
