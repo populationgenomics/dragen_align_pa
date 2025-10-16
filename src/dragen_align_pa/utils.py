@@ -108,8 +108,9 @@ def check_object_already_exists(
             'filename': [file_name],
             'filenameMatchMode': 'EXACT',
         } | query_params
-    logger.info(f'{query_params}')
+    logger.info(f'{query_params.__repr__()}')
     logger.info(f'Checking to see if the {object_type} object already exists at {folder_path}/{file_name}')
+    logger.info(f'{path_params.__repr__()}')
     try:
         api_response = api_instance.get_project_data_list(  # type: ignore[ReportUnknownVariableType]
             path_params=path_params,  # type: ignore[ReportUnknownVariableType]
