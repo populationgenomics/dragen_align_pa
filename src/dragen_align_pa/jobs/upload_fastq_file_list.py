@@ -89,8 +89,9 @@ def _run(
                 path_params=path_parameters | {'dataId': fastq_list_ica_file_id}  # pyright: ignore[reportArgumentType]
             ).body['url']  # type: ignore[ReportUnknownVariableType]
 
-            with fastq_list_file_path_dict[sequencing_group].open('rb') as fastq_list_fh:
-                response: requests.Response = requests.post(url=upload_url, data=fastq_list_fh, timeout=300)  # pyright: ignore[reportUnknownVariableType]
+            with fastq_list_file_path_dict[sequencing_group].open('r') as fastq_list_fh:
+                data: str = fastq_list_fh.read()
+                response: requests.Response = requests.put(url=upload_url, data=data, timeout=300)  # pyright: ignore[reportUnknownVariableType]
                 if isinstance(response, requests.Response):
                     response.raise_for_status()
                     logger.info(f'Upload of {fastq_list_file_name} to ICA successful.')
