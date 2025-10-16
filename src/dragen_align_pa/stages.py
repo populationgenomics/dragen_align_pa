@@ -208,7 +208,7 @@ class UploadFastqFileList(CohortStage):
                 outputs=outputs,
                 analysis_output_fids_path=analysis_output_fids_path,
                 fastq_list_file_path_dict=fastq_list_file_path_dict,
-                api_root=ICA_CLI_SETUP,
+                api_root=ICA_REST_ENDPOINT,
                 bucket=BUCKET,
             )
 
