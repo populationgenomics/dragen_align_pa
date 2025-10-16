@@ -1,7 +1,8 @@
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import cpg_utils
 import icasdk
+import requests
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve, get_driver_image
 from cpg_utils.hail_batch import get_batch
@@ -10,6 +11,9 @@ from icasdk import Configuration
 from icasdk.apis.tags import project_data_api
 
 from dragen_align_pa.utils import create_upload_object_id, get_ica_secrets
+
+if TYPE_CHECKING:
+    from _io import BufferedReader, _BufferedReaderStream
 
 
 def _inisalise_fastq_upload_job(cohort: Cohort) -> PythonJob:
@@ -83,6 +87,14 @@ def _run(
                 folder_path=folder_path,
                 object_type='FILE',
             )
+            upload_url: str = api_instance.create_upload_url_for_data(  # pyright: ignore[reportUnknownVariableType]
+                path_params=path_parameters | {'dataId': fastq_list_ica_file_id}  # pyright: ignore[reportArgumentType]
+            ).body['url']  # type: ignore[ReportUnknownVariableType]
+
+            files: dict[str, BufferedReader[_BufferedReaderStream]] = {
+                fastq_list_file_name: fastq_list_file_path_dict[sequencing_group].open('rb')
+            }
+            requests.post(url=upload_url, files=files, timeout=300)
             # api_instance.upload_data_file_in_project(  # pyright: ignore[reportUnknownVariableType]
             #     path_params=path_parameters,  # pyright: ignore[reportArgumentType]
             #     data_id=create_upload_object_id(
