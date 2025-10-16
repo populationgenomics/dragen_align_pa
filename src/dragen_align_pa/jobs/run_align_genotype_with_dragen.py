@@ -19,6 +19,7 @@ def submit_dragen_run(
     cram_ica_fids_path: cpg_utils.Path | None,
     fastq_list_file_path: cpg_utils.Path | None,
     fastq_ids_path: cpg_utils.Path | None,
+    individual_fastq_file_list_paths: cpg_utils.Path | None,
     project_id: dict[str, str],
     ica_output_folder_id: str,
     api_instance: project_analysis_api.ProjectAnalysisApi,
@@ -47,8 +48,12 @@ def submit_dragen_run(
                 AnalysisDataInput(parameterCode='crams', dataIds=[cram_ica_fids['cram_id']]),
                 AnalysisDataInput(parameterCode='cram_reference', dataIds=[cram_reference_id]),
             ]
+    # Need the gcs path to the fastq list file to extract the fastq names from.
     elif fastq_list_file_path and fastq_ids_path:
-        pass
+        with fastq_list_file_path.open() as fastq_list_file_handle:
+            while sg_name not in (line := fastq_list_file_handle.readline()):
+                continue
+            fastq_file_list_id: str = line.split(':')[1].strip()
 
     header_params: dict[Any, Any] = {}
     body = CreateNextflowAnalysis(
@@ -105,6 +110,7 @@ def run(
     cram_ica_fids_path: cpg_utils.Path | None,
     fastq_list_file_path: cpg_utils.Path | None,
     fastq_ids_path: cpg_utils.Path | None,
+    individual_fastq_file_list_paths: cpg_utils.Path | None,
     analysis_output_fid_path: cpg_utils.Path,
     api_root: str,
     sg_name: str,
@@ -142,6 +148,7 @@ def run(
             cram_ica_fids_path=cram_ica_fids_path,
             fastq_list_file_path=fastq_list_file_path,
             fastq_ids_path=fastq_ids_path,
+            individual_fastq_file_list_paths=individual_fastq_file_list_paths,
             ica_output_folder_id=analysis_output_fid['analysis_output_fid'],
             project_id=path_params,
             api_instance=api_instance,

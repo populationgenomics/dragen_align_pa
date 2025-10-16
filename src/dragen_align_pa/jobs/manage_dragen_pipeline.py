@@ -27,6 +27,7 @@ def _submit_new_ica_pipeline(
     cram_ica_fids_path: cpg_utils.Path | None,
     fastq_list_file_path: cpg_utils.Path | None,
     fastq_ids_path: cpg_utils.Path | None,
+    individual_fastq_file_list_paths: cpg_utils.Path | None,
     analysis_output_fid_path: cpg_utils.Path,
     api_root: str,
 ) -> str:
@@ -35,6 +36,7 @@ def _submit_new_ica_pipeline(
         fastq_list_file_path=fastq_list_file_path,
         fastq_ids_path=fastq_ids_path,
         analysis_output_fid_path=analysis_output_fid_path,
+        individual_fastq_file_list_paths=individual_fastq_file_list_paths,
         api_root=api_root,
         sg_name=sg_name,
     )
@@ -49,6 +51,7 @@ def manage_ica_pipeline(
     cram_ica_fids_path: dict[str, cpg_utils.Path] | None,
     fastq_list_file_path: dict[str, cpg_utils.Path] | None,
     fastq_ids_path: dict[str, cpg_utils.Path] | None,
+    individual_fastq_file_list_paths: dict[str, cpg_utils.Path] | None = None,
 ) -> PythonJob:
     job: PythonJob = _initalise_management_job(cohort=cohort)
 
@@ -59,6 +62,7 @@ def manage_ica_pipeline(
         cram_ica_fids_path=cram_ica_fids_path,
         fastq_list_file_path=fastq_list_file_path,
         fastq_ids_path=fastq_ids_path,
+        individual_fastq_file_list_paths=individual_fastq_file_list_paths,
         analysis_output_fids_path=analysis_output_fids_path,
         api_root=api_root,
     )
@@ -73,6 +77,7 @@ def _run(  # noqa: PLR0915
     analysis_output_fids_path: dict[str, cpg_utils.Path],
     fastq_list_file_path: dict[str, cpg_utils.Path] | None,
     fastq_ids_path: dict[str, cpg_utils.Path] | None,
+    individual_fastq_file_list_paths: dict[str, cpg_utils.Path] | None,
     api_root: str,
 ) -> None:
     logger.info(f'Starting management job for {cohort.name}')
@@ -135,6 +140,9 @@ def _run(  # noqa: PLR0915
                         fastq_list_file_path=fastq_list_file_path[sg_name] if fastq_list_file_path else None,
                         fastq_ids_path=fastq_ids_path[sg_name] if fastq_ids_path else None,
                         analysis_output_fid_path=analysis_output_fids_path[sg_name],
+                        individual_fastq_file_list_paths=individual_fastq_file_list_paths[sg_name]
+                        if individual_fastq_file_list_paths
+                        else None,
                         api_root=api_root,
                     )
                     with pipeline_id_arguid_file.open('w') as f:
@@ -184,6 +192,9 @@ def _run(  # noqa: PLR0915
                             cram_ica_fids_path=cram_ica_fids_path[sg_name] if cram_ica_fids_path else None,
                             fastq_list_file_path=fastq_list_file_path[sg_name] if fastq_list_file_path else None,
                             fastq_ids_path=fastq_ids_path[sg_name] if fastq_ids_path else None,
+                            individual_fastq_file_list_paths=individual_fastq_file_list_paths[sg_name]
+                            if individual_fastq_file_list_paths
+                            else None,
                             analysis_output_fid_path=analysis_output_fids_path[sg_name],
                             api_root=api_root,
                         )
