@@ -3,6 +3,7 @@ from typing import Any, Literal
 
 import cpg_utils
 import icasdk
+import pandas as pd
 from cpg_utils.config import config_retrieve, try_get_ar_guid
 from icasdk.apis.tags import project_analysis_api
 from icasdk.model.analysis_data_input import AnalysisDataInput
@@ -49,11 +50,14 @@ def submit_dragen_run(
                 AnalysisDataInput(parameterCode='cram_reference', dataIds=[cram_reference_id]),
             ]
     # Need the gcs path to the fastq list file to extract the fastq names from.
-    elif fastq_list_file_path and fastq_ids_path:
+    elif fastq_list_file_path and fastq_ids_path and individual_fastq_file_list_paths:
         with fastq_list_file_path.open() as fastq_list_file_handle:
             while sg_name not in (line := fastq_list_file_handle.readline()):
                 continue
             fastq_file_list_id: str = line.split(':')[1].strip()
+        with individual_fastq_file_list_paths.open() as individual_fastq_file_list_handle:
+            # Load the csv into a dataframe and filter the fastq_list_file for the fastqs that match the csv
+            fastq_df: pd.DataFrame = pd.read_csv(individual_fastq_file_list_handle, sep=',')
 
     header_params: dict[Any, Any] = {}
     body = CreateNextflowAnalysis(
