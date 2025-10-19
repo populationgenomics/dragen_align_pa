@@ -135,6 +135,7 @@ def _run(  # noqa: PLR0915
                 # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
                 logger.info(fastq_csv_list_file_path)
                 if not pipeline_id_arguid_file_exists:
+                    logger.info(f'Submitting new ICA pipeline for sequencing group: {sg_name}')
                     ica_pipeline_id = _submit_new_ica_pipeline(
                         sg_name=sg_name,
                         cram_ica_fids_path=cram_ica_fids_path[sg_name] if cram_ica_fids_path else None,
@@ -150,6 +151,7 @@ def _run(  # noqa: PLR0915
                         f.write(json.dumps({'pipeline_id': ica_pipeline_id, 'ar_guid': ar_guid}))
                 else:
                     # Get an existing pipeline ID
+                    logger.info(f'Checking status of existing ICA pipeline for sequencing group: {sg_name}')
                     with pipeline_id_arguid_file.open('r') as pipeline_fid_handle:
                         ica_pipeline_id = json.load(pipeline_fid_handle)['pipeline_id']
 
