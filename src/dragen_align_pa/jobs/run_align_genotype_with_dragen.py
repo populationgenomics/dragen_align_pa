@@ -37,9 +37,12 @@ def submit_dragen_run(
     reference_tags: list[str] = config_retrieve(['ica', 'tags', 'reference_tags'])
     user_reference: str = f'{sg_name}_{try_get_ar_guid()}_'
 
+    logger.info(f'Loaded Dragen ICA configuration values, user reference: {user_reference}')
+
     cram_input: list[AnalysisDataInput] | None = []
     fastq_input: list[AnalysisDataInput] | None = []
     if cram_ica_fids_path:
+        logger.info(f'Using CRAM input for sequencing group {sg_name}')
         with cram_ica_fids_path.open() as cram_ica_fids_handle:
             cram_ica_fids: dict[str, str] = json.load(cram_ica_fids_handle)
             cram_reference_id: str = config_retrieve(
@@ -51,6 +54,7 @@ def submit_dragen_run(
             ]
     # Need the gcs path to the fastq list file to extract the fastq names from.
     elif fastq_csv_list_file_path and fastq_ids_path and individual_fastq_file_list_paths:
+        logger.info(f'Using FASTQ input for sequencing group {sg_name}')
         with fastq_csv_list_file_path.open() as fastq_list_file_handle:
             while sg_name not in (line := fastq_list_file_handle.readline()):
                 continue
