@@ -65,6 +65,8 @@ def submit_dragen_run(
         logger.info(f'Fastq file list ID: {fastq_file_list_id}')
         logger.info(f'Fastq dataframe: {fastq_df}')
         exit(1)
+    else:
+        raise ValueError('No valid input provided for either CRAM or FASTQ files.')
 
     header_params: dict[Any, Any] = {}
     body = CreateNextflowAnalysis(
