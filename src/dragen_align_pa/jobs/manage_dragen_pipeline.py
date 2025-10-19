@@ -133,6 +133,7 @@ def _run(  # noqa: PLR0915
                 delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
             else:
                 # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
+                logger.info(fastq_csv_list_file_path)
                 if not pipeline_id_arguid_file_exists:
                     ica_pipeline_id = _submit_new_ica_pipeline(
                         sg_name=sg_name,
