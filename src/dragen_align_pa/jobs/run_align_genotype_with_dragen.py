@@ -57,6 +57,7 @@ def submit_dragen_run(
         logger.info(f'Using FASTQ input for sequencing group {sg_name}')
         with fastq_csv_list_file_path.open() as fastq_list_file_handle:
             while sg_name not in (line := fastq_list_file_handle.readline()):
+                print(line)
                 continue
             fastq_file_list_id: str = line.split(':')[1].strip()
         with individual_fastq_file_list_paths.open() as individual_fastq_file_list_handle:
