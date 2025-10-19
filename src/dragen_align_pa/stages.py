@@ -258,16 +258,16 @@ class ManageDragenPipeline(CohortStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
         cram_ica_fids_path: dict[str, cpg_utils.Path] | None = None
-        fastq_csv_list_file_path: dict[str, cpg_utils.Path] | None = None
-        fastq_ids_path: dict[str, cpg_utils.Path] | None = None
+        fastq_csv_list_file_path: cpg_utils.Path | None = None
+        fastq_ids_path: cpg_utils.Path | None = None
         individual_fastq_file_list_paths: dict[str, cpg_utils.Path] | None = None
 
         # Inputs from previous stages
         if READS_TYPE == 'cram':
             cram_ica_fids_path = inputs.as_path_by_target(stage=UploadDataToIca)
         elif READS_TYPE == 'fastq':
-            fastq_csv_list_file_path = inputs.as_path_by_target(stage=UploadFastqFileList)
-            fastq_ids_path = inputs.as_path_by_target(stage=FastqIntakeQc, key='fastq_ids_outpath')
+            fastq_csv_list_file_path = inputs.as_path(target=cohort, stage=UploadFastqFileList)
+            fastq_ids_path = inputs.as_path(target=cohort, stage=FastqIntakeQc, key='fastq_ids_outpath')
             individual_fastq_file_list_paths = inputs.as_dict(target=cohort, stage=MakeFastqFileList)
 
         analysis_output_fids_path: dict[str, cpg_utils.Path] = inputs.as_dict(

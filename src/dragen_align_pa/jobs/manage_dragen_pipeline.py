@@ -49,8 +49,8 @@ def manage_ica_pipeline(
     analysis_output_fids_path: dict[str, cpg_utils.Path],
     api_root: str,
     cram_ica_fids_path: dict[str, cpg_utils.Path] | None,
-    fastq_csv_list_file_path: dict[str, cpg_utils.Path] | None,
-    fastq_ids_path: dict[str, cpg_utils.Path] | None,
+    fastq_csv_list_file_path: cpg_utils.Path | None,
+    fastq_ids_path: cpg_utils.Path | None,
     individual_fastq_file_list_paths: dict[str, cpg_utils.Path] | None = None,
 ) -> PythonJob:
     job: PythonJob = _initalise_management_job(cohort=cohort)
@@ -75,8 +75,8 @@ def _run(  # noqa: PLR0915
     outputs: dict[str, cpg_utils.Path],
     cram_ica_fids_path: dict[str, cpg_utils.Path] | None,
     analysis_output_fids_path: dict[str, cpg_utils.Path],
-    fastq_csv_list_file_path: dict[str, cpg_utils.Path] | None,
-    fastq_ids_path: dict[str, cpg_utils.Path] | None,
+    fastq_csv_list_file_path: cpg_utils.Path | None,
+    fastq_ids_path: cpg_utils.Path | None,
     individual_fastq_file_list_paths: dict[str, cpg_utils.Path] | None,
     api_root: str,
 ) -> None:
@@ -138,10 +138,8 @@ def _run(  # noqa: PLR0915
                     ica_pipeline_id = _submit_new_ica_pipeline(
                         sg_name=sg_name,
                         cram_ica_fids_path=cram_ica_fids_path[sg_name] if cram_ica_fids_path else None,
-                        fastq_csv_list_file_path=fastq_csv_list_file_path[sg_name]
-                        if fastq_csv_list_file_path
-                        else None,
-                        fastq_ids_path=fastq_ids_path[sg_name] if fastq_ids_path else None,
+                        fastq_csv_list_file_path=fastq_csv_list_file_path if fastq_csv_list_file_path else None,
+                        fastq_ids_path=fastq_ids_path if fastq_ids_path else None,
                         analysis_output_fid_path=analysis_output_fids_path[sg_name],
                         individual_fastq_file_list_paths=individual_fastq_file_list_paths[sg_name]
                         if individual_fastq_file_list_paths
@@ -193,10 +191,8 @@ def _run(  # noqa: PLR0915
                         ica_pipeline_id = _submit_new_ica_pipeline(
                             sg_name=sg_name,
                             cram_ica_fids_path=cram_ica_fids_path[sg_name] if cram_ica_fids_path else None,
-                            fastq_csv_list_file_path=fastq_csv_list_file_path[sg_name]
-                            if fastq_csv_list_file_path
-                            else None,
-                            fastq_ids_path=fastq_ids_path[sg_name] if fastq_ids_path else None,
+                            fastq_csv_list_file_path=fastq_csv_list_file_path if fastq_csv_list_file_path else None,
+                            fastq_ids_path=fastq_ids_path if fastq_ids_path else None,
                             individual_fastq_file_list_paths=individual_fastq_file_list_paths[sg_name]
                             if individual_fastq_file_list_paths
                             else None,
