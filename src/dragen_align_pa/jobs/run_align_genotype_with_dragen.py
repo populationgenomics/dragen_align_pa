@@ -61,6 +61,7 @@ def submit_dragen_run(
                 if sg_name not in line:
                     continue
                 fastq_file_list_id: str = line.split(':')[1].strip()
+            logger.info(f'Fastq file list ID: {fastq_file_list_id}')
         with individual_fastq_file_list_paths.open() as individual_fastq_file_list_handle:
             # Load the csv into a dataframe and filter the fastq_list_file for the fastqs that match the csv
             fastq_df: pd.DataFrame = pd.read_csv(individual_fastq_file_list_handle, sep=',')
