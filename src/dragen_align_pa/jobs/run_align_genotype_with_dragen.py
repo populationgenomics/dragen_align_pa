@@ -55,12 +55,13 @@ def submit_dragen_run(
     # Need the gcs path to the fastq list file to extract the fastq names from.
     elif fastq_csv_list_file_path and fastq_ids_path and individual_fastq_file_list_paths:
         logger.info(f'Using FASTQ input for sequencing group {sg_name}')
+        fastq_file_list_id: str | None = None
         with fastq_csv_list_file_path.open() as fastq_list_file_handle:
             for line in fastq_list_file_handle:
                 logger.info(line)
                 if sg_name not in line:
                     continue
-                fastq_file_list_id: str = line.split(':')[1].strip()
+                fastq_file_list_id = line.split(':')[1].strip()
             logger.info(f'Fastq file list ID: {fastq_file_list_id}')
         with individual_fastq_file_list_paths.open() as individual_fastq_file_list_handle:
             # Load the csv into a dataframe and filter the fastq_list_file for the fastqs that match the csv
