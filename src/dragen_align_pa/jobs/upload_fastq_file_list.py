@@ -83,21 +83,21 @@ def _run(
                 folder_path=folder_path,
                 object_type='FILE',
             )
-            # TODO Fix to not try to upload to a file that is already available
-            upload_url: str = api_instance.create_upload_url_for_data(  # pyright: ignore[reportUnknownVariableType]
-                path_params=path_parameters | {'dataId': fastq_list_ica_file_id}  # pyright: ignore[reportArgumentType]
-            ).body['url']  # type: ignore[ReportUnknownVariableType]
+            if fastq_list_ica_file_id != 'AVAILABLE':
+                upload_url: str = api_instance.create_upload_url_for_data(  # pyright: ignore[reportUnknownVariableType]
+                    path_params=path_parameters | {'dataId': fastq_list_ica_file_id}  # pyright: ignore[reportArgumentType]
+                ).body['url']  # type: ignore[ReportUnknownVariableType]
 
-            with fastq_list_file_path_dict[sequencing_group].open('r') as fastq_list_fh:
-                data: str = fastq_list_fh.read()
-                response: requests.Response = requests.put(url=upload_url, data=data, timeout=300)  # pyright: ignore[reportUnknownVariableType]
-                if isinstance(response, requests.Response):
-                    response.raise_for_status()
-                    logger.info(f'Upload of {fastq_list_file_name} to ICA successful.')
-                    logger.info(f'Upload response: {response.status_code}, {response.text}')
-                else:
-                    logger.info('Error: Did not receive a valid response from ICA upload endpoint.')
-            sg_and_fastq_list.append(f'{sequencing_group}:{fastq_list_ica_file_id}')
+                with fastq_list_file_path_dict[sequencing_group].open('r') as fastq_list_fh:
+                    data: str = fastq_list_fh.read()
+                    response: requests.Response = requests.put(url=upload_url, data=data, timeout=300)  # pyright: ignore[reportUnknownVariableType]
+                    if isinstance(response, requests.Response):
+                        response.raise_for_status()
+                        logger.info(f'Upload of {fastq_list_file_name} to ICA successful.')
+                        logger.info(f'Upload response: {response.status_code}, {response.text}')
+                    else:
+                        logger.info('Error: Did not receive a valid response from ICA upload endpoint.')
+                sg_and_fastq_list.append(f'{sequencing_group}:{fastq_list_ica_file_id}')
 
     # Write the sequencing group and fastq list ICA file IDs to the outputs path
     with outputs.open('w') as out_fh:

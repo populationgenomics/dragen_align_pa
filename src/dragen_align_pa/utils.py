@@ -116,10 +116,12 @@ def check_object_already_exists(
         )  # type: ignore[ReportUnknownVariableType]
         if len(api_response.body['items']) == 0:  # type: ignore[ReportUnknownVariableType]
             return None
-        if object_type == 'FOLDER' or api_response.body['items'][0]['data']['details']['status'] in [
+        if object_type == 'FOLDER' or (status := api_response.body['items'][0]['data']['details']['status']) in [
             'PARTIAL',
             'AVAILABLE',
         ]:
+            if status and status == 'AVAILABLE':
+                return status
             return api_response.body['items'][0]['data']['id']  # type: ignore[ReportUnknownVariableType]
         # Statuses are ["PARTIAL", "AVAILABLE", "ARCHIVING", "ARCHIVED", "UNARCHIVING", "DELETING", ]
         raise NotImplementedError('Checking for other status is not implemented yet.')
