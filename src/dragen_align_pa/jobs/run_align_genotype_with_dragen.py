@@ -18,7 +18,7 @@ from dragen_align_pa import utils
 
 def submit_dragen_run(
     cram_ica_fids_path: cpg_utils.Path | None,
-    fastq_list_file_path: cpg_utils.Path | None,
+    fastq_csv_list_file_path: cpg_utils.Path | None,
     fastq_ids_path: cpg_utils.Path | None,
     individual_fastq_file_list_paths: cpg_utils.Path | None,
     project_id: dict[str, str],
@@ -50,14 +50,17 @@ def submit_dragen_run(
                 AnalysisDataInput(parameterCode='cram_reference', dataIds=[cram_reference_id]),
             ]
     # Need the gcs path to the fastq list file to extract the fastq names from.
-    elif fastq_list_file_path and fastq_ids_path and individual_fastq_file_list_paths:
-        with fastq_list_file_path.open() as fastq_list_file_handle:
+    elif fastq_csv_list_file_path and fastq_ids_path and individual_fastq_file_list_paths:
+        with fastq_csv_list_file_path.open() as fastq_list_file_handle:
             while sg_name not in (line := fastq_list_file_handle.readline()):
                 continue
             fastq_file_list_id: str = line.split(':')[1].strip()
         with individual_fastq_file_list_paths.open() as individual_fastq_file_list_handle:
             # Load the csv into a dataframe and filter the fastq_list_file for the fastqs that match the csv
             fastq_df: pd.DataFrame = pd.read_csv(individual_fastq_file_list_handle, sep=',')
+        logger.info(f'Fastq file list ID: {fastq_file_list_id}')
+        logger.info(f'Fastq dataframe: {fastq_df}')
+        exit(1)
 
     header_params: dict[Any, Any] = {}
     body = CreateNextflowAnalysis(
@@ -112,7 +115,7 @@ def submit_dragen_run(
 
 def run(
     cram_ica_fids_path: cpg_utils.Path | None,
-    fastq_list_file_path: cpg_utils.Path | None,
+    fastq_csv_list_file_path: cpg_utils.Path | None,
     fastq_ids_path: cpg_utils.Path | None,
     individual_fastq_file_list_paths: cpg_utils.Path | None,
     analysis_output_fid_path: cpg_utils.Path,
@@ -150,7 +153,7 @@ def run(
         path_params: dict[str, str] = {'projectId': project_id}
         analysis_run_id: str = submit_dragen_run(
             cram_ica_fids_path=cram_ica_fids_path,
-            fastq_list_file_path=fastq_list_file_path,
+            fastq_csv_list_file_path=fastq_csv_list_file_path,
             fastq_ids_path=fastq_ids_path,
             individual_fastq_file_list_paths=individual_fastq_file_list_paths,
             ica_output_folder_id=analysis_output_fid['analysis_output_fid'],
