@@ -153,7 +153,7 @@ class MakeFastqFileList(CohortStage):
         }
         return results
 
-    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         if READS_TYPE == 'fastq':
             outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
@@ -266,7 +266,7 @@ class ManageDragenPipeline(CohortStage):
         if READS_TYPE == 'cram':
             cram_ica_fids_path = inputs.as_path_by_target(stage=UploadDataToIca)
         elif READS_TYPE == 'fastq':
-            fastq_csv_list_file_path = inputs.as_dict(target=cohort, stage=UploadFastqFileList)
+            fastq_csv_list_file_path = inputs.as_path_by_target(stage=UploadFastqFileList)
             fastq_ids_path = inputs.as_path_by_target(stage=FastqIntakeQc, key='fastq_ids_outpath')
             individual_fastq_file_list_paths = inputs.as_dict(target=cohort, stage=MakeFastqFileList)
 

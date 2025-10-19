@@ -104,7 +104,7 @@ def check_object_already_exists(
         'type': object_type,
     }
     if object_type == 'FILE':
-        query_params = {
+        query_params = {  # pyright: ignore[reportUnknownVariableType]
             'filename': [file_name],
             'filenameMatchMode': 'EXACT',
         } | query_params
@@ -116,11 +116,11 @@ def check_object_already_exists(
         )  # type: ignore[ReportUnknownVariableType]
         if len(api_response.body['items']) == 0:  # type: ignore[ReportUnknownVariableType]
             return None
-        if object_type == 'FOLDER' or (status := api_response.body['items'][0]['data']['details']['status']) in [
+        if object_type == 'FOLDER' or (status := api_response.body['items'][0]['data']['details']['status']) in [  # pyright: ignore[reportUnknownVariableType]
             'PARTIAL',
             'AVAILABLE',
         ]:
-            if status and status == 'AVAILABLE':
+            if status and status == 'AVAILABLE':  # pyright: ignore[reportPossiblyUnboundVariable]
                 return status
             return api_response.body['items'][0]['data']['id']  # type: ignore[ReportUnknownVariableType]
         # Statuses are ["PARTIAL", "AVAILABLE", "ARCHIVING", "ARCHIVED", "UNARCHIVING", "DELETING", ]
