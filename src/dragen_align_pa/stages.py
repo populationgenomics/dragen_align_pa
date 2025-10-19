@@ -270,8 +270,8 @@ class ManageDragenPipeline(CohortStage):
             fastq_ids_path = inputs.as_path_by_target(stage=FastqIntakeQc, key='fastq_ids_outpath')
             individual_fastq_file_list_paths = inputs.as_dict(target=cohort, stage=MakeFastqFileList)
 
-        analysis_output_fids_path: dict[str, cpg_utils.Path] = inputs.as_path_by_target(
-            stage=PrepareIcaForDragenAnalysis
+        analysis_output_fids_path: dict[str, cpg_utils.Path] = inputs.as_dict(
+            target=cohort, stage=PrepareIcaForDragenAnalysis
         )
 
         management_job: PythonJob = manage_dragen_pipeline.manage_ica_pipeline(
