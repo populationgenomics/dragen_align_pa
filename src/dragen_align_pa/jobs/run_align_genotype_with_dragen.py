@@ -56,10 +56,11 @@ def submit_dragen_run(
     elif fastq_csv_list_file_path and fastq_ids_path and individual_fastq_file_list_paths:
         logger.info(f'Using FASTQ input for sequencing group {sg_name}')
         with fastq_csv_list_file_path.open() as fastq_list_file_handle:
-            while sg_name not in (line := fastq_list_file_handle.readline()):
-                print(line)
-                continue
-            fastq_file_list_id: str = line.split(':')[1].strip()
+            for line in fastq_list_file_handle:
+                logger.info(line)
+                if sg_name not in line:
+                    continue
+                fastq_file_list_id: str = line.split(':')[1].strip()
         with individual_fastq_file_list_paths.open() as individual_fastq_file_list_handle:
             # Load the csv into a dataframe and filter the fastq_list_file for the fastqs that match the csv
             fastq_df: pd.DataFrame = pd.read_csv(individual_fastq_file_list_handle, sep=',')
