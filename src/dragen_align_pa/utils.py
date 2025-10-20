@@ -116,13 +116,11 @@ def check_object_already_exists(
         )  # type: ignore[ReportUnknownVariableType]
         if len(api_response.body['items']) == 0:  # type: ignore[ReportUnknownVariableType]
             return None
-        if object_type == 'FOLDER' or (status := api_response.body['items'][0]['data']['details']['status']) in [  # pyright: ignore[reportUnknownVariableType]
-            'PARTIAL',
-            'AVAILABLE',
-        ]:
-            if status and status == 'AVAILABLE':  # pyright: ignore[reportPossiblyUnboundVariable]
-                return status
-            return api_response.body['items'][0]['data']['id']  # type: ignore[ReportUnknownVariableType]
+        status: str | None = api_response.body['items'][0]['data']['details']['status']  # pyright: ignore[reportUnknownVariableType]
+        if object_type == 'FOLDER' or status == 'PARTIAL':
+            return api_response.body['items'][0]['data']['id']  # pyright: ignore[reportUnknownVariableType]
+        if status == 'AVAILABLE':  # pyright: ignore[reportPossiblyUnboundVariable]
+            return status
         # Statuses are ["PARTIAL", "AVAILABLE", "ARCHIVING", "ARCHIVED", "UNARCHIVING", "DELETING", ]
         raise NotImplementedError('Checking for other status is not implemented yet.')
     except icasdk.ApiException as e:
