@@ -5,7 +5,7 @@ import cpg_utils
 import icasdk
 from cpg_flow.targets import Cohort
 from cpg_utils import Path
-from cpg_utils.config import config_retrieve, get_driver_image
+from cpg_utils.config import config_retrieve, get_driver_image, output_path
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
@@ -29,6 +29,7 @@ def run_ica_prep_job(
     output: dict[str, cpg_utils.Path],
     api_root: str,
     bucket_path: Path,
+    dragen_version: str,
 ) -> PythonJob:
     job: PythonJob = _initalise_ica_prep_job(cohort=cohort)
 
@@ -41,8 +42,11 @@ def run_ica_prep_job(
         bucket_name=bucket_name,
     ).as_json()
 
-    get_batch().write_output(output_fids, 'tmp.json')
-    with open('tmp.json') as fids_fh:
+    tmp_path: cpg_utils.Path = cpg_utils.to_path(
+        output_path(suffix=f'ica/{dragen_version}/prepare/tmp.json', category='tmp')
+    )
+    get_batch().write_output(output_fids, tmp_path)
+    with tmp_path.open() as fids_fh:
         fids_dict: dict[str, dict[str, str]] = json.load(fids_fh)
 
     for sg_name, outpath in output.items():
