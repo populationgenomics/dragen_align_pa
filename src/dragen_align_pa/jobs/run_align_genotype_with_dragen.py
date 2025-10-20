@@ -58,17 +58,22 @@ def submit_dragen_run(
         fastq_file_list_id: str | None = None
         with fastq_csv_list_file_path.open() as fastq_list_file_handle:
             for line in fastq_list_file_handle:
-                logger.info(line)
                 if sg_name not in line:
                     continue
                 fastq_file_list_id = line.split(':')[1].strip()
-            logger.info(f'Fastq file list ID: {fastq_file_list_id}')
         with individual_fastq_file_list_paths.open() as individual_fastq_file_list_handle:
             # Load the csv into a dataframe and filter the fastq_list_file for the fastqs that match the csv
-            fastq_df: pd.DataFrame = pd.read_csv(individual_fastq_file_list_handle, sep=',')
-        logger.info(f'Fastq file list ID: {fastq_file_list_id}')
-        logger.info(f'Fastq dataframe: {fastq_df}')
-        exit(1)
+            individual_fastq_csv_df: pd.DataFrame = pd.read_csv(individual_fastq_file_list_handle, sep=',')
+        with fastq_ids_path.open() as fastq_ids_handle:
+            fastq_ica_ids_df: pd.DataFrame = pd.read_csv(fastq_ids_handle, sep=r'\s+', names=['ica_id', 'fastq_name'])
+            fastq_ica_ids: list[str] = fastq_ica_ids_df[
+                fastq_ica_ids_df['fastq_name'].isin(individual_fastq_csv_df['Read1File'].tolist())
+                | fastq_ica_ids_df['fastq_name'].isin(individual_fastq_csv_df['Read2File'].tolist())
+            ]['ica_id'].tolist()
+            fastq_input = [
+                AnalysisDataInput(parameterCode='fastqs', dataIds=fastq_ica_ids),
+                AnalysisDataInput(parameterCode='fastq_list', dataIds=[fastq_file_list_id]),
+            ]
     else:
         raise ValueError('No valid input provided for either CRAM or FASTQ files.')
 
