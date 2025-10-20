@@ -190,7 +190,7 @@ class UploadDataToIca(SequencingGroupStage):
 @stage(required_stages=[MakeFastqFileList, PrepareIcaForDragenAnalysis])
 class UploadFastqFileList(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:  # pyright: ignore[reportIncompatibleMethodOverride]
-        results: cpg_utils.Path = BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_fastq_file_list_fid.json'
+        results: cpg_utils.Path = BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_fastq_csv_file_list_fid.json'
         return results
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
