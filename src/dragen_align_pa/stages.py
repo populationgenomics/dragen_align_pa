@@ -81,7 +81,6 @@ class PrepareIcaForDragenAnalysis(CohortStage):
             output=outputs,
             api_root=ICA_REST_ENDPOINT,
             bucket_path=BUCKET,
-            dragen_version=DRAGEN_VERSION,
         )
 
         return self.make_outputs(
