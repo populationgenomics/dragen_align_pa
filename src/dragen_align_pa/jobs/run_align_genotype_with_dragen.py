@@ -31,7 +31,7 @@ def submit_dragen_run(
     qc_cross_cont_vcf_id: str = config_retrieve(['ica', 'qc', 'cross_cont_vcf'])
     qc_cov_region_1_id: str = config_retrieve(['ica', 'qc', 'coverage_region_1'])
     qc_cov_region_2_id: str = config_retrieve(['ica', 'qc', 'coverage_region_2'])
-    dragen_pipeline_id: str = config_retrieve(['ica', 'pipelines', 'dragen_3_7_8'])
+    dragen_pipeline_id: str = config_retrieve(['ica', 'pipelines', config_retrieve(['workflow', 'reads_type'])])
     user_tags: list[str] = config_retrieve(['ica', 'tags', 'user_tags'])
     technical_tags: list[str] = config_retrieve(['ica', 'tags', 'technical_tags'])
     reference_tags: list[str] = config_retrieve(['ica', 'tags', 'reference_tags'])
@@ -40,7 +40,10 @@ def submit_dragen_run(
     logger.info(f'Loaded Dragen ICA configuration values, user reference: {user_reference}')
 
     cram_input: list[AnalysisDataInput] | None = []
+    cram_parameters: list[AnalysisParameterInput] | None = []
     fastq_input: list[AnalysisDataInput] | None = []
+    fastq_parameters: list[AnalysisParameterInput] | None = []
+
     if cram_ica_fids_path:
         logger.info(f'Using CRAM input for sequencing group {sg_name}')
         with cram_ica_fids_path.open() as cram_ica_fids_handle:
@@ -51,6 +54,23 @@ def submit_dragen_run(
             cram_input = [
                 AnalysisDataInput(parameterCode='crams', dataIds=[cram_ica_fids['cram_id']]),
                 AnalysisDataInput(parameterCode='cram_reference', dataIds=[cram_reference_id]),
+            ]
+            cram_parameters = [
+                AnalysisParameterInput(
+                    code='additional_args',
+                    value=(
+                        '--read-trimmers polyg '
+                        '--soft-read-trimmers none '
+                        "--vc-hard-filter 'DRAGENHardQUAL:all:QUAL<5.0;LowDepth:all:DP<=1' "
+                        '--vc-frd-max-effective-depth 40 '
+                        '--vc-enable-joint-detection true '
+                        '--qc-coverage-ignore-overlaps true '
+                        '--qc-coverage-count-soft-clipped-bases true '
+                        '--qc-coverage-reports-1 cov_report,cov_report '
+                        "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
+                        '--vc-gvcf-gq-bands 13 20 30 40'
+                    ),
+                )
             ]
     # Need the gcs path to the fastq list file to extract the fastq names from.
     elif fastq_csv_list_file_path and fastq_ids_path and individual_fastq_file_list_paths:
@@ -73,6 +93,16 @@ def submit_dragen_run(
             fastq_input = [
                 AnalysisDataInput(parameterCode='fastqs', dataIds=fastq_ica_ids),
                 AnalysisDataInput(parameterCode='fastq_list', dataIds=[fastq_file_list_id]),
+            ]
+            fastq_parameters = [
+                AnalysisParameterInput(
+                    code='additional_args',
+                    value=(
+                        '--qc-coverage-reports-1 cov_report,cov_report '
+                        "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
+                        '--vc-gvcf-gq-bands 13 20 30 40'
+                    ),
+                )
             ]
     else:
         raise ValueError('No valid input provided for either CRAM or FASTQ files.')
@@ -109,22 +139,9 @@ def submit_dragen_run(
                 AnalysisParameterInput(code='enable_sv', value='true'),
                 AnalysisParameterInput(code='enable_cyp2d6', value='true'),
                 AnalysisParameterInput(code='repeat_genotype_enable', value='true'),
-                AnalysisParameterInput(
-                    code='additional_args',
-                    value=(
-                        '--read-trimmers polyg '
-                        '--soft-read-trimmers none '
-                        "--vc-hard-filter 'DRAGENHardQUAL:all:QUAL<5.0;LowDepth:all:DP<=1' "
-                        '--vc-frd-max-effective-depth 40 '
-                        '--vc-enable-joint-detection true '
-                        '--qc-coverage-ignore-overlaps true '
-                        '--qc-coverage-count-soft-clipped-bases true '
-                        '--qc-coverage-reports-1 cov_report,cov_report '
-                        "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
-                        '--vc-gvcf-gq-bands 13 20 30 40'
-                    ),
-                ),
                 AnalysisParameterInput(code='dragen_reports', value='false'),
+                *cram_parameters,
+                *fastq_parameters,
             ],
         ),
     )
