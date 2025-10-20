@@ -32,7 +32,7 @@ def run_ica_prep_job(
 ) -> PythonJob:
     job: PythonJob = _initalise_ica_prep_job(cohort=cohort)
 
-    bucket_name: str = str(bucket_path).removeprefix('gs://')
+    bucket_name: str = str(bucket_path).removeprefix('gs://').removesuffix('/')
 
     job.call(
         _run,
