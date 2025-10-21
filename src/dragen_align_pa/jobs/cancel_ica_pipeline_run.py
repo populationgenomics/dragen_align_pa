@@ -6,9 +6,10 @@ from icasdk.apis.tags import project_analysis_api
 from loguru import logger
 
 from dragen_align_pa import utils
+from dragen_align_pa.constants import ICA_REST_ENDPOINT
 
 
-def run(ica_pipeline_id: str, api_root: str, is_mlr: bool = False) -> dict[str, str]:
+def run(ica_pipeline_id: str, is_mlr: bool = False) -> dict[str, str]:
     """Cancel a running ICA pipeline via the API
 
     Args:
@@ -26,7 +27,7 @@ def run(ica_pipeline_id: str, api_root: str, is_mlr: bool = False) -> dict[str, 
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
 
-    configuration = icasdk.Configuration(host=api_root)
+    configuration = icasdk.Configuration(host=ICA_REST_ENDPOINT)
     configuration.api_key['ApiKeyAuth'] = api_key
 
     if not is_mlr:

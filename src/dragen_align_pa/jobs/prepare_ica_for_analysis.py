@@ -11,6 +11,7 @@ from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
+from dragen_align_pa.constants import ICA_REST_ENDPOINT
 from dragen_align_pa.utils import create_upload_object_id, get_ica_secrets
 
 
@@ -27,7 +28,7 @@ def _initalise_ica_prep_job(cohort: Cohort) -> PythonJob:
 def run_ica_prep_job(
     cohort: Cohort,
     output: dict[str, cpg_utils.Path],
-    api_root: str,
+    # api_root: str,
     bucket_path: Path,
 ) -> PythonJob:
     job: PythonJob = _initalise_ica_prep_job(cohort=cohort)
@@ -36,7 +37,6 @@ def run_ica_prep_job(
 
     job.call(
         _run,
-        api_root=api_root,
         cohort=cohort,
         bucket_name=bucket_name,
         output=output,
@@ -46,7 +46,6 @@ def run_ica_prep_job(
 
 
 def _run(
-    api_root: str,
     cohort: Cohort,
     bucket_name: str,
     output: dict[str, cpg_utils.Path],
@@ -66,7 +65,7 @@ def _run(
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
 
-    configuration = icasdk.Configuration(host=api_root)
+    configuration = icasdk.Configuration(host=ICA_REST_ENDPOINT)
     configuration.api_key['ApiKeyAuth'] = api_key
     path_parameters: dict[str, str] = {'projectId': project_id}
 

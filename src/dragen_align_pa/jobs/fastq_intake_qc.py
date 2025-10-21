@@ -11,6 +11,7 @@ from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
 
+from dragen_align_pa.constants import BUCKET, ICA_REST_ENDPOINT
 from dragen_align_pa.jobs import manage_md5_pipeline
 from dragen_align_pa.utils import create_upload_object_id, get_ica_secrets
 
@@ -93,21 +94,21 @@ def _get_md5_pipeline_outputs(
         path_params=path_parameters | {'dataId': md5sum_results_id}  # pyright: ignore[reportArgumentType]
     )  # type: ignore
 
-    md5_file_contents = requests.get(url=url_api_response.body['url']).text
+    md5_file_contents = requests.get(url=url_api_response.body['url'], timeout=60).text  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
     with md5_outpath.open('w') as md5_path_fh:
-        md5_path_fh.write(md5_file_contents)
+        md5_path_fh.write(md5_file_contents)  # pyright: ignore[reportUnknownArgumentType]
     return md5_outpath
 
 
-def run_md5_job(cohort: Cohort, outputs: dict[str, cpg_utils.Path], api_root: str, bucket: cpg_utils.Path) -> PythonJob:
+def run_md5_job(cohort: Cohort, outputs: dict[str, cpg_utils.Path]) -> PythonJob:
     job: PythonJob = _initalise_md5_job(cohort=cohort)
-    md5_pipeline_file = job.call(_run, cohort=cohort, outputs=outputs, api_root=api_root, bucket=bucket).as_str()
+    md5_pipeline_file = job.call(_run, cohort=cohort, outputs=outputs).as_str()
     with outputs['md5sum_pipeline_success'].open('w') as success_fh:
         success_fh.write(md5_pipeline_file)
     return job
 
 
-def _run(cohort: Cohort, outputs: dict[str, cpg_utils.Path], api_root: str, bucket: cpg_utils.Path) -> cpg_utils.Path:
+def _run(cohort: Cohort, outputs: dict[str, cpg_utils.Path]) -> cpg_utils.Path:
     manifest_file_path: cpg_utils.Path = config_retrieve(['workflow', 'manifest_gcp_path'])
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
         supplied_manifest_data: pd.DataFrame = pd.read_csv(manifest_fh, usecols=['Filenames'])
@@ -118,7 +119,7 @@ def _run(cohort: Cohort, outputs: dict[str, cpg_utils.Path], api_root: str, buck
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
 
-    configuration = icasdk.Configuration(host=api_root)
+    configuration = icasdk.Configuration(host=ICA_REST_ENDPOINT)
     configuration.api_key['ApiKeyAuth'] = api_key
     path_parameters: dict[str, str] = {'projectId': project_id}
 
@@ -135,7 +136,7 @@ def _run(cohort: Cohort, outputs: dict[str, cpg_utils.Path], api_root: str, buck
             path_parameters=path_parameters,
         )
 
-        bucket_name: str = str(bucket).removeprefix('gs://')
+        bucket_name: str = str(BUCKET).removeprefix('gs://')
         folder_path: str = f'/{bucket_name}{config_retrieve(["ica", "data_prep", "output_folder"])}'
 
         md5_outputs_folder_id: str = _create_md5_output_folder(
@@ -146,7 +147,6 @@ def _run(cohort: Cohort, outputs: dict[str, cpg_utils.Path], api_root: str, buck
             cohort_name=cohort_name,
             ica_fastq_ids=fastq_ids,
             outputs=outputs,
-            api_root=api_root,
             api_config=configuration,
             project_id=project_id,
             md5_outputs_folder_id=md5_outputs_folder_id,

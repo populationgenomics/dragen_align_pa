@@ -9,6 +9,7 @@ from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
 
+from dragen_align_pa.constants import ICA_CLI_SETUP
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline
 from dragen_align_pa.utils import delete_pipeline_id_file
 
@@ -27,7 +28,6 @@ def _submit_mlr_run(
     bucket: str,
     ica_analysis_output_folder: str,
     sg_name: str,
-    ica_cli_setup: str,
     mlr_project: str,
     mlr_config_json: str,
     mlr_hash_table: str,
@@ -48,7 +48,7 @@ def _submit_mlr_run(
 
     mlr_analysis_command: str = f"""
         # General authentication
-        {ica_cli_setup}
+        {ICA_CLI_SETUP}
         cram_path=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/ --data-type FILE --file-name {sg_name}.cram --match-mode EXACT -o json | jq -r '.items[].details.path')
         gvcf_path=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/ --data-type FILE --file-name {sg_name}.hard-filtered.gvcf.gz --match-mode EXACT -o json | jq -r '.items[].details.path')
         cram="ica://OurDNA-DRAGEN-378${{cram_path}}"
@@ -82,9 +82,7 @@ def _submit_mlr_run(
 def run_mlr(
     cohort: Cohort,
     bucket: str,
-    ica_cli_setup: str,
     pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path],
-    api_root: str,
     outputs: dict[str, cpg_utils.Path],
 ) -> PythonJob:
     job: PythonJob = _initalise_mlr_job(cohort=cohort)
@@ -93,9 +91,7 @@ def run_mlr(
         _run,
         cohort,
         bucket,
-        ica_cli_setup,
         pipeline_id_arguid_path_dict,
-        api_root=api_root,
         outputs=outputs,
     )
 
@@ -105,9 +101,7 @@ def run_mlr(
 def _run(  # noqa: PLR0915
     cohort: Cohort,
     bucket: str,
-    ica_cli_setup: str,
     pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path],
-    api_root: str,
     outputs: dict[str, cpg_utils.Path],
 ) -> None:
     logger.info('Starting MLR processing and monitoring')
@@ -169,7 +163,7 @@ def _run(  # noqa: PLR0915
             # Cancel a running job in ICA
             if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False) and mlr_analysis_id:
                 logger.info(f'Cancelling pipeline run: {mlr_analysis_id} for sequencing group {sg_name}')
-                cancel_ica_pipeline_run.run(ica_pipeline_id=mlr_analysis_id, api_root=api_root, is_mlr=True)
+                cancel_ica_pipeline_run.run(ica_pipeline_id=mlr_analysis_id, is_mlr=True)
                 delete_pipeline_id_file(pipeline_id_file=str(mlr_pipeline_id_file))
             else:
                 # If a pipeline ID file doesn't exist we have to submit a new run, regardless of other settings
@@ -180,7 +174,6 @@ def _run(  # noqa: PLR0915
                         bucket=bucket,
                         ica_analysis_output_folder=ica_analysis_output_folder,
                         sg_name=sg_name,
-                        ica_cli_setup=ica_cli_setup,
                         mlr_project=mlr_project,
                         mlr_config_json=mlr_config_json,
                         mlr_hash_table=mlr_hash_table,
@@ -191,9 +184,7 @@ def _run(  # noqa: PLR0915
                     with mlr_pipeline_id_file.open('w') as mlr_fhandle:
                         mlr_fhandle.write(json.dumps({'pipeline_id': mlr_analysis_id, 'ar_guid': ar_guid}))
 
-                mlr_pipeline_status: str = monitor_dragen_pipeline.run(
-                    ica_pipeline_id=mlr_analysis_id, api_root=api_root, is_mlr=True
-                )
+                mlr_pipeline_status: str = monitor_dragen_pipeline.run(ica_pipeline_id=mlr_analysis_id, is_mlr=True)
 
                 if mlr_pipeline_status == 'INPROGRESS':
                     running_pipelines.append(sg_name)

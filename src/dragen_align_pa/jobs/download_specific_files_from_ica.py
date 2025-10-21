@@ -7,6 +7,7 @@ from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command,
 from hailtop.batch.job import BashJob
 from loguru import logger
 
+from dragen_align_pa.constants import BUCKET, GCP_FOLDER_FOR_ICA_DOWNLOAD, ICA_CLI_SETUP
 from dragen_align_pa.utils import calculate_needed_storage
 
 
@@ -28,9 +29,6 @@ def download_data_from_ica(
     job_name: str,
     sequencing_group: SequencingGroup,
     filetype: str,
-    bucket: str,
-    ica_cli_setup: str,
-    gcp_folder_for_ica_download: str,
     pipeline_id_arguid_path: cpg_utils.Path,
 ) -> BashJob:
     sg_name: str = sequencing_group.name
@@ -59,9 +57,9 @@ def download_data_from_ica(
         command(
             f"""
                 function download_individual_files {{
-                main_data=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}${{ar_guid}}-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.{data} --match-mode EXACT -o json | jq -r '.items[].id')
-                index=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}${{ar_guid}}-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.{data}.{index} --match-mode EXACT -o json | jq -r '.items[].id')
-                md5=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}${{ar_guid}}-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.{data}.{md5} --match-mode EXACT -o json | jq -r '.items[].id')
+                main_data=$(icav2 projectdata list --parent-folder /{BUCKET}/{ica_analysis_output_folder}/{sg_name}/{sg_name}${{ar_guid}}-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.{data} --match-mode EXACT -o json | jq -r '.items[].id')
+                index=$(icav2 projectdata list --parent-folder /{BUCKET}/{ica_analysis_output_folder}/{sg_name}/{sg_name}${{ar_guid}}-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.{data}.{index} --match-mode EXACT -o json | jq -r '.items[].id')
+                md5=$(icav2 projectdata list --parent-folder /{BUCKET}/{ica_analysis_output_folder}/{sg_name}/{sg_name}${{ar_guid}}-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.{data}.{md5} --match-mode EXACT -o json | jq -r '.items[].id')
                 icav2 projectdata download $main_data $BATCH_TMPDIR/{sg_name}/{sg_name}.{data} --exclude-source-path
                 icav2 projectdata download $index $BATCH_TMPDIR/{sg_name}/{sg_name}.{data}.{index} --exclude-source-path
                 icav2 projectdata download $md5 $BATCH_TMPDIR/{sg_name}/{sg_name}.{data}.md5sum --exclude-source-path
@@ -81,12 +79,12 @@ def download_data_from_ica(
 
                 # Copy the data and index files to the bucket
                 # Checksums are already checked by `gcloud storage cp`
-                gcloud storage cp $BATCH_TMPDIR/{sg_name}/{sg_name}.{data} gs://{bucket}/{gcp_folder_for_ica_download}/{gcp_prefix}/
-                gcloud storage cp $BATCH_TMPDIR/{sg_name}/{sg_name}.{data}.{index} gs://{bucket}/{gcp_folder_for_ica_download}/{gcp_prefix}/
-                gcloud storage cp $BATCH_TMPDIR/{sg_name}/{sg_name}.{data}.md5sum gs://{bucket}/{gcp_folder_for_ica_download}/{gcp_prefix}/
+                gcloud storage cp $BATCH_TMPDIR/{sg_name}/{sg_name}.{data} gs://{BUCKET}/{GCP_FOLDER_FOR_ICA_DOWNLOAD}/{gcp_prefix}/
+                gcloud storage cp $BATCH_TMPDIR/{sg_name}/{sg_name}.{data}.{index} gs://{BUCKET}/{GCP_FOLDER_FOR_ICA_DOWNLOAD}/{gcp_prefix}/
+                gcloud storage cp $BATCH_TMPDIR/{sg_name}/{sg_name}.{data}.md5sum gs://{BUCKET}/{GCP_FOLDER_FOR_ICA_DOWNLOAD}/{gcp_prefix}/
                 }}
 
-                {ica_cli_setup}
+                {ICA_CLI_SETUP}
                 mkdir -p $BATCH_TMPDIR/{sg_name}
                 pipeline_id_arguid_filename=$(basename {pipeline_id_arguid_path})
                 gcloud storage cp {pipeline_id_arguid_path} .

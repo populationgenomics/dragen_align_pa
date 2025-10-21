@@ -14,7 +14,6 @@ def manage_md5_pipeline(
     cohort_name: str,
     ica_fastq_ids: list[str],
     outputs: dict[str, cpg_utils.Path],
-    api_root: str,
     api_config: Configuration,
     project_id: str,
     md5_outputs_folder_id: str,
@@ -40,7 +39,7 @@ def manage_md5_pipeline(
             md5_pipeline_id: str = json.load(md5_fh)['pipeline_id']
 
         # Check status of pipeline
-        md5_status: str = monitor_dragen_pipeline.run(ica_pipeline_id=md5_pipeline_id, api_root=api_root)
+        md5_status: str = monitor_dragen_pipeline.run(ica_pipeline_id=md5_pipeline_id)
 
         while md5_status not in ['ABORTING', 'ABORTED', 'FAILED', 'FAILEDFINAL', 'SUCCEEDED']:
             if md5_status in ['ABORTING', 'ABORTED'] or md5_status in ['FAILED', 'FAILEDFINAL']:
@@ -50,6 +49,6 @@ def manage_md5_pipeline(
                 return md5_pipeline
             else:
                 time.sleep(300)
-                md5_status = monitor_dragen_pipeline.run(ica_pipeline_id=md5_pipeline_id, api_root=api_root)
+                md5_status = monitor_dragen_pipeline.run(ica_pipeline_id=md5_pipeline_id)
 
     return md5_pipeline

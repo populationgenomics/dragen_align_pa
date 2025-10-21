@@ -11,6 +11,7 @@ from icasdk import Configuration
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
+from dragen_align_pa.constants import ICA_REST_ENDPOINT
 from dragen_align_pa.utils import create_upload_object_id, get_ica_secrets
 
 
@@ -27,7 +28,6 @@ def upload_fastq_file_list(
     cohort: Cohort,
     outputs: cpg_utils.Path,
     fastq_list_file_path_dict: dict[str, cpg_utils.Path],
-    api_root: str,
     bucket: cpg_utils.Path,
 ) -> PythonJob:
     """Upload the fastq file list to ICA and return the job.
@@ -43,7 +43,6 @@ def upload_fastq_file_list(
         cohort=cohort,
         outputs=outputs,
         fastq_list_file_path_dict=fastq_list_file_path_dict,
-        api_root=api_root,
         bucket=bucket,
     )
     return job
@@ -53,13 +52,12 @@ def _run(
     cohort: Cohort,
     outputs: cpg_utils.Path,
     fastq_list_file_path_dict: dict[str, cpg_utils.Path],
-    api_root: str,
     bucket: cpg_utils.Path,
 ) -> None:
     secrets: dict[Literal['projectID', 'apiKey'], str] = get_ica_secrets()
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
-    configuration: Configuration = Configuration(host=api_root)
+    configuration: Configuration = Configuration(host=ICA_REST_ENDPOINT)
     configuration.api_key['ApiKeyAuth'] = api_key
     path_parameters: dict[str, str] = {'projectId': project_id}
     sg_and_fastq_list: list[str] = []

@@ -5,6 +5,8 @@ from cpg_utils.config import config_retrieve, get_driver_image
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 
+from dragen_align_pa.constants import BUCKET, GCP_FOLDER_FOR_ICA_PREP
+
 
 def _initalise_md5sum_validation_job(cohort: Cohort) -> PythonJob:
     job: PythonJob = get_batch().new_python_job(
@@ -18,7 +20,6 @@ def _initalise_md5sum_validation_job(cohort: Cohort) -> PythonJob:
 def validate_md5_sums(
     ica_md5sum_file_path: cpg_utils.Path,
     cohort: Cohort,
-    possible_errors_path: cpg_utils.Path,
     outputs: cpg_utils.Path,
 ) -> PythonJob:
     job: PythonJob = _initalise_md5sum_validation_job(cohort=cohort)
@@ -26,7 +27,6 @@ def validate_md5_sums(
     validation_success: str = job.call(
         _run,
         ica_md5sum_file_path=ica_md5sum_file_path,
-        possible_errors_path=possible_errors_path,
         cohort_name=cohort.name,
     ).as_str()
 
@@ -35,7 +35,7 @@ def validate_md5_sums(
     return job
 
 
-def _run(ica_md5sum_file_path: cpg_utils.Path, possible_errors_path: cpg_utils.Path, cohort_name: str) -> str:
+def _run(ica_md5sum_file_path: cpg_utils.Path, cohort_name: str) -> str:
     manifest_file_path: cpg_utils.Path = config_retrieve(['workflow', 'manifest_gcp_path'])
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
         supplied_manifest_data: pd.DataFrame = pd.read_csv(
@@ -51,7 +51,7 @@ def _run(ica_md5sum_file_path: cpg_utils.Path, possible_errors_path: cpg_utils.P
     merged_checksum_data: pd.DataFrame = supplied_manifest_data.merge(ica_md5_data, on='Filenames', how='outer')
     merged_checksum_data['Match'] = merged_checksum_data['Checksum'].equals(merged_checksum_data['IcaChecksum'])
     if not merged_checksum_data['Match'].all():
-        error_log: cpg_utils.Path = possible_errors_path / f'{cohort_name}_md5_errors.log'
+        error_log: cpg_utils.Path = BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort_name}_md5_errors.log'
         with error_log.open() as error_fh:
             merged_checksum_data[~merged_checksum_data['Match']]['Filenames'].map(lambda x: error_fh.write(x))
         raise Exception(

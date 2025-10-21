@@ -2,11 +2,12 @@
 
 import cpg_utils
 from cpg_flow.targets import SequencingGroup
-from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import config_retrieve, get_driver_image
 from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command, get_batch
 from hailtop.batch.job import BashJob
 from loguru import logger
+
+from dragen_align_pa.constants import BUCKET, GCP_FOLDER_FOR_ICA_DOWNLOAD, ICA_CLI_SETUP
 
 
 def _initalise_bulk_download_job(sequencing_group: SequencingGroup) -> BashJob:
@@ -21,15 +22,12 @@ def _initalise_bulk_download_job(sequencing_group: SequencingGroup) -> BashJob:
 
 def download_bulk_data_from_ica(
     sequencing_group: SequencingGroup,
-    gcp_folder_for_ica_download: str,
     pipeline_id_arguid_path: cpg_utils.Path,
-    ica_cli_setup: str,
 ) -> BashJob:
     job: BashJob = _initalise_bulk_download_job(sequencing_group=sequencing_group)
     authenticate_cloud_credentials_in_job(job=job)
 
     ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
-    bucket: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
     logger.info(f'Downloading bulk ICA data for {sequencing_group.name}.')
     is_bioheart: bool = 'bioheart' in sequencing_group.dataset.name
 
@@ -37,17 +35,17 @@ def download_bulk_data_from_ica(
         command(
             rf"""
             function download_extra_data {{
-            files_and_ids=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}${{ar_guid}}-${{pipeline_id}}/{sequencing_group.name}/ -o json | jq -r '.items[] | select(.details.name | test(".cram|.gvcf") | not) | "\(.details.name) \(.id)"')
+            files_and_ids=$(icav2 projectdata list --parent-folder /{BUCKET}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}${{ar_guid}}-${{pipeline_id}}/{sequencing_group.name}/ -o json | jq -r '.items[] | select(.details.name | test(".cram|.gvcf") | not) | "\(.details.name) \(.id)"')
             while IFS= read -r line; do
                 name=$(echo "$line" | awk '{{print $1}}')
                 id=$(echo "$line" | awk '{{print $2}}')
                 echo "Downloading $name with ID $id"
                 icav2 projectdata download $id $BATCH_TMPDIR/{sequencing_group.name}/$name --exclude-source-path
             done <<< "$files_and_ids"
-            gcloud storage cp --recursive $BATCH_TMPDIR/{sequencing_group.name}/* gs://{bucket}/{gcp_folder_for_ica_download}/dragen_metrics/{sequencing_group.name}/
+            gcloud storage cp --recursive $BATCH_TMPDIR/{sequencing_group.name}/* gs://{BUCKET}/{GCP_FOLDER_FOR_ICA_DOWNLOAD}/dragen_metrics/{sequencing_group.name}/
             }}
 
-            {ica_cli_setup}
+            {ICA_CLI_SETUP}
             # List all files in the folder except crams and gvcf and download them
             mkdir -p $BATCH_TMPDIR/{sequencing_group.name}
             pipeline_id_arguid_filename=$(basename {pipeline_id_arguid_path})

@@ -5,6 +5,7 @@ from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command,
 from hailtop.batch.job import BashJob
 from loguru import logger
 
+from dragen_align_pa.constants import ICA_CLI_SETUP
 from dragen_align_pa.utils import calculate_needed_storage
 
 
@@ -21,7 +22,7 @@ def _initalise_upload_job(sequencing_group: SequencingGroup) -> BashJob:
     return upload_job
 
 
-def upload_data_to_ica(sequencing_group: SequencingGroup, ica_cli_setup: str, output: str) -> BashJob:
+def upload_data_to_ica(sequencing_group: SequencingGroup, output: str) -> BashJob:
     upload_folder = config_retrieve(['ica', 'data_prep', 'upload_folder'])
     bucket: str = get_path_components_from_gcp_path(str(sequencing_group.cram))['bucket']
 
@@ -56,7 +57,7 @@ def upload_data_to_ica(sequencing_group: SequencingGroup, ica_cli_setup: str, ou
                 jq -n --arg cram_id $(cat cram_id) --arg crai_id $(cat crai_id) '{{cram_fid: $cram_id, crai_fid: $crai_id}}' > {job.ofile}
             }}
 
-            {ica_cli_setup}
+            {ICA_CLI_SETUP}
             cram_status=$(icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram --match-mode EXACT -o json | jq -r '.items[].details.status')
             crai_status=$(icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram.crai --match-mode EXACT -o json | jq -r '.items[].details.status')
 

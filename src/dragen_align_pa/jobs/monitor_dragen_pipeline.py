@@ -6,9 +6,10 @@ from icasdk.apis.tags import project_analysis_api
 from loguru import logger
 
 from dragen_align_pa import utils
+from dragen_align_pa.constants import ICA_REST_ENDPOINT
 
 
-def run(ica_pipeline_id: str | dict[str, str], api_root: str, is_mlr: bool = False) -> str:
+def run(ica_pipeline_id: str | dict[str, str], is_mlr: bool = False) -> str:
     """Monitor a pipeline running in ICA
 
     Args:
@@ -26,7 +27,7 @@ def run(ica_pipeline_id: str | dict[str, str], api_root: str, is_mlr: bool = Fal
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
 
-    configuration = icasdk.Configuration(host=api_root)
+    configuration = icasdk.Configuration(host=ICA_REST_ENDPOINT)
     configuration.api_key['ApiKeyAuth'] = api_key
     pipeline_id: str = ica_pipeline_id['pipeline_id'] if isinstance(ica_pipeline_id, dict) else ica_pipeline_id
 

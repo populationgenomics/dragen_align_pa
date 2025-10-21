@@ -1,5 +1,5 @@
 import sys
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
 import cpg_utils
 from cpg_flow.inputs import get_multicohort
@@ -12,9 +12,17 @@ from cpg_flow.stage import (
 )
 from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.cloud import get_path_components_from_gcp_path
-from cpg_utils.config import config_retrieve, output_path
+from cpg_utils.config import output_path
 from loguru import logger
 
+from dragen_align_pa.constants import (
+    BUCKET,
+    DRAGEN_VERSION,
+    GCP_FOLDER_FOR_ICA_DOWNLOAD,
+    GCP_FOLDER_FOR_ICA_PREP,
+    GCP_FOLDER_FOR_RUNNING_PIPELINE,
+    READS_TYPE,
+)
 from dragen_align_pa.jobs import (
     delete_data_in_ica,
     download_ica_pipeline_outputs,
@@ -33,24 +41,6 @@ from dragen_align_pa.jobs import (
 if TYPE_CHECKING:
     from hailtop.batch.job import BashJob, PythonJob
 
-READS_TYPE: Final = config_retrieve(['workflow', 'reads_type']).lower()
-BUCKET: Final = cpg_utils.to_path(output_path(suffix=''))
-DRAGEN_VERSION: Final = config_retrieve(['ica', 'pipelines', 'dragen_version'])
-GCP_FOLDER_FOR_ICA_PREP: Final = f'ica/{DRAGEN_VERSION}/prepare'
-GCP_FOLDER_FOR_RUNNING_PIPELINE: Final = f'ica/{DRAGEN_VERSION}/pipelines'
-GCP_FOLDER_FOR_ICA_DOWNLOAD: Final = f'ica/{DRAGEN_VERSION}/output'
-ICA_REST_ENDPOINT: Final = 'https://ica.illumina.com/ica/rest'
-ICA_CLI_SETUP: Final = """
-mkdir -p $HOME/.icav2
-echo "server-url: ica.illumina.com" > /root/.icav2/config.yaml
-
-set +x
-gcloud secrets versions access latest --secret=illumina_cpg_workbench_api --project=cpg-common | jq -r .apiKey > key
-gcloud secrets versions access latest --secret=illumina_cpg_workbench_api --project=cpg-common | jq -r .projectID > projectID
-echo "x-api-key: $(cat key)" >> $HOME/.icav2/config.yaml
-icav2 projects enter $(cat projectID)
-set -x
-"""  # noqa: E501
 
 logger.remove(0)
 logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
@@ -79,7 +69,6 @@ class PrepareIcaForDragenAnalysis(CohortStage):
         ica_prep_job: PythonJob = prepare_ica_for_analysis.run_ica_prep_job(
             cohort=cohort,
             output=outputs,
-            api_root=ICA_REST_ENDPOINT,
             bucket_path=BUCKET,
         )
 
@@ -109,9 +98,7 @@ class FastqIntakeQc(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         if READS_TYPE == 'fastq':
             outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
-            md5job: PythonJob = fastq_intake_qc.run_md5_job(
-                cohort=cohort, outputs=outputs, api_root=ICA_REST_ENDPOINT, bucket=BUCKET
-            )
+            md5job: PythonJob = fastq_intake_qc.run_md5_job(cohort=cohort, outputs=outputs)
 
             return self.make_outputs(target=cohort, data=outputs, jobs=md5job)  # pyright: ignore[reportArgumentType]
 
@@ -133,7 +120,6 @@ class ValidateMd5Sums(CohortStage):
             md5_validation_job: PythonJob = validate_md5_sums.validate_md5_sums(
                 ica_md5sum_file_path=ica_md5sum_file_path,
                 cohort=cohort,
-                possible_errors_path=BUCKET / GCP_FOLDER_FOR_ICA_PREP,
                 outputs=outputs,
             )
 
@@ -175,7 +161,6 @@ class UploadDataToIca(SequencingGroupStage):
         if READS_TYPE == 'cram':
             upload_job: BashJob = upload_data_to_ica.upload_data_to_ica(
                 sequencing_group=sequencing_group,
-                ica_cli_setup=ICA_CLI_SETUP,
                 output=str(output),
             )
 
@@ -205,7 +190,6 @@ class UploadFastqFileList(CohortStage):
                 cohort=cohort,
                 outputs=outputs,
                 fastq_list_file_path_dict=fastq_list_file_path_dict,
-                api_root=ICA_REST_ENDPOINT,
                 bucket=BUCKET,
             )
 
@@ -243,14 +227,10 @@ class ManageDragenPipeline(CohortStage):
         sg_bucket: cpg_utils.Path = cohort.dataset.prefix()
         prefix: cpg_utils.Path = sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE
         results: dict[str, cpg_utils.Path] = {f'{cohort.name}_errors': prefix / f'{cohort.name}_errors.log'}
-        is_bioheart: bool = 'bioheart' in cohort.dataset.name
         for sequencing_group in cohort.get_sequencing_groups():
             sg_name: str = sequencing_group.name
             results |= {f'{sg_name}_success': prefix / f'{sg_name}_pipeline_success.json'}
-            if is_bioheart:
-                results |= {f'{sg_name}_pipeline_id_and_arguid': prefix / f'{sg_name}_pipeline_id.json'}
-            else:
-                results |= {f'{sg_name}_pipeline_id_and_arguid': prefix / f'{sg_name}_pipeline_id_and_arguid.json'}
+            results |= {f'{sg_name}_pipeline_id_and_arguid': prefix / f'{sg_name}_pipeline_id_and_arguid.json'}
 
         return results
 
@@ -282,7 +262,6 @@ class ManageDragenPipeline(CohortStage):
             fastq_ids_path=fastq_ids_path,
             individual_fastq_file_list_paths=individual_fastq_file_list_paths,
             analysis_output_fids_path=analysis_output_fids_path,
-            api_root=ICA_REST_ENDPOINT,
         )
 
         return self.make_outputs(
@@ -321,9 +300,7 @@ class ManageDragenMlr(CohortStage):
         mlr_job: PythonJob = manage_dragen_mlr.run_mlr(
             cohort=cohort,
             bucket=get_path_components_from_gcp_path(str(cohort.dataset.prefix()))['bucket'],
-            ica_cli_setup=ICA_CLI_SETUP,
             pipeline_id_arguid_path_dict=pipeline_id_arguid_path_dict,
-            api_root=ICA_REST_ENDPOINT,
             outputs=outputs,
         )
 
@@ -365,9 +342,6 @@ class DownloadCramFromIca(SequencingGroupStage):
             job_name='DownloadCramFromIca',
             sequencing_group=sequencing_group,
             filetype='cram',
-            bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
-            ica_cli_setup=ICA_CLI_SETUP,
-            gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
         )
 
@@ -418,9 +392,6 @@ class DownloadGvcfFromIca(SequencingGroupStage):
             job_name='DownloadGvcfFromIca',
             sequencing_group=sequencing_group,
             filetype='base_gvcf',
-            bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
-            ica_cli_setup=ICA_CLI_SETUP,
-            gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
         )
 
@@ -471,9 +442,6 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
             job_name='DownloadMlrGvcfFromIca',
             sequencing_group=sequencing_group,
             filetype='recal_gvcf',
-            bucket=get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket'],
-            ica_cli_setup=ICA_CLI_SETUP,
-            gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
         )
 
@@ -518,9 +486,7 @@ class DownloadDataFromIca(SequencingGroupStage):
 
         ica_download_job: BashJob = download_ica_pipeline_outputs.download_bulk_data_from_ica(
             sequencing_group=sequencing_group,
-            gcp_folder_for_ica_download=GCP_FOLDER_FOR_ICA_DOWNLOAD,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
-            ica_cli_setup=ICA_CLI_SETUP,
         )
 
         return self.make_outputs(
@@ -583,14 +549,10 @@ class DeleteDataInIca(SequencingGroupStage):
 
         outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
 
-        bucket_name: str = str(sequencing_group.dataset.prefix()).removeprefix('gs:/')
-
         ica_delete_job: PythonJob = delete_data_in_ica.delete_data_in_ica(
             sequencing_group=sequencing_group,
-            bucket=bucket_name,
             ica_fid_path=ica_fid_path,
             alignment_fid_paths=alignment_fid_paths,
-            api_root=ICA_REST_ENDPOINT,
         )
 
         return self.make_outputs(target=sequencing_group, data=outputs, jobs=ica_delete_job)
