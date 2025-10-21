@@ -82,7 +82,7 @@ def _get_file_details_from_ica(
                 'parentFolderPath': ica_folder_path,
                 'filename': [file_name],
                 'filenameMatchMode': 'EXACT',
-                'pageSize': 2,
+                'pageSize': '2',
             },
         )
         items = api_response.body.get('items', [])

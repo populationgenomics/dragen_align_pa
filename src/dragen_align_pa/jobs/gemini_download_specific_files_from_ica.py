@@ -97,9 +97,9 @@ def _find_file_id_by_name(
             path_params=path_parameters,
             query_params={  # pyright: ignore[reportUnknownVariableType]
                 'parentFolderPath': parent_folder_path,
-                'filename': file_name,
+                'filename': [file_name],
                 'filenameMatchMode': 'EXACT',
-                'pageSize': 2,
+                'pageSize': '2',
             },
         )
 

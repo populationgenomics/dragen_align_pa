@@ -86,7 +86,7 @@ def _list_and_filter_ica_files(
     while True:
         query_params = {  # pyright: ignore[reportUnknownVariableType]
             'parentFolderPath': base_ica_folder_path,
-            'pageSize': 1000,
+            'pageSize': '1000',
         }
         if page_token:
             query_params['pageToken'] = page_token
