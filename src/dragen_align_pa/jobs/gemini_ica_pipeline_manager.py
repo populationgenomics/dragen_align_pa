@@ -95,8 +95,9 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                     is_mlr=is_mlr_pipeline,
                 )
                 delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
+                cancelled_pipelines.append(sg_name)
             else:
-                submit_callable = submit_function_factory(sg_name)
+                submit_callable: Callable[[], str] = submit_function_factory(sg_name)
 
                 if not pipeline_id_file_exists:
                     logger.info(f'Submitting new {pipeline_name} ICA pipeline for {sg_name}')
@@ -159,6 +160,14 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                     lines: list[str] = tmp_log_handle.readlines()
                     with outputs[error_log_key].open('a') as gcp_error_log_file:
                         gcp_error_log_file.write('\n'.join(lines))
+            logger.info(
+                f'{pipeline_name} pipeline status: '
+                f'{len(completed_pipelines)} completed, '
+                f'{len(running_pipelines)} in progress, '
+                f'{len(failed_pipelines)} failed, '
+                f'{len(cancelled_pipelines)} cancelled. '
+                f'Waiting {sleep_time_seconds}s.'
+            )
             raise Exception(
                 f'The following {pipeline_name} pipelines have been cancelled: {" ".join(cancelled_pipelines)}'
             )
