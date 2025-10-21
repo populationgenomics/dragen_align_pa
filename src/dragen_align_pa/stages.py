@@ -29,11 +29,11 @@ from dragen_align_pa.jobs import (
     fastq_intake_qc,
     gemini_download_ica_pipeline_outputs,
     gemini_manage_dragen_pipeline,
+    gemini_upload_data_to_ica,
     make_fastq_file_list,
     manage_dragen_mlr,
     prepare_ica_for_analysis,
     run_multiqc,
-    upload_data_to_ica,
     upload_fastq_file_list,
     validate_md5_sums,
 )
@@ -159,7 +159,7 @@ class UploadDataToIca(SequencingGroupStage):
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         output: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
         if READS_TYPE == 'cram':
-            upload_job: BashJob = upload_data_to_ica.upload_data_to_ica(
+            upload_job: PythonJob = gemini_upload_data_to_ica.upload_data_to_ica(
                 sequencing_group=sequencing_group,
                 output=str(output),
             )

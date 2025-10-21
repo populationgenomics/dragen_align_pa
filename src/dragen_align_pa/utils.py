@@ -1,4 +1,5 @@
 import json
+import re  # <-- Added import
 import subprocess
 from math import ceil
 from typing import TYPE_CHECKING, Final, Literal
@@ -18,6 +19,19 @@ SECRET_CLIENT = secretmanager.SecretManagerServiceClient()
 SECRET_PROJECT: Final = 'cpg-common'
 SECRET_NAME: Final = 'illumina_cpg_workbench_api'
 SECRET_VERSION: Final = 'latest'
+
+
+def validate_cli_path_input(path: str, arg_name: str) -> None:
+    """
+    Validates that a path string does not contain shell metacharacters
+    to prevent potential injection vulnerabilities.
+    """
+    # Regex for common shell metacharacters and whitespace,
+    # excluding GCS 'gs://' prefix, path slashes '/', and underscores '_'
+    if re.search(r'[;&|$`(){}[\]<>*?!#\s]', path):
+        logger.error(f'Invalid characters found in {arg_name}: {path}')
+        raise ValueError(f'Potential unsafe characters in {arg_name}')
+    logger.info(f'Path validation passed for {arg_name}.')
 
 
 def delete_pipeline_id_file(pipeline_id_file: str) -> None:
