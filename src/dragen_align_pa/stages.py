@@ -25,9 +25,9 @@ from dragen_align_pa.constants import (
 )
 from dragen_align_pa.jobs import (
     delete_data_in_ica,
-    download_ica_pipeline_outputs,
     download_specific_files_from_ica,
     fastq_intake_qc,
+    gemini_download_ica_pipeline_outputs,
     gemini_manage_dragen_pipeline,
     make_fastq_file_list,
     manage_dragen_mlr,
@@ -484,7 +484,7 @@ class DownloadDataFromIca(SequencingGroupStage):
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
-        ica_download_job: BashJob = download_ica_pipeline_outputs.download_bulk_data_from_ica(
+        ica_download_job: PythonJob = gemini_download_ica_pipeline_outputs.download_bulk_data_from_ica(
             sequencing_group=sequencing_group,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
         )
