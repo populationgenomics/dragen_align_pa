@@ -79,7 +79,7 @@ def _get_file_details_from_ica(
         api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
             path_params=path_params,
             query_params={  # pyright: ignore[reportUnknownVariableType]
-                'parentFolderPath': [ica_folder_path],
+                'parentFolderPath': ica_folder_path,
                 'filename': [file_name],
                 'filenameMatchMode': 'EXACT',
                 'pageSize': 2,
