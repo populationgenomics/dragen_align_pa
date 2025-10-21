@@ -28,9 +28,9 @@ from dragen_align_pa.jobs import (
     download_ica_pipeline_outputs,
     download_specific_files_from_ica,
     fastq_intake_qc,
+    gemini_manage_dragen_pipeline,
     make_fastq_file_list,
     manage_dragen_mlr,
-    manage_dragen_pipeline,
     prepare_ica_for_analysis,
     run_multiqc,
     upload_data_to_ica,
@@ -254,7 +254,7 @@ class ManageDragenPipeline(CohortStage):
             target=cohort, stage=PrepareIcaForDragenAnalysis
         )
 
-        management_job: PythonJob = manage_dragen_pipeline.manage_ica_pipeline(
+        management_job: PythonJob = gemini_manage_dragen_pipeline.manage_ica_pipeline(
             cohort=cohort,
             outputs=outputs,
             cram_ica_fids_path=cram_ica_fids_path,
