@@ -332,7 +332,7 @@ def _run(
     # --- 2. Get Pipeline ID and AR GUID ---
     pipeline_id, ar_guid = _get_pipeline_details(pipeline_id_arguid_path)
     base_ica_folder_path = (
-        f'/{BUCKET}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
+        f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
     )
     logger.info(f'Targeting ICA folder: {base_ica_folder_path}')
 

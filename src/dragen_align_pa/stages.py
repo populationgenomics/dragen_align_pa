@@ -11,7 +11,6 @@ from cpg_flow.stage import (
     stage,  # type: ignore[ReportUnknownVariableType]
 )
 from cpg_flow.targets import Cohort, SequencingGroup
-from cpg_utils.cloud import get_path_components_from_gcp_path
 from cpg_utils.config import output_path
 from loguru import logger
 
@@ -28,10 +27,11 @@ from dragen_align_pa.jobs import (
     download_specific_files_from_ica,
     fastq_intake_qc,
     gemini_download_ica_pipeline_outputs,
+    gemini_download_specific_files_from_ica,
+    gemini_manage_dragen_mlr,
     gemini_manage_dragen_pipeline,
     gemini_upload_data_to_ica,
     make_fastq_file_list,
-    manage_dragen_mlr,
     prepare_ica_for_analysis,
     run_multiqc,
     upload_fastq_file_list,
@@ -297,9 +297,8 @@ class ManageDragenMlr(CohortStage):
             stage=ManageDragenPipeline,
         )
 
-        mlr_job: PythonJob = manage_dragen_mlr.run_mlr(
+        mlr_job: PythonJob = gemini_manage_dragen_mlr.run_mlr(
             cohort=cohort,
-            bucket=get_path_components_from_gcp_path(str(cohort.dataset.prefix()))['bucket'],
             pipeline_id_arguid_path_dict=pipeline_id_arguid_path_dict,
             outputs=outputs,
         )
@@ -338,7 +337,7 @@ class DownloadCramFromIca(SequencingGroupStage):
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
-        ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
+        ica_download_job: PythonJob = gemini_download_specific_files_from_ica.download_data_from_ica(
             job_name='DownloadCramFromIca',
             sequencing_group=sequencing_group,
             filetype='cram',
@@ -388,7 +387,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
-        ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
+        ica_download_job: PythonJob = gemini_download_specific_files_from_ica.download_data_from_ica(
             job_name='DownloadGvcfFromIca',
             sequencing_group=sequencing_group,
             filetype='base_gvcf',
@@ -438,7 +437,7 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
-        ica_download_job: BashJob = download_specific_files_from_ica.download_data_from_ica(
+        ica_download_job: PythonJob = download_specific_files_from_ica.download_data_from_ica(
             job_name='DownloadMlrGvcfFromIca',
             sequencing_group=sequencing_group,
             filetype='recal_gvcf',
