@@ -76,14 +76,18 @@ def _get_file_details_from_ica(
     Checks if a file exists in ICA and returns its 'data' block if found.
     """
     try:
-        api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
+        # The query parameters 'parentFolderPath' and 'filename' must be
+        # passed as lists (or tuples), not strings.
+        query_params: dict[str, Any] = {
+            'parentFolderPath': [ica_folder_path],
+            'filename': [file_name],
+            'filenameMatchMode': 'EXACT',
+            'pageSize': '2',
+        }
+
+        api_response = api_instance.get_project_data_list(
             path_params=path_params,
-            query_params={  # pyright: ignore[reportUnknownVariableType]
-                'parentFolderPath': ica_folder_path,
-                'filename': [file_name],
-                'filenameMatchMode': 'EXACT',
-                'pageSize': '2',
-            },
+            query_params=query_params,
         )
         items = api_response.body.get('items', [])
         if len(items) > 0:
@@ -109,16 +113,32 @@ def _run(
     # 1. --- Setup Names and Paths ---
     sg_name: str = sequencing_group.name
     cram_name = f'{sg_name}.cram'
-    gcs_cram_path = str(sequencing_group.cram)  # The 'gs://' path
+
+    # --- THIS IS THE FIX ---
+    # The sequencing_group.cram attribute might point to the .crai
+    # We must manually ensure we are using the .cram path.
+    gcs_base_path = str(sequencing_group.cram)
+    if gcs_base_path.endswith('.cram.crai'):
+        gcs_cram_path = gcs_base_path.removesuffix('.crai')
+    elif not gcs_base_path.endswith('.cram'):
+        # This is a safety check in case the path is something unexpected
+        raise ValueError(f'Unexpected path for sequencing_group.cram: {gcs_base_path}')
+    else:
+        # It already ends with .cram, so it's correct
+        gcs_cram_path = gcs_base_path
+
+    logger.info(f'Resolved CRAM path to upload: {gcs_cram_path}')
+    # -------------------------------------------
+
     ica_folder_path = f'/{bucket}/{upload_folder}/{sg_name}/'
 
     logger.info(f'Starting upload process for {sg_name}')
     logger.info(f'Target ICA folder: {ica_folder_path}')
 
-    # --- ADDED: Validate inputs before use ---
+    # --- Validate inputs before use ---
     validate_cli_path_input(gcs_cram_path, 'gcs_cram_path')
     validate_cli_path_input(ica_folder_path, 'ica_folder_path')
-    # -------------------------------------------
+    # ----------------------------------
 
     # 2. --- Authenticate Python SDK ---
     secrets: dict[Literal['projectID', 'apiKey'], str] = utils.get_ica_secrets()
@@ -152,7 +172,7 @@ def _run(
         logger.info(f'Streaming {cram_name} from GCS to ICA (using CLI for large file)...')
 
         # This call is safe: shell=False and inputs are validated
-        subprocess.run(['icav2', 'projectdata', 'upload', gcs_cram_path, ica_folder_path], check=True)  # noqa: S603
+        subprocess.run(['icav2', 'projectdata', 'upload', gcs_cram_path, ica_folder_path], check=True)
 
     # 6. --- Get File ID and Write Output ---
     cram_fid: str | None = None
