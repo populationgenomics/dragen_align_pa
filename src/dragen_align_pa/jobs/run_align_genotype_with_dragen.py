@@ -53,7 +53,7 @@ def submit_dragen_run(
                 ['ica', 'cram_references', config_retrieve(['ica', 'cram_references', 'old_cram_reference'])]
             )
             cram_input = [
-                AnalysisDataInput(parameterCode='crams', dataIds=[cram_ica_fids['cram_id']]),
+                AnalysisDataInput(parameterCode='crams', dataIds=[cram_ica_fids['cram_fid']]),
                 AnalysisDataInput(parameterCode='cram_reference', dataIds=[cram_reference_id]),
             ]
             cram_parameters = [
