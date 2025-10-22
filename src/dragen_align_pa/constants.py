@@ -5,6 +5,7 @@ from cpg_utils.config import config_retrieve, output_path
 
 READS_TYPE: Final = config_retrieve(['workflow', 'reads_type']).lower()
 BUCKET: Final = cpg_utils.to_path(output_path(suffix=''))
+BUCKET_NAME: Final = str(BUCKET).removeprefix('gs://').removesuffix('/')
 DRAGEN_VERSION: Final = config_retrieve(['ica', 'pipelines', 'dragen_version'])
 GCP_FOLDER_FOR_ICA_PREP: Final = f'ica/{DRAGEN_VERSION}/prepare'
 GCP_FOLDER_FOR_RUNNING_PIPELINE: Final = f'ica/{DRAGEN_VERSION}/pipelines'

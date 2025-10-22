@@ -23,7 +23,7 @@ from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import utils
-from dragen_align_pa.constants import BUCKET, ICA_CLI_SETUP, ICA_REST_ENDPOINT
+from dragen_align_pa.constants import BUCKET_NAME, ICA_CLI_SETUP, ICA_REST_ENDPOINT
 from dragen_align_pa.utils import validate_cli_path_input
 
 
@@ -114,14 +114,13 @@ def _setup_paths(sequencing_group: SequencingGroup, upload_folder: str) -> dict[
 
     batch_tmpdir = os.environ.get('BATCH_TMPDIR', '/batch')
     local_cram_path = os.path.join(batch_tmpdir, sg_name, cram_name)
-    bucket: str = str(BUCKET).removeprefix('gs://').removesuffix('/')
 
     return {
         'sg_name': sg_name,
         'cram_name': cram_name,
         'gcs_cram_path': gcs_cram_path,
         'local_cram_path': local_cram_path,
-        'ica_folder_path': f'/{bucket}/{upload_folder}/{sg_name}/',
+        'ica_folder_path': f'/{BUCKET_NAME}/{upload_folder}/{sg_name}/',
     }
 
 

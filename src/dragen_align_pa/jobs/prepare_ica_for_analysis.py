@@ -4,14 +4,13 @@ from typing import Literal
 import cpg_utils
 import icasdk
 from cpg_flow.targets import Cohort
-from cpg_utils import Path
 from cpg_utils.config import config_retrieve, get_driver_image
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa.constants import ICA_REST_ENDPOINT
+from dragen_align_pa.constants import BUCKET_NAME, ICA_REST_ENDPOINT
 from dragen_align_pa.utils import create_upload_object_id, get_ica_secrets
 
 
@@ -28,17 +27,12 @@ def _initalise_ica_prep_job(cohort: Cohort) -> PythonJob:
 def run_ica_prep_job(
     cohort: Cohort,
     output: dict[str, cpg_utils.Path],
-    # api_root: str,
-    bucket_path: Path,
 ) -> PythonJob:
     job: PythonJob = _initalise_ica_prep_job(cohort=cohort)
-
-    bucket_name: str = str(bucket_path).removeprefix('gs://').removesuffix('/')
 
     job.call(
         _run,
         cohort=cohort,
-        bucket_name=bucket_name,
         output=output,
     )
 
@@ -47,7 +41,6 @@ def run_ica_prep_job(
 
 def _run(
     cohort: Cohort,
-    bucket_name: str,
     output: dict[str, cpg_utils.Path],
 ) -> None:
     """Prepare ICA pipeline runs by generating a folder ID for the
@@ -73,7 +66,7 @@ def _run(
 
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
-        folder_path: str = f'/{bucket_name}/{ica_analysis_output_folder}'
+        folder_path: str = f'/{BUCKET_NAME}/{ica_analysis_output_folder}'
         for sg_name in cohort.get_sequencing_group_ids():
             object_id: str = create_upload_object_id(
                 api_instance=api_instance,

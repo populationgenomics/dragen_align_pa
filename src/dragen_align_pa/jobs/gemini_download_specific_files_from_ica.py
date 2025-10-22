@@ -21,7 +21,7 @@ from loguru import logger
 
 from dragen_align_pa import utils
 from dragen_align_pa.constants import (
-    BUCKET,
+    BUCKET_NAME,
     ICA_REST_ENDPOINT,
 )
 
@@ -338,9 +338,8 @@ def _run(
 
     # --- 3. Setup GCS Client ---
     gcs_output_path_prefix = f'{gcp_folder_for_ica_download}/{gcp_prefix}'
-    bucket_name = str(BUCKET).removeprefix('gs://')
     storage_client = storage.Client()
-    gcs_bucket = storage_client.bucket(bucket_name)
+    gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
     # --- 4. Secure ICA Authentication ---
     secrets: dict[Literal['projectID', 'apiKey'], str] = utils.get_ica_secrets()
