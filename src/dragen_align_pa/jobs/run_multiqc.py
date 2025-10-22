@@ -1,6 +1,6 @@
 import cpg_utils
 from cpg_flow.targets import Cohort
-from cpg_utils.config import get_driver_image
+from cpg_utils.config import image_path
 from cpg_utils.hail_batch import command, get_batch
 from hailtop.batch.job import BashJob
 
@@ -10,7 +10,7 @@ def _initalise_multiqc_job(cohort: Cohort) -> BashJob:
         name='RunMultiQc',
         attributes=(cohort.get_job_attrs() or {} | {'tool': 'MultiQC'}),  # type: ignore[ReportUnknownVariableType]
     )
-    multiqc_job.image(image=get_driver_image())
+    multiqc_job.image(image=image_path('multiqc', '1.30-3'))
     return multiqc_job
 
 

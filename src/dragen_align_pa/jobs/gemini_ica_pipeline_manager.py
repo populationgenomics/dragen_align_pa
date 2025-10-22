@@ -9,11 +9,15 @@ import json
 import time
 from collections.abc import Callable
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import cpg_utils
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve, try_get_ar_guid
 from loguru import logger
+
+if TYPE_CHECKING:
+    from cpg_flow.targets.sequencing_group import SequencingGroup
 
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline
 from dragen_align_pa.utils import delete_pipeline_id_file
@@ -66,8 +70,8 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
     retried_pipelines: list[str] = []
     completed_pipelines: list[str] = []
 
-    sequencing_groups = cohort.get_sequencing_groups()
-    total_sgs = len(sequencing_groups)
+    sequencing_groups: list[SequencingGroup] = cohort.get_sequencing_groups()
+    total_sgs: int = len(sequencing_groups)
 
     while (len(completed_pipelines) + len(cancelled_pipelines) + len(failed_pipelines)) < total_sgs:
         for sequencing_group in sequencing_groups:
@@ -83,7 +87,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                 continue
 
             ica_pipeline_id: str = ''
-            pipeline_id_file_exists = pipeline_id_arguid_file.exists()
+            pipeline_id_file_exists: bool = pipeline_id_arguid_file.exists()
             if pipeline_id_file_exists:
                 with pipeline_id_arguid_file.open('r') as pipeline_fid_handle:
                     ica_pipeline_id = json.load(pipeline_fid_handle)['pipeline_id']
