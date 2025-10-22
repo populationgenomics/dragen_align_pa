@@ -121,7 +121,7 @@ def _setup_paths(sequencing_group: SequencingGroup, upload_folder: str) -> dict[
         'cram_name': cram_name,
         'gcs_cram_path': gcs_cram_path,
         'local_cram_path': local_cram_path,
-        'ica_folder_path': f'{bucket}/{upload_folder}/{sg_name}/',
+        'ica_folder_path': f'/{bucket}/{upload_folder}/{sg_name}/',
     }
 
 
