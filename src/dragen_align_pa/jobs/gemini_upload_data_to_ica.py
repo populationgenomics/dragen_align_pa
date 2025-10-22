@@ -114,7 +114,6 @@ def _run(
     sg_name: str = sequencing_group.name
     cram_name = f'{sg_name}.cram'
 
-    # --- THIS IS THE FIX ---
     # The sequencing_group.cram attribute might point to the .crai
     # We must manually ensure we are using the .cram path.
     gcs_base_path = str(sequencing_group.cram)
