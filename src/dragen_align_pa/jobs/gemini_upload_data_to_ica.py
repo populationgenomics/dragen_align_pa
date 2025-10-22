@@ -76,10 +76,8 @@ def _get_file_details_from_ica(
     Checks if a file exists in ICA and returns its 'data' block if found.
     """
     try:
-        # The query parameters 'parentFolderPath' and 'filename' must be
-        # passed as lists (or tuples), not strings.
         query_params: dict[str, Any] = {
-            'parentFolderPath': [ica_folder_path],
+            'parentFolderPath': ica_folder_path,
             'filename': [file_name],
             'filenameMatchMode': 'EXACT',
             'pageSize': '2',
