@@ -24,15 +24,15 @@ from dragen_align_pa.constants import (
 )
 from dragen_align_pa.jobs import (
     delete_data_in_ica,
+    download_ica_pipeline_outputs,
+    download_specific_files_from_ica,
     fastq_intake_qc,
-    gemini_download_ica_pipeline_outputs,
-    gemini_download_specific_files_from_ica,
-    gemini_manage_dragen_mlr,
-    gemini_manage_dragen_pipeline,
-    gemini_upload_data_to_ica,
     make_fastq_file_list,
+    manage_dragen_mlr,
+    manage_dragen_pipeline,
     prepare_ica_for_analysis,
     run_multiqc,
+    upload_data_to_ica,
     upload_fastq_file_list,
     validate_md5_sums,
 )
@@ -68,7 +68,6 @@ class PrepareIcaForDragenAnalysis(CohortStage):
         ica_prep_job: PythonJob = prepare_ica_for_analysis.run_ica_prep_job(
             cohort=cohort,
             output=outputs,
-            bucket_path=BUCKET,
         )
 
         return self.make_outputs(
@@ -158,7 +157,7 @@ class UploadDataToIca(SequencingGroupStage):
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         output: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
         if READS_TYPE == 'cram':
-            upload_job: PythonJob = gemini_upload_data_to_ica.upload_data_to_ica(
+            upload_job: PythonJob = upload_data_to_ica.upload_data_to_ica(
                 sequencing_group=sequencing_group,
                 output=str(output),
             )
@@ -253,7 +252,7 @@ class ManageDragenPipeline(CohortStage):
             target=cohort, stage=PrepareIcaForDragenAnalysis
         )
 
-        management_job: PythonJob = gemini_manage_dragen_pipeline.manage_ica_pipeline(
+        management_job: PythonJob = manage_dragen_pipeline.manage_ica_pipeline(
             cohort=cohort,
             outputs=outputs,
             cram_ica_fids_path=cram_ica_fids_path,
@@ -296,7 +295,7 @@ class ManageDragenMlr(CohortStage):
             stage=ManageDragenPipeline,
         )
 
-        mlr_job: PythonJob = gemini_manage_dragen_mlr.run_mlr(
+        mlr_job: PythonJob = manage_dragen_mlr.run_mlr(
             cohort=cohort,
             pipeline_id_arguid_path_dict=pipeline_id_arguid_path_dict,
             outputs=outputs,
@@ -336,7 +335,7 @@ class DownloadCramFromIca(SequencingGroupStage):
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
-        ica_download_job: PythonJob = gemini_download_specific_files_from_ica.download_data_from_ica(
+        ica_download_job: PythonJob = download_specific_files_from_ica.download_data_from_ica(
             job_name='DownloadCramFromIca',
             sequencing_group=sequencing_group,
             filetype='cram',
@@ -386,7 +385,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
-        ica_download_job: PythonJob = gemini_download_specific_files_from_ica.download_data_from_ica(
+        ica_download_job: PythonJob = download_specific_files_from_ica.download_data_from_ica(
             job_name='DownloadGvcfFromIca',
             sequencing_group=sequencing_group,
             filetype='base_gvcf',
@@ -436,7 +435,7 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
-        ica_download_job: PythonJob = gemini_download_specific_files_from_ica.download_data_from_ica(
+        ica_download_job: PythonJob = download_specific_files_from_ica.download_data_from_ica(
             job_name='DownloadMlrGvcfFromIca',
             sequencing_group=sequencing_group,
             filetype='recal_gvcf',
@@ -482,7 +481,7 @@ class DownloadDataFromIca(SequencingGroupStage):
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
-        ica_download_job: PythonJob = gemini_download_ica_pipeline_outputs.download_bulk_data_from_ica(
+        ica_download_job: PythonJob = download_ica_pipeline_outputs.download_bulk_data_from_ica(
             sequencing_group=sequencing_group,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
         )
