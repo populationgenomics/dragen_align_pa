@@ -126,11 +126,11 @@ def _submit_mlr_run(
         _run_command(ICA_CLI_SETUP, shell=True)
 
         # --- 2. Find input file paths ---
-        cram_path = _find_ica_file_path(ica_base_folder, f'{sg_name}.cram')
-        gvcf_path = _find_ica_file_path(ica_base_folder, f'{sg_name}.hard-filtered.gvcf.gz')
+        cram_path: str = _find_ica_file_path(ica_base_folder, f'{sg_name}.cram')
+        gvcf_path: str = _find_ica_file_path(ica_base_folder, f'{sg_name}.hard-filtered.gvcf.gz')
 
-        cram_url = f'ica://OurDNA-DRAGEN-378${cram_path}'
-        gvcf_url = f'ica://OurDNA-DRAGEN-378${gvcf_path}'
+        cram_url: str = f'ica://OurDNA-DRAGEN-378/{cram_path.lstrip("/")}'
+        gvcf_url: str = f'ica://OurDNA-DRAGEN-378/{gvcf_path.lstrip("/")}'
 
         # --- 3. Set ICA project context ---
         _run_command(['icav2', 'projects', 'enter', mlr_project])
