@@ -22,6 +22,7 @@ from loguru import logger
 from dragen_align_pa import utils
 from dragen_align_pa.constants import (
     BUCKET_NAME,
+    GCP_FOLDER_FOR_ICA_DOWNLOAD,
     ICA_REST_ENDPOINT,
 )
 
@@ -47,7 +48,6 @@ def download_data_from_ica(
     job_name: str,
     sequencing_group: SequencingGroup,
     filetype: str,
-    gcp_folder_for_ica_download: str,
     pipeline_id_arguid_path: cpg_utils.Path,
 ) -> PythonJob:
     """
@@ -63,7 +63,6 @@ def download_data_from_ica(
         _run,
         sequencing_group=sequencing_group,
         filetype=filetype,
-        gcp_folder_for_ica_download=gcp_folder_for_ica_download,
         pipeline_id_arguid_path=pipeline_id_arguid_path,
     )
     return job
@@ -310,7 +309,6 @@ def _orchestrate_download(
 def _run(
     sequencing_group: SequencingGroup,
     filetype: str,
-    gcp_folder_for_ica_download: str,
     pipeline_id_arguid_path: cpg_utils.Path,
 ) -> None:
     """
@@ -337,7 +335,7 @@ def _run(
     logger.info(f'Targeting ICA folder: {base_ica_folder_path}')
 
     # --- 3. Setup GCS Client ---
-    gcs_output_path_prefix = f'{gcp_folder_for_ica_download}/{gcp_prefix}'
+    gcs_output_path_prefix = f'{GCP_FOLDER_FOR_ICA_DOWNLOAD}/{gcp_prefix}'
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 

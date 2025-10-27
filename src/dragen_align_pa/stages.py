@@ -24,7 +24,6 @@ from dragen_align_pa.constants import (
 )
 from dragen_align_pa.jobs import (
     delete_data_in_ica,
-    download_specific_files_from_ica,
     fastq_intake_qc,
     gemini_download_ica_pipeline_outputs,
     gemini_download_specific_files_from_ica,
@@ -437,7 +436,7 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
-        ica_download_job: PythonJob = download_specific_files_from_ica.download_data_from_ica(
+        ica_download_job: PythonJob = gemini_download_specific_files_from_ica.download_data_from_ica(
             job_name='DownloadMlrGvcfFromIca',
             sequencing_group=sequencing_group,
             filetype='recal_gvcf',
