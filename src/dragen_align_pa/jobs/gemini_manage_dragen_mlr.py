@@ -12,7 +12,7 @@ from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
 
-from dragen_align_pa.constants import BUCKET, ICA_CLI_SETUP
+from dragen_align_pa.constants import BUCKET_NAME, ICA_CLI_SETUP
 from dragen_align_pa.jobs.gemini_ica_pipeline_manager import manage_ica_pipeline_loop
 
 
@@ -116,7 +116,9 @@ def _submit_mlr_run(
 
     batch_tmpdir = os.environ.get('BATCH_TMPDIR', '/batch')
     local_config_path = os.path.join(batch_tmpdir, 'mlr_config.json')
-    ica_base_folder = f'/{BUCKET}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
+    ica_base_folder = (
+        f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
+    )
 
     try:
         # --- 1. Authenticate ---
@@ -227,9 +229,7 @@ def _run(
 
     def _create_submit_callable(sg_name: str) -> Callable[[], str]:
         """Creates a zero-argument callable for pipeline submission."""
-        output_prefix: str = (
-            f'ica://{dragen_align_project}/{BUCKET}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{sg_name}'
-        )
+        output_prefix: str = f'ica://{dragen_align_project}/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{sg_name}'
 
         return partial(
             _submit_mlr_run,
