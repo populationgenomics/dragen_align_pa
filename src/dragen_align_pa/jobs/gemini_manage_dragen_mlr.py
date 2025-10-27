@@ -1,7 +1,9 @@
 import json
+import os
 import subprocess
 from collections.abc import Callable
 from functools import partial
+from typing import Any
 
 import cpg_utils
 from cpg_flow.targets import Cohort
@@ -23,6 +25,77 @@ def _initalise_mlr_job(cohort: Cohort) -> PythonJob:
     return mlr_job
 
 
+def _run_command(
+    command: str | list[str],
+    capture_output: bool = False,
+    shell: bool = False,
+) -> subprocess.CompletedProcess:
+    """
+    Runs a subprocess command with robust error logging.
+    """
+    executable = '/bin/bash' if shell else None
+    cmd_str = command if isinstance(command, str) else ' '.join(command)
+
+    try:
+        logger.info(f'Running command: {cmd_str}')
+        return subprocess.run(
+            command,
+            check=True,
+            text=True,
+            capture_output=capture_output,
+            shell=shell,
+            executable=executable,
+        )
+    except subprocess.CalledProcessError as e:
+        logger.error(f'Command failed with return code {e.returncode}: {cmd_str}')
+        if e.stdout:
+            logger.error(f'STDOUT: {e.stdout.strip()}')
+        if e.stderr:
+            logger.error(f'STDERR: {e.stderr.strip()}')
+        # Re-raise as a generic exception to fail the job
+        raise ValueError('A subprocess command failed. See logs.') from e
+
+
+def _find_ica_file_path(parent_folder: str, file_name: str) -> str:
+    """
+    Finds a file in ICA and returns its full `details.path`.
+    """
+    command = [
+        'icav2',
+        'projectdata',
+        'list',
+        '--parent-folder',
+        parent_folder,
+        '--data-type',
+        'FILE',
+        '--file-name',
+        file_name,
+        '--match-mode',
+        'EXACT',
+        '-o',
+        'json',
+    ]
+    result = _run_command(command, capture_output=True)
+    try:
+        data = json.loads(result.stdout)
+        if not data.get('items'):
+            raise ValueError(f'No file found with name "{file_name}" in folder "{parent_folder}"')
+
+        file_path = data['items'][0].get('details', {}).get('path')
+        if not file_path:
+            raise ValueError(f'File "{file_name}" found, but it has no "details.path" in API response.')
+
+        logger.info(f'Found {file_name} at path: {file_path}')
+        return file_path
+
+    except json.JSONDecodeError:
+        logger.error(f'Failed to decode JSON from icav2 list command: {result.stdout}')
+        raise
+    except (ValueError, IndexError) as e:
+        logger.error(f'Error parsing icav2 list output for {file_name}: {e}')
+        raise
+
+
 def _submit_mlr_run(
     pipeline_id_arguid_path: cpg_utils.Path,
     ica_analysis_output_folder: str,
@@ -32,45 +105,91 @@ def _submit_mlr_run(
     mlr_hash_table: str,
     output_prefix: str,
 ) -> str:
+    """
+    Submits the DRAGEN MLR pipeline by running individual CLI commands
+    and parsing the JSON output file.
+    """
     with pipeline_id_arguid_path.open() as pid_arguid_fhandle:
         data: dict[str, str] = json.load(pid_arguid_fhandle)
         pipeline_id = data['pipeline_id']
         ar_guid = f'_{data["ar_guid"]}_'
 
-    mlr_analysis_command: str = f"""
-        # General authentication
-        {ICA_CLI_SETUP}
-        cram_path=$(icav2 projectdata list --parent-folder /{BUCKET}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/ --data-type FILE --file-name {sg_name}.cram --match-mode EXACT -o json | jq -r '.items[].details.path')
-        gvcf_path=$(icav2 projectdata list --parent-folder /{BUCKET}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/ --data-type FILE --file-name {sg_name}.hard-filtered.gvcf.gz --match-mode EXACT -o json | jq -r '.items[].details.path')
-        cram="ica://OurDNA-DRAGEN-378${{cram_path}}"
-        gvcf="ica://OurDNA-DRAGEN-378${{gvcf_path}}"
+    batch_tmpdir = os.environ.get('BATCH_TMPDIR', '/batch')
+    local_config_path = os.path.join(batch_tmpdir, 'mlr_config.json')
+    ica_base_folder = f'/{BUCKET}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
 
-        icav2 projects enter {mlr_project}
+    try:
+        # --- 1. Authenticate ---
+        # shell=True is required for the multi-line ICA_CLI_SETUP script
+        _run_command(ICA_CLI_SETUP, shell=True)
 
-        # Download the mlr config JSON
-        icav2 projectdata download {mlr_config_json} $BATCH_TMPDIR/mlr_config.json --exclude-source-path > /dev/null 2>&1
+        # --- 2. Find input file paths ---
+        cram_path = _find_ica_file_path(ica_base_folder, f'{sg_name}.cram')
+        gvcf_path = _find_ica_file_path(ica_base_folder, f'{sg_name}.hard-filtered.gvcf.gz')
 
-        popgen-cli dragen-mlr submit \
-        --input-project-config-file-path $BATCH_TMPDIR/mlr_config.json \
-        --output-analysis-json-folder-path {sg_name} \
-        --run-id {sg_name}-mlr \
-        --sample-id {sg_name} \
-        --input-ht-folder-url {mlr_hash_table} \
-        --output-folder-url {output_prefix}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name} \
-        --input-align-file-url ${{cram}} \
-        --input-gvcf-file-url ${{gvcf}} \
-        --analysis-instance-tier {config_retrieve(['ica', 'mlr', 'analysis_instance_tier'])} > /dev/null 2>&1
+        cram_url = f'ica://OurDNA-DRAGEN-378${cram_path}'
+        gvcf_url = f'ica://OurDNA-DRAGEN-378${gvcf_path}'
 
-        cat {sg_name}/sample-{sg_name}-run-{sg_name}-mlr.json | jq -r ".id"
-    """  # noqa: E501
-    mlr_analysis_id: str = (
-        subprocess.run(mlr_analysis_command, shell=True, capture_output=True, check=False).stdout.decode().strip()
-    )
-    logger.info(f'MLR pipeline ID for {sg_name} is {mlr_analysis_id}')
-    if not mlr_analysis_id:
-        raise ValueError(f'Failed to submit MLR pipeline for {sg_name}')
+        # --- 3. Set ICA project context ---
+        _run_command(['icav2', 'projects', 'enter', mlr_project])
 
-    return mlr_analysis_id
+        # --- 4. Download MLR config JSON ---
+        _run_command(
+            [
+                'icav2',
+                'projectdata',
+                'download',
+                mlr_config_json,
+                local_config_path,
+                '--exclude-source-path',
+            ]
+        )
+
+        # --- 5. Build and run the popgen-cli command ---
+        # This is built as a list to avoid shell=True
+        submit_command: list[str] = [
+            'popgen-cli',
+            'dragen-mlr',
+            'submit',
+            '--input-project-config-file-path',
+            local_config_path,
+            '--output-analysis-json-folder-path',
+            sg_name,
+            '--run-id',
+            f'{sg_name}-mlr',
+            '--sample-id',
+            sg_name,
+            '--input-ht-folder-url',
+            mlr_hash_table,
+            '--output-folder-url',
+            f'{output_prefix}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}',
+            '--input-align-file-url',
+            cram_url,
+            '--input-gvcf-file-url',
+            gvcf_url,
+            '--analysis-instance-tier',
+            config_retrieve(['ica', 'mlr', 'analysis_instance_tier']),
+        ]
+        _run_command(submit_command)
+
+        # --- 6. Read the pipeline ID from the output JSON ---
+        output_json_path = os.path.join(sg_name, f'sample-{sg_name}-run-{sg_name}-mlr.json')
+        if not os.path.exists(output_json_path):
+            raise FileNotFoundError(f'popgen-cli did not produce expected output file: {output_json_path}')
+
+        with open(output_json_path) as f:
+            submission_data: dict[str, Any] = json.load(f)
+
+        mlr_analysis_id = submission_data.get('id')
+        if not mlr_analysis_id:
+            raise ValueError(f'Submission output file "{output_json_path}" is missing the "id" key.')
+
+        logger.info(f'MLR pipeline ID for {sg_name} is {mlr_analysis_id}')
+        return mlr_analysis_id
+
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError, json.JSONDecodeError) as e:
+        logger.error(f'Failed to submit MLR pipeline for {sg_name}: {e}')
+        raise
 
 
 def run_mlr(
