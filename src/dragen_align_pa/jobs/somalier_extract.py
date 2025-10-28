@@ -11,7 +11,7 @@ from cpg_flow.filetypes import CramPath
 from cpg_flow.targets import SequencingGroup
 from cpg_flow.utils import can_reuse
 from cpg_utils import Path, to_path
-from cpg_utils.config import image_path, reference_path
+from cpg_utils.config import get_driver_image, image_path, reference_path
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
@@ -30,7 +30,7 @@ def _initialise_somalier_job(
     somalier_job: PythonJob = get_batch().new_python_job(
         job_name, (sequencing_group.get_job_attrs() or {}) | {'tool': 'somalier'}
     )
-    somalier_job.image(image_path('somalier'))
+    somalier_job.image(image_path(get_driver_image()))
 
     # Configure resources
     somalier_job.storage(storage=utils.calculate_needed_storage(cram_path=cram_path.path))

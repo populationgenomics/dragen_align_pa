@@ -4,6 +4,7 @@ FROM australia-southeast1-docker.pkg.dev/cpg-common/images/cpg_hail_gcloud:0.2.1
 ENV VERSION=2.1.0
 
 ARG ICA_CLI_VERSION="2.39.0"
+ARG SOMALIER_VERSION="0.3.1"
 
 RUN apt update && apt install -y \
     unzip \
@@ -35,3 +36,7 @@ RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
     && pip install . \
     && pip install third_party/popgen_cli-2.1.0-py3-none-any.whl \
     && pip install typing-extensions==4.12.0
+
+RUN wget https://github.com/brentp/somalier/releases/download/v${SOMALIER_VERSION}/somalier && \
+    chmod +x somalier && \
+    mv somalier /usr/local/bin/
