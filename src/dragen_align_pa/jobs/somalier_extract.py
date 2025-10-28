@@ -56,15 +56,19 @@ def _run_subprocess_with_log(cmd: list[str], step_name: str) -> None:
         raise
 
 
-def _copy_inputs_locally(gcs_paths: dict[str, str], local_dir: str = '.') -> dict[str, str]:
-    """Copies files from GCS to local directory using gsutil."""
+def _copy_inputs_locally(
+    gcs_paths: dict[str, str],
+    local_dir: str,
+) -> dict[str, str]:
+    """Copies files from GCS to the specified local directory using gsutil."""
     local_paths = {}
+    # Ensure the target directory exists (it should be $BATCH_TMPDIR)
     os.makedirs(local_dir, exist_ok=True)
     for key, gcs_path in gcs_paths.items():
         local_path = os.path.join(local_dir, os.path.basename(gcs_path))
         _run_subprocess_with_log(['gsutil', 'cp', gcs_path, local_path], f'Copy {key}')
         local_paths[key] = local_path
-    logger.info('Successfully copied all input files locally.')
+    logger.info(f'Successfully copied all input files to {local_dir}.')
     return local_paths
 
 
@@ -140,14 +144,16 @@ def _run_somalier_extract(
         'ref_fasta': ref_fasta_path_str,
         'ref_fai': ref_fai_path_str,
     }
+    batch_tmpdir = os.environ.get('BATCH_TMPDIR', '/io')
+    logger.info(f'Using BATCH_TMPDIR: {batch_tmpdir}')
     local_paths: dict[str, str] = {}
-    local_output_dir = 'extracted'
+    local_output_dir = os.path.join(batch_tmpdir, 'extracted')
     files_to_cleanup: list[str] = [local_output_dir]
 
     try:
         # 1. Copy inputs
-        local_paths = _copy_inputs_locally(gcs_input_paths)
-        files_to_cleanup.extend(local_paths.values())  # Add copied files to cleanup list
+        local_paths = _copy_inputs_locally(gcs_input_paths, local_dir=batch_tmpdir)
+        files_to_cleanup.extend(local_paths.values())
 
         # 2. Execute Somalier
         _execute_somalier(
@@ -177,7 +183,6 @@ def somalier_extract(
     cram_path: CramPath,
     out_somalier_path: Path,
     overwrite: bool = True,
-    label: str | None = None,
 ) -> PythonJob | None:
     """
     Public function to create and configure the Somalier extract PythonJob.
@@ -190,10 +195,9 @@ def somalier_extract(
         raise ValueError(f'CRAM for somalier is required to have CRAI index ({cram_path})')
 
     # Initialize the job using the helper function, passing cram_path for storage calc
-    py_job = _initialise_somalier_job(
+    somnalier_job: PythonJob = _initialise_somalier_job(
         sequencing_group=sequencing_group,
         cram_path=cram_path,
-        label=label,
     )
 
     # Get resource file paths
@@ -201,7 +205,7 @@ def somalier_extract(
     somalier_sites = reference_path('somalier_sites')
 
     # Schedule the core logic function (_run_somalier_extract) to run within the job
-    py_job.call(
+    somnalier_job.call(
         _run_somalier_extract,
         cram_path_str=str(cram_path.path),
         crai_path_str=str(cram_path.index_path),
@@ -211,4 +215,4 @@ def somalier_extract(
         sites_path_str=str(somalier_sites),
     )
 
-    return py_job
+    return somnalier_job

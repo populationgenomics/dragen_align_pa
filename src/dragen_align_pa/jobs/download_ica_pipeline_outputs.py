@@ -17,7 +17,7 @@ from loguru import logger
 
 from dragen_align_pa import ica_utils
 from dragen_align_pa.constants import (
-    BUCKET,
+    BUCKET_NAME,
     GCP_FOLDER_FOR_ICA_DOWNLOAD,
     ICA_REST_ENDPOINT,
 )
@@ -84,15 +84,14 @@ def _run(
     # --- Get Pipeline ID and AR GUID ---
     pipeline_id, ar_guid = _get_pipeline_details(pipeline_id_arguid_path)
     base_ica_folder_path = (
-        f'/{BUCKET}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
+        f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
     )
     logger.info(f'Targeting ICA folder: {base_ica_folder_path}')
 
     # --- Setup GCS Client ---
     gcs_output_path_prefix = f'{GCP_FOLDER_FOR_ICA_DOWNLOAD}/dragen_metrics/{sg_name}'
-    bucket_name = str(BUCKET).removeprefix('gs://')
     storage_client = storage.Client()
-    gcs_bucket = storage_client.bucket(bucket_name)
+    gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
     # --- Secure ICA Authentication ---
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
