@@ -22,8 +22,7 @@ def _copy_inputs_to_local(input_paths_str: list[str], local_input_dir: str) -> N
     stdin_data = '\n'.join(input_paths_str)
 
     # Command to copy files listed in stdin to the local directory
-    # -m enables parallel copies
-    cmd = ['gcloud', 'storage', 'cp', '-m', '-I', local_input_dir]
+    cmd = ['gcloud', 'storage', 'cp', '-I', local_input_dir]
 
     try:
         # Pass the newline-separated paths via stdin
