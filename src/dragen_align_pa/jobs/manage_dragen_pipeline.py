@@ -4,20 +4,11 @@ from functools import partial
 import cpg_utils
 from cpg_flow.targets import Cohort
 from cpg_utils.config import get_driver_image
-from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 
+from dragen_align_pa import utils
 from dragen_align_pa.jobs import run_align_genotype_with_dragen
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
-
-
-def _initalise_management_job(cohort: Cohort) -> PythonJob:
-    management_job: PythonJob = get_batch().new_python_job(
-        name=f'Manage Dragen pipeline runs for cohort: {cohort.name}',
-        attributes=cohort.get_job_attrs() or {} | {'tool': 'Dragen'},  # type: ignore[ReportUnknownVariableType]
-    )
-    management_job.image(image=get_driver_image())
-    return management_job
 
 
 def _submit_new_ica_pipeline(
@@ -48,7 +39,12 @@ def manage_ica_pipeline(
     fastq_ids_path: cpg_utils.Path | None,
     individual_fastq_file_list_paths: dict[str, cpg_utils.Path] | None = None,
 ) -> PythonJob:
-    job: PythonJob = _initalise_management_job(cohort=cohort)
+    job: PythonJob = utils.initialise_python_job(
+        job_name=f'Manage Dragen pipeline runs for cohort: {cohort.name}',
+        target=cohort,
+        tool_name='Dragen',
+    )
+    job.image(image=get_driver_image())
 
     job.call(
         _run,

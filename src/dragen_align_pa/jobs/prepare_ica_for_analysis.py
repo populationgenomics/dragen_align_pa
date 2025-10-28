@@ -5,30 +5,24 @@ import cpg_utils
 import icasdk
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve, get_driver_image
-from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_utils
+from dragen_align_pa import ica_utils, utils
 from dragen_align_pa.constants import BUCKET_NAME, ICA_REST_ENDPOINT
-
-
-def _initalise_ica_prep_job(cohort: Cohort) -> PythonJob:
-    prepare_ica_job: PythonJob = get_batch().new_python_job(
-        name='PrepareIcaForDragenAnalysis',
-        attributes=cohort.get_job_attrs() or {} | {'tool': 'ICA'},  # type: ignore[ReportUnknownVariableType]
-    )
-    prepare_ica_job.image(image=get_driver_image())
-
-    return prepare_ica_job
 
 
 def run_ica_prep_job(
     cohort: Cohort,
     output: dict[str, cpg_utils.Path],
 ) -> PythonJob:
-    job: PythonJob = _initalise_ica_prep_job(cohort=cohort)
+    job: PythonJob = utils.initialise_python_job(
+        job_name='PrepareIcaForDragenAnalysis',
+        target=cohort,
+        tool_name='ICA',
+    )
+    job.image(image=get_driver_image())
 
     job.call(
         _run,

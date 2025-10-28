@@ -8,22 +8,12 @@ from typing import Any
 import cpg_utils
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve, get_driver_image
-from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
 
-from dragen_align_pa import ica_utils
+from dragen_align_pa import ica_utils, utils
 from dragen_align_pa.constants import BUCKET_NAME, ICA_CLI_SETUP
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
-
-
-def _initalise_mlr_job(cohort: Cohort) -> PythonJob:
-    mlr_job: PythonJob = get_batch().new_python_job(
-        name='MlrWithDragen',
-        attributes=(cohort.get_job_attrs() or {}) | {'tool': 'ICA'},  # type: ignore[ReportUnknownVariableType]
-    )
-    mlr_job.image(image=get_driver_image())
-    return mlr_job
 
 
 def _submit_mlr_run(
@@ -144,7 +134,12 @@ def run_mlr(
     pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path],
     outputs: dict[str, cpg_utils.Path],
 ) -> PythonJob:
-    job: PythonJob = _initalise_mlr_job(cohort=cohort)
+    job: PythonJob = utils.initialise_python_job(
+        job_name='MlrWithDragen',
+        target=cohort,
+        tool_name='ICA',
+    )
+    job.image(image=get_driver_image())
 
     job.call(
         _run,

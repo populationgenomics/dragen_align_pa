@@ -5,23 +5,13 @@ import icasdk
 import requests
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve, get_driver_image
-from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from icasdk import Configuration
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_utils
+from dragen_align_pa import ica_utils, utils
 from dragen_align_pa.constants import ICA_REST_ENDPOINT
-
-
-def _inisalise_fastq_upload_job(cohort: Cohort) -> PythonJob:
-    job: PythonJob = get_batch().new_python_job(
-        name='UploadFastqFileList',
-        attributes=cohort.get_job_attrs() or {} | {'tool': 'ICA'},  # pyright: ignore[reportUnknownArgumentType]
-    )
-    job.image(image=get_driver_image())
-    return job
 
 
 def upload_fastq_file_list(
@@ -37,7 +27,12 @@ def upload_fastq_file_list(
         outputs: A dictionary with the output paths.
         analysis_output_fids_path: A dictionary with the analysis output fids path.
     """
-    job: PythonJob = _inisalise_fastq_upload_job(cohort=cohort)
+    job: PythonJob = utils.initialise_python_job(
+        job_name='UploadFastqFileList',
+        target=cohort,
+        tool_name='ICA',
+    )
+    job.image(image=get_driver_image())
     job.call(
         _run,
         cohort=cohort,

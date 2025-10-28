@@ -5,16 +5,8 @@ from cpg_utils.config import config_retrieve, get_driver_image
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 
+from dragen_align_pa import utils
 from dragen_align_pa.constants import BUCKET, GCP_FOLDER_FOR_ICA_PREP
-
-
-def _initalise_md5sum_validation_job(cohort: Cohort) -> PythonJob:
-    job: PythonJob = get_batch().new_python_job(
-        name='ValidateMd5Sums',
-        attributes=cohort.get_job_attrs() or {} | {'tool': 'md5sum'},  # type: ignore[ReportUnknownVariableType]
-    )
-    job.image(image=get_driver_image())
-    return job
 
 
 def validate_md5_sums(
@@ -22,7 +14,12 @@ def validate_md5_sums(
     cohort: Cohort,
     outputs: cpg_utils.Path,
 ) -> PythonJob:
-    job: PythonJob = _initalise_md5sum_validation_job(cohort=cohort)
+    job: PythonJob = utils.initialise_python_job(
+        job_name='ValidateMd5Sums',
+        target=cohort,
+        tool_name='md5sum',
+    )
+    job.image(image=get_driver_image())
 
     validation_success: str = job.call(
         _run,

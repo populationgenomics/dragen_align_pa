@@ -7,22 +7,12 @@ import pandas as pd
 import requests
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve, get_driver_image
-from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
 
-from dragen_align_pa import ica_utils
+from dragen_align_pa import ica_utils, utils
 from dragen_align_pa.constants import BUCKET_NAME, ICA_REST_ENDPOINT
 from dragen_align_pa.jobs import manage_md5_pipeline
-
-
-def _initalise_md5_job(cohort: Cohort) -> PythonJob:
-    md5_job: PythonJob = get_batch().new_python_job(
-        name='FastqIntakeQc',
-        attributes=cohort.get_job_attrs() or {} | {'tool': 'ICA'},  # type: ignore[ReportUnknownVariableType]
-    )
-    md5_job.image(image=get_driver_image())
-    return md5_job
 
 
 def _get_fastq_ica_id_list(
@@ -110,7 +100,12 @@ def _get_md5_pipeline_outputs(
 
 
 def run_md5_job(cohort: Cohort, outputs: dict[str, cpg_utils.Path]) -> PythonJob:
-    job: PythonJob = _initalise_md5_job(cohort=cohort)
+    job: PythonJob = utils.initialise_python_job(
+        job_name='FastqIntakeQc',
+        target=cohort,
+        tool_name='ICA',
+    )
+    job.image(image=get_driver_image())
     md5_pipeline_file = job.call(_run, cohort=cohort, outputs=outputs).as_str()
     with outputs['md5sum_pipeline_success'].open('w') as success_fh:
         success_fh.write(md5_pipeline_file)

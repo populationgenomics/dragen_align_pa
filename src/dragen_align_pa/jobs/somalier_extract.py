@@ -5,55 +5,16 @@ the standard workflow job structure.
 
 import os
 import shutil
-import subprocess
 
 from cpg_flow.filetypes import CramPath
 from cpg_flow.targets import SequencingGroup
 from cpg_flow.utils import can_reuse
 from cpg_utils import Path, to_path
-from cpg_utils.config import get_driver_image, reference_path
-from cpg_utils.hail_batch import get_batch
+from cpg_utils.config import reference_path
 from hailtop.batch.job import PythonJob
 from loguru import logger
 
 from dragen_align_pa import utils
-
-
-def _initialise_somalier_job(
-    sequencing_group: SequencingGroup,
-    cram_path: CramPath,
-) -> PythonJob:
-    """
-    Initialise a PythonJob for running Somalier extract.
-    """
-    job_name: str = f'Somalier extract {sequencing_group.id}'
-    somalier_job: PythonJob = get_batch().new_python_job(
-        job_name, (sequencing_group.get_job_attrs() or {}) | {'tool': 'somalier'}
-    )
-    somalier_job.image(get_driver_image())
-
-    # Configure resources
-    somalier_job.storage(storage=utils.calculate_needed_storage(cram_path=cram_path.path))
-    somalier_job.memory('8Gi')
-    return somalier_job
-
-
-def _run_subprocess_with_log(cmd: list[str], step_name: str) -> None:
-    """Runs a subprocess command and logs details, raising an error on failure."""
-    logger.info(f'Running {step_name} command: {" ".join(cmd)}')
-    try:
-        process = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        logger.info(f'{step_name} completed successfully.')
-        if process.stdout:
-            logger.info(f'{step_name} STDOUT:\n{process.stdout.strip()}')
-        if process.stderr:
-            logger.info(f'{step_name} STDERR:\n{process.stderr.strip()}')  # Use info for stderr too if successful
-    except subprocess.CalledProcessError as e:
-        logger.error(f'{step_name} failed with return code {e.returncode}')
-        logger.error(f'CMD: {" ".join(e.cmd)}')
-        logger.error(f'STDOUT: {e.stdout}')
-        logger.error(f'STDERR: {e.stderr}')
-        raise
 
 
 def _copy_inputs_locally(
@@ -66,7 +27,7 @@ def _copy_inputs_locally(
     os.makedirs(local_dir, exist_ok=True)
     for key, gcs_path in gcs_paths.items():
         local_path = os.path.join(local_dir, os.path.basename(gcs_path))
-        _run_subprocess_with_log(['gcloud', 'storage', 'cp', gcs_path, local_path], f'Copy {key}')
+        utils.run_subprocess_with_log(['gcloud', 'storage', 'cp', gcs_path, local_path], f'Copy {key}')
         local_paths[key] = local_path
     logger.info(f'Successfully copied all input files to {local_dir}.')
     return local_paths
@@ -91,7 +52,7 @@ def _execute_somalier(
         local_ref_fasta_path,
         local_cram_path,
     ]
-    _run_subprocess_with_log(command, 'Somalier extract')
+    utils.run_subprocess_with_log(command, 'Somalier extract')
     return output_dir
 
 
@@ -106,7 +67,7 @@ def _find_and_upload_output(local_output_dir: str, gcs_output_path: str) -> str:
         )
     local_output_path = str(somalier_files[0])
 
-    _run_subprocess_with_log(['gcloud', 'storage', 'mv', local_output_path, gcs_output_path], 'Upload output')
+    utils.run_subprocess_with_log(['gcloud', 'storage', 'mv', local_output_path, gcs_output_path], 'Upload output')
     return local_output_path
 
 
@@ -195,10 +156,14 @@ def somalier_extract(
         raise ValueError(f'CRAM for somalier is required to have CRAI index ({cram_path})')
 
     # Initialize the job using the helper function, passing cram_path for storage calc
-    somnalier_job: PythonJob = _initialise_somalier_job(
-        sequencing_group=sequencing_group,
-        cram_path=cram_path,
+    somnalier_job: PythonJob = utils.initialise_python_job(
+        job_name=f'Somalier extract {sequencing_group.id}',
+        target=sequencing_group,
+        tool_name='somalier',
     )
+    somnalier_job.image(image=utils.get_driver_image())
+    somnalier_job.storage(storage=utils.calculate_needed_storage(cram_path=cram_path.path))
+    somnalier_job.memory('8Gi')
 
     # Get resource file paths
     ref_fasta = reference_path('broad/ref_fasta')

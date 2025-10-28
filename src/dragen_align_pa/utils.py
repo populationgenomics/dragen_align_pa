@@ -3,6 +3,10 @@ import subprocess
 from math import ceil
 
 import cpg_utils
+from cpg_flow.targets import Cohort, SequencingGroup
+from cpg_utils.config import get_driver_image
+from cpg_utils.hail_batch import get_batch
+from hailtop.batch.job import PythonJob
 from loguru import logger
 
 
@@ -40,3 +44,50 @@ def calculate_needed_storage(
     final_storage_gb = max(10, ceil(calculated_gb))
     logger.info(f'Calculated storage need: {final_storage_gb}GiB for {cram_path}')
     return f'{final_storage_gb}Gi'
+
+
+def run_subprocess_with_log(
+    cmd: list[str],
+    step_name: str,
+    stdin_input: str | None = None,
+) -> None:
+    """
+    Runs a subprocess command with robust logging.
+    (This version is from run_multiqc.py and includes stdin handling)
+    """
+    logger.info(f'Running {step_name} command: {" ".join(cmd)}')
+    try:
+        process = subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            input=stdin_input,  # Pass stdin if provided
+        )
+        logger.info(f'{step_name} completed successfully.')
+        if process.stdout:
+            logger.info(f'{step_name} STDOUT:\n{process.stdout.strip()}')
+        if process.stderr:
+            logger.info(f'{step_name} STDERR:\n{process.stderr.strip()}')
+    except subprocess.CalledProcessError as e:
+        logger.error(f'{step_name} failed with return code {e.returncode}')
+        logger.error(f'CMD: {" ".join(e.cmd)}')
+        logger.error(f'STDOUT: {e.stdout}')
+        logger.error(f'STDERR: {e.stderr}')
+        raise
+
+
+def initialise_python_job(
+    job_name: str,
+    target: Cohort | SequencingGroup,
+    tool_name: str,
+) -> PythonJob:
+    """
+    Initialises a standard PythonJob with common attributes.
+    """
+    py_job: PythonJob = get_batch().new_python_job(
+        name=job_name,
+        attributes=(target.get_job_attrs() or {}) | {'tool': tool_name},  # pyright: ignore[reportUnknownArgumentType]
+    )
+    py_job.image(get_driver_image())
+    return py_job

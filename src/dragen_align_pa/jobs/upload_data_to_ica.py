@@ -14,7 +14,6 @@ from typing import Literal
 import icasdk
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.config import config_retrieve, get_driver_image
-from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
 from loguru import logger
@@ -24,31 +23,21 @@ from dragen_align_pa.constants import BUCKET_NAME, ICA_REST_ENDPOINT
 from dragen_align_pa.utils import validate_cli_path_input
 
 
-def _initalise_upload_job(sequencing_group: SequencingGroup) -> PythonJob:
-    """
-    Initialise a PythonJob for uploading data to ICA.
-    """
-    upload_job: PythonJob = get_batch().new_python_job(
-        name='UploadDataToIca',
-        attributes=sequencing_group.get_job_attrs() or {} | {'tool': 'ICA-Python'},  # type: ignore[ReportUnknownVariableType]
-    )
-
-    upload_job.image(image=get_driver_image())
-    # Storage is requested to hold the CRAM file locally during transfer
-    upload_job.storage(utils.calculate_needed_storage(cram_path=sequencing_group.cram.path))
-    upload_job.memory('8Gi')
-    upload_job.spot(is_spot=False)
-
-    return upload_job
-
-
 def upload_data_to_ica(sequencing_group: SequencingGroup, output: str) -> PythonJob:
     """
     Creates a PythonJob to upload a CRAM file to ICA.
     """
     upload_folder = config_retrieve(['ica', 'data_prep', 'upload_folder'])
 
-    job: PythonJob = _initalise_upload_job(sequencing_group=sequencing_group)
+    job: PythonJob = utils.initialise_python_job(
+        job_name='UploadDataToIca',
+        target=sequencing_group,
+        tool_name='ICA-Python',
+    )
+    job.image(image=get_driver_image())
+    job.storage(utils.calculate_needed_storage(cram_path=sequencing_group.cram.path))
+    job.memory('8Gi')
+    job.spot(is_spot=False)
 
     job.call(
         _run,

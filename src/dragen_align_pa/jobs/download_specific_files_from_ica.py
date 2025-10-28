@@ -9,39 +9,18 @@ import cpg_utils
 import icasdk
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.config import config_retrieve, get_driver_image
-from cpg_utils.hail_batch import get_batch
 from google.cloud import storage
 from google.cloud.storage.bucket import Bucket
 from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_utils
+from dragen_align_pa import ica_utils, utils
 from dragen_align_pa.constants import (
     BUCKET_NAME,
     GCP_FOLDER_FOR_ICA_DOWNLOAD,
     ICA_REST_ENDPOINT,
 )
-
-
-def _initalise_download_job(
-    sequencing_group: SequencingGroup,
-    job_name: str,
-) -> PythonJob:
-    """
-    Initialise a PythonJob for downloading specific files from ICA.
-    """
-    download_job: PythonJob = get_batch().new_python_job(
-        name=job_name,
-        attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'ICA-Python'},  # type: ignore[ReportUnknownVariableType]
-    )
-
-    download_job.image(image=get_driver_image())
-    download_job.storage('8Gi')
-    download_job.memory('8Gi')
-    download_job.spot(is_spot=False)
-
-    return download_job
 
 
 def download_data_from_ica(
@@ -57,10 +36,15 @@ def download_data_from_ica(
     sg_name: str = sequencing_group.name
     logger.info(f'Queueing Python job to download {filetype} for {sg_name}')
 
-    job: PythonJob = _initalise_download_job(
-        sequencing_group=sequencing_group,
+    job: PythonJob = utils.initialise_python_job(
         job_name=job_name,
+        target=sequencing_group,
+        tool_name='ICA-Python',
     )
+    job.image(image=get_driver_image())
+    job.storage('8Gi')
+    job.memory('8Gi')
+    job.spot(is_spot=False)
 
     job.call(
         _run,
