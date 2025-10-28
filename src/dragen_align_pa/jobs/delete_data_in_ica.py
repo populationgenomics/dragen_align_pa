@@ -12,14 +12,14 @@ from icasdk.apis.tags import project_data_api
 from icasdk.exceptions import ApiException, ApiValueError
 from loguru import logger
 
-from dragen_align_pa import utils
+from dragen_align_pa import ica_utils
 from dragen_align_pa.constants import BUCKET, ICA_REST_ENDPOINT
 
 
 def _initalise_delete_job(sequencing_group: SequencingGroup) -> PythonJob:
     delete_job: PythonJob = get_batch().new_python_job(
         name='DeleteDataInIca',
-        attributes=(sequencing_group.get_job_attrs() or {} | {'tool': 'Dragen'}),  # type: ignore[ReportUnknownVariableType]
+        attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'Dragen'},  # type: ignore[ReportUnknownVariableType]
     )
     delete_job.image(image=get_driver_image())
     return delete_job
@@ -40,7 +40,7 @@ def delete_data_in_ica(
 
 
 def _run(ica_fid_path: cpg_utils.Path, alignment_fid_paths: cpg_utils.Path) -> None:
-    secrets: dict[Literal['projectID', 'apiKey'], str] = utils.get_ica_secrets()
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
 
@@ -61,8 +61,10 @@ def _run(ica_fid_path: cpg_utils.Path, alignment_fid_paths: cpg_utils.Path) -> N
                 # The API returns None (invalid as defined by the sdk) but deletes the data anyway.
                 with contextlib.suppress(ApiValueError):
                     api_instance.delete_data(  # type: ignore[ReportUnknownVariableType]
-                        path_params=path_params  # type: ignore[ReportUnknownVariableType]
+                        path_params=path_params,  # type: ignore[ReportUnknownVariableType]
                     )
             # Used to catch instances where the data has been deleted already
             except ApiException:
-                logger.info(f"The folder {BUCKET} with folder ID {f_id} doesn't exist. Has it already been deleted?")
+                logger.info(
+                    f"The folder {BUCKET} with folder ID {f_id} doesn't exist. Has it already been deleted?",
+                )

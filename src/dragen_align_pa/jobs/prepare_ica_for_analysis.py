@@ -10,8 +10,8 @@ from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
+from dragen_align_pa import ica_utils
 from dragen_align_pa.constants import BUCKET_NAME, ICA_REST_ENDPOINT
-from dragen_align_pa.utils import create_upload_object_id, get_ica_secrets
 
 
 def _initalise_ica_prep_job(cohort: Cohort) -> PythonJob:
@@ -54,7 +54,7 @@ def _run(
     Returns:
         dict [str, str] noting the analysis ID.
     """
-    secrets: dict[Literal['projectID', 'apiKey'], str] = get_ica_secrets()
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
 
@@ -62,13 +62,15 @@ def _run(
     configuration.api_key['ApiKeyAuth'] = api_key
     path_parameters: dict[str, str] = {'projectId': project_id}
 
-    ica_analysis_output_folder: str = config_retrieve(['ica', 'data_prep', 'output_folder'])
+    ica_analysis_output_folder: str = config_retrieve(
+        ['ica', 'data_prep', 'output_folder'],
+    )
 
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
         folder_path: str = f'/{BUCKET_NAME}/{ica_analysis_output_folder}'
         for sg_name in cohort.get_sequencing_group_ids():
-            object_id: str = create_upload_object_id(
+            object_id: str = ica_utils.create_upload_object_id(
                 api_instance=api_instance,
                 path_params=path_parameters,
                 sg_name=sg_name,
@@ -76,6 +78,8 @@ def _run(
                 folder_path=folder_path,
                 object_type='FOLDER',
             )
-            logger.info(f'Created folder ID {object_id} for analysis outputs for sequencing group {sg_name}')
+            logger.info(
+                f'Created folder ID {object_id} for analysis outputs for sequencing group {sg_name}',
+            )
             with output[sg_name].open('w') as opath:
                 opath.write(json.dumps({'analysis_output_fid': object_id}))

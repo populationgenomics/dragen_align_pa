@@ -8,12 +8,9 @@ Uses a hybrid PythonJob approach:
   bypassing the Python SDK's 10MB file size limit.
 """
 
-import json
 import os
-import subprocess
-from typing import Any, Literal
+from typing import Literal
 
-import cpg_utils
 import icasdk
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.config import config_retrieve, get_driver_image
@@ -22,8 +19,8 @@ from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import utils
-from dragen_align_pa.constants import BUCKET_NAME, ICA_CLI_SETUP, ICA_REST_ENDPOINT
+from dragen_align_pa import ica_utils, utils
+from dragen_align_pa.constants import BUCKET_NAME, ICA_REST_ENDPOINT
 from dragen_align_pa.utils import validate_cli_path_input
 
 
@@ -63,38 +60,10 @@ def upload_data_to_ica(sequencing_group: SequencingGroup, output: str) -> Python
     return job
 
 
-def _get_file_details_from_ica(
-    api_instance: project_data_api.ProjectDataApi,
-    path_params: dict[str, str],
-    ica_folder_path: str,
-    file_name: str,
-) -> dict[str, Any] | None:
-    """
-    Checks if a file exists in ICA and returns its 'data' block if found.
-    """
-    try:
-        query_params: dict[str, Any] = {
-            'parentFolderPath': ica_folder_path,
-            'filename': [file_name],
-            'filenameMatchMode': 'EXACT',
-            'pageSize': '2',
-        }
-
-        api_response = api_instance.get_project_data_list(
-            path_params=path_params,
-            query_params=query_params,
-        )
-        items = api_response.body.get('items', [])
-        if len(items) > 0:
-            return items[0]['data']  # pyright: ignore[reportUnknownVariableType]
-
-    except icasdk.ApiException as e:
-        logger.error(f'API error checking for file {file_name}: {e}')
-        # Don't raise, just return None
-    return None
-
-
-def _setup_paths(sequencing_group: SequencingGroup, upload_folder: str) -> dict[str, str]:
+def _setup_paths(
+    sequencing_group: SequencingGroup,
+    upload_folder: str,
+) -> dict[str, str]:
     """
     Resolves and returns all necessary paths and names for the job.
     """
@@ -106,7 +75,9 @@ def _setup_paths(sequencing_group: SequencingGroup, upload_folder: str) -> dict[
     if gcs_base_path.endswith('.cram.crai'):
         gcs_cram_path = gcs_base_path.removesuffix('.crai')
     elif not gcs_base_path.endswith('.cram'):
-        raise ValueError(f'Unexpected path for sequencing_group.cram: {gcs_base_path}')
+        raise ValueError(
+            f'Unexpected path for sequencing_group.cram: {gcs_base_path}',
+        )
     else:
         gcs_cram_path = gcs_base_path
 
@@ -122,88 +93,6 @@ def _setup_paths(sequencing_group: SequencingGroup, upload_folder: str) -> dict[
         'local_cram_path': local_cram_path,
         'ica_folder_path': f'/{BUCKET_NAME}/{upload_folder}/{sg_name}/',
     }
-
-
-def _check_file_existence(
-    api_instance: project_data_api.ProjectDataApi,
-    path_params: dict[str, str],
-    ica_folder_path: str,
-    cram_name: str,
-) -> str | None:
-    """
-    Checks if the CRAM file already exists in ICA and returns its status.
-    """
-    logger.info(f'Checking existence of {cram_name}...')
-    cram_data = _get_file_details_from_ica(api_instance, path_params, ica_folder_path, cram_name)
-    if cram_data:
-        return cram_data['details']['status']  # pyright: ignore[reportUnknownVariableType]
-    return None
-
-
-def _perform_upload_if_needed(cram_status: str | None, paths: dict[str, str]) -> None:
-    """
-    Handles the actual download from GCS and upload to ICA using CLIs.
-    """
-    if cram_status == 'AVAILABLE':
-        logger.info(f'{paths["cram_name"]} already AVAILABLE in ICA. Skipping.')
-        return
-
-    # Authenticate ICA CLI
-    logger.info('Authenticating ICA CLI...')
-    # This command uses shell=True, but ICA_CLI_SETUP is a trusted constant
-    subprocess.run(ICA_CLI_SETUP, shell=True, check=True, executable='/bin/bash')
-
-    local_dir = os.path.dirname(paths['local_cram_path'])
-    if not os.path.exists(local_dir):
-        os.makedirs(local_dir, exist_ok=True)
-        logger.info(f'Created local directory: {local_dir}')
-
-    # Download from GCS to local disk
-    logger.info(f'Downloading {paths["cram_name"]} from GCS to {paths["local_cram_path"]}...')
-    subprocess.run(
-        ['gcloud', 'storage', 'cp', paths['gcs_cram_path'], paths['local_cram_path']],
-        check=True,
-    )
-
-    logger.info(f'Uploading {paths["local_cram_path"]} to ICA (using CLI for large file)...')
-    subprocess.run(
-        ['icav2', 'projectdata', 'upload', paths['local_cram_path'], paths['ica_folder_path']],
-        check=True,
-    )
-
-    # Clean up the large local file
-    try:
-        os.remove(paths['local_cram_path'])
-        logger.info(f'Removed local file: {paths["local_cram_path"]}')
-    except OSError as e:
-        logger.warning(f'Could not remove local file {paths["local_cram_path"]}: {e}')
-
-
-def _finalize_upload(
-    api_instance: project_data_api.ProjectDataApi,
-    path_params: dict[str, str],
-    paths: dict[str, str],
-    output_path_str: str,
-) -> None:
-    """
-    Re-fetches the file ID from ICA and writes the output JSON file.
-    """
-    logger.info(f'Re-fetching file ID for {paths["sg_name"]}...')
-    cram_data = _get_file_details_from_ica(api_instance, path_params, paths['ica_folder_path'], paths['cram_name'])
-
-    cram_fid = cram_data['id'] if cram_data else None  # pyright: ignore[reportUnknownVariableType]
-
-    if not cram_fid:
-        raise ValueError(f'Failed to find file ID in ICA after upload for {paths["sg_name"]}.')
-
-    logger.info(f'CRAM FID: {cram_fid}')
-
-    # Write only the CRAM FID to the output JSON
-    output_data = {'cram_fid': cram_fid}
-    with cpg_utils.to_path(output_path_str).open('w') as f:
-        json.dump(output_data, f)
-
-    logger.info(f'Successfully uploaded {paths["cram_name"]} for {paths["sg_name"]}.')
 
 
 def _run(
@@ -222,7 +111,7 @@ def _run(
     validate_cli_path_input(paths['ica_folder_path'], 'ica_folder_path')
 
     # 2. --- Authenticate Python SDK ---
-    secrets: dict[Literal['projectID', 'apiKey'], str] = utils.get_ica_secrets()
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
     path_params: dict[str, str] = {'projectId': project_id}
 
@@ -233,12 +122,22 @@ def _run(
     cram_status: str | None = None
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
-        cram_status = _check_file_existence(api_instance, path_params, paths['ica_folder_path'], paths['cram_name'])
+        cram_status = ica_utils.check_file_existence(
+            api_instance,
+            path_params,
+            paths['ica_folder_path'],
+            paths['cram_name'],
+        )
 
     # 4. --- Perform Upload (if needed) ---
-    _perform_upload_if_needed(cram_status, paths)
+    ica_utils.perform_upload_if_needed(cram_status, paths)
 
     # 5. --- Get Final File ID and Write Output ---
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
-        _finalize_upload(api_instance, path_params, paths, output_path_str)
+        ica_utils.finalize_upload(
+            api_instance,
+            path_params,
+            paths,
+            output_path_str,
+        )

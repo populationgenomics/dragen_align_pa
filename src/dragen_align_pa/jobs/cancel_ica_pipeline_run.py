@@ -5,7 +5,7 @@ from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_analysis_api
 from loguru import logger
 
-from dragen_align_pa import utils
+from dragen_align_pa import ica_utils
 from dragen_align_pa.constants import ICA_REST_ENDPOINT
 
 
@@ -23,7 +23,7 @@ def run(ica_pipeline_id: str, is_mlr: bool = False) -> dict[str, str]:
         dict[str, str]: A cancelled dict to be recorded in GCP noting that the pipeline was cancelled.
                         Includes a timestamp so that a single cancelled pipeline isn't blocking.
     """
-    secrets: dict[Literal['projectID', 'apiKey'], str] = utils.get_ica_secrets()
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
 
@@ -33,7 +33,9 @@ def run(ica_pipeline_id: str, is_mlr: bool = False) -> dict[str, str]:
     if not is_mlr:
         path_parameters: dict[str, str] = {'projectId': project_id}
     else:
-        path_parameters = {'projectId': config_retrieve(['ica', 'projects', 'dragen_mlr_project_id'])}
+        path_parameters = {
+            'projectId': config_retrieve(['ica', 'projects', 'dragen_mlr_project_id']),
+        }
     path_parameters = path_parameters | {'analysisId': ica_pipeline_id}
 
     with icasdk.ApiClient(configuration=configuration) as api_client:
@@ -43,7 +45,11 @@ def run(ica_pipeline_id: str, is_mlr: bool = False) -> dict[str, str]:
                 path_params=path_parameters,  # type: ignore[ReportUnknownVariableType]
                 skip_deserialization=True,
             )  # type: ignore[ReportUnknownVariableType]
-            logger.info(f'Sent cancellation request for ICA analysis: {ica_pipeline_id}')
+            logger.info(
+                f'Sent cancellation request for ICA analysis: {ica_pipeline_id}',
+            )
             return {'cancelled': ica_pipeline_id}
         except icasdk.ApiException as e:
-            raise icasdk.ApiException(f'Exception when calling ProjectAnalysisApi->abort_analysis: {e}') from e
+            raise icasdk.ApiException(
+                f'Exception when calling ProjectAnalysisApi->abort_analysis: {e}',
+            ) from e

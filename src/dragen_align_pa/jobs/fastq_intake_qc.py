@@ -11,9 +11,9 @@ from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
 
-from dragen_align_pa.constants import BUCKET, ICA_REST_ENDPOINT
+from dragen_align_pa import ica_utils
+from dragen_align_pa.constants import BUCKET_NAME, ICA_REST_ENDPOINT
 from dragen_align_pa.jobs import manage_md5_pipeline
-from dragen_align_pa.utils import create_upload_object_id, get_ica_secrets
 
 
 def _initalise_md5_job(cohort: Cohort) -> PythonJob:
@@ -37,12 +37,16 @@ def _get_fastq_ica_id_list(
         path_params=path_parameters,  # pyright: ignore[reportArgumentType]
         query_params={'filename': fastq_filenames, 'filenameMatchMode': 'EXACT'},
     )  # type: ignore
-    for item in list(range(len(api_response.body['items']))):  # pyright: ignore[reportUnknownArgumentType]
-        fastq_ids.append(api_response.body['items'][item]['data']['id'])  # pyright: ignore[reportUnknownArgumentType]
+    for item in list(
+        range(len(api_response.body['items'])),
+    ):  # pyright: ignore[reportUnknownArgumentType]
+        fastq_ids.append(
+            api_response.body['items'][item]['data']['id'],
+        )  # pyright: ignore[reportUnknownArgumentType]
         fastq_ids_and_filenames.append(
             api_response.body['items'][item]['data']['id']
             + '\t'
-            + api_response.body['items'][item]['data']['details']['name']  # pyright: ignore[reportUnknownArgumentType]
+            + api_response.body['items'][item]['data']['details']['name'],  # pyright: ignore[reportUnknownArgumentType]
         )
 
     with fastq_ids_outpath.open('w') as fq_outpath:
@@ -56,7 +60,7 @@ def _create_md5_output_folder(
     cohort_name: str,
     path_parameters: dict[str, str],
 ) -> str:
-    return create_upload_object_id(
+    return ica_utils.create_upload_object_id(
         api_instance=api_instance,
         path_params=path_parameters,
         sg_name=cohort_name,
@@ -91,12 +95,17 @@ def _get_md5_pipeline_outputs(
 
     # Get a pre-signed URL
     url_api_response = api_instance.create_download_url_for_data(  # pyright: ignore[reportUnknownVariableType]
-        path_params=path_parameters | {'dataId': md5sum_results_id}  # pyright: ignore[reportArgumentType]
+        path_params=path_parameters | {'dataId': md5sum_results_id},  # pyright: ignore[reportArgumentType]
     )  # type: ignore
 
-    md5_file_contents = requests.get(url=url_api_response.body['url'], timeout=60).text  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+    md5_file_contents = requests.get(
+        url=url_api_response.body['url'],
+        timeout=60,
+    ).text  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
     with md5_outpath.open('w') as md5_path_fh:
-        md5_path_fh.write(md5_file_contents)  # pyright: ignore[reportUnknownArgumentType]
+        md5_path_fh.write(
+            md5_file_contents,
+        )  # pyright: ignore[reportUnknownArgumentType]
     return md5_outpath
 
 
@@ -109,13 +118,18 @@ def run_md5_job(cohort: Cohort, outputs: dict[str, cpg_utils.Path]) -> PythonJob
 
 
 def _run(cohort: Cohort, outputs: dict[str, cpg_utils.Path]) -> cpg_utils.Path:
-    manifest_file_path: cpg_utils.Path = config_retrieve(['workflow', 'manifest_gcp_path'])
+    manifest_file_path: cpg_utils.Path = config_retrieve(
+        ['workflow', 'manifest_gcp_path'],
+    )
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
-        supplied_manifest_data: pd.DataFrame = pd.read_csv(manifest_fh, usecols=['Filenames'])
+        supplied_manifest_data: pd.DataFrame = pd.read_csv(
+            manifest_fh,
+            usecols=['Filenames'],
+        )
 
     fastq_filenames: list[str] = supplied_manifest_data['Filenames'].to_list()
 
-    secrets: dict[Literal['projectID', 'apiKey'], str] = get_ica_secrets()
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
 
@@ -136,11 +150,13 @@ def _run(cohort: Cohort, outputs: dict[str, cpg_utils.Path]) -> cpg_utils.Path:
             path_parameters=path_parameters,
         )
 
-        bucket_name: str = str(BUCKET).removeprefix('gs://')
-        folder_path: str = f'/{bucket_name}{config_retrieve(["ica", "data_prep", "output_folder"])}'
+        folder_path: str = f'/{BUCKET_NAME}{config_retrieve(["ica", "data_prep", "output_folder"])}'
 
         md5_outputs_folder_id: str = _create_md5_output_folder(
-            folder_path=folder_path, api_instance=api_instance, cohort_name=cohort_name, path_parameters=path_parameters
+            folder_path=folder_path,
+            api_instance=api_instance,
+            cohort_name=cohort_name,
+            path_parameters=path_parameters,
         )
 
         md5_pipeline_file: cpg_utils.Path = manage_md5_pipeline.manage_md5_pipeline(

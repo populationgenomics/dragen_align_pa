@@ -13,7 +13,7 @@ from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
 from loguru import logger
 
-from dragen_align_pa import utils
+from dragen_align_pa import ica_utils  # <-- Changed
 from dragen_align_pa.constants import ICA_REST_ENDPOINT
 
 
@@ -32,13 +32,17 @@ def submit_dragen_run(
     qc_cross_cont_vcf_id: str = config_retrieve(['ica', 'qc', 'cross_cont_vcf'])
     qc_cov_region_1_id: str = config_retrieve(['ica', 'qc', 'coverage_region_1'])
     qc_cov_region_2_id: str = config_retrieve(['ica', 'qc', 'coverage_region_2'])
-    dragen_pipeline_id: str = config_retrieve(['ica', 'pipelines', config_retrieve(['workflow', 'reads_type'])])
+    dragen_pipeline_id: str = config_retrieve(
+        ['ica', 'pipelines', config_retrieve(['workflow', 'reads_type'])],
+    )
     user_tags: list[str] = config_retrieve(['ica', 'tags', 'user_tags'])
     technical_tags: list[str] = config_retrieve(['ica', 'tags', 'technical_tags'])
     reference_tags: list[str] = config_retrieve(['ica', 'tags', 'reference_tags'])
     user_reference: str = f'{sg_name}_{try_get_ar_guid()}_'
 
-    logger.info(f'Loaded Dragen ICA configuration values, user reference: {user_reference}')
+    logger.info(
+        f'Loaded Dragen ICA configuration values, user reference: {user_reference}',
+    )
 
     cram_input: list[AnalysisDataInput] | None = []
     cram_parameters: list[AnalysisParameterInput] | None = []
@@ -50,11 +54,21 @@ def submit_dragen_run(
         with cram_ica_fids_path.open() as cram_ica_fids_handle:
             cram_ica_fids: dict[str, str] = json.load(cram_ica_fids_handle)
             cram_reference_id: str = config_retrieve(
-                ['ica', 'cram_references', config_retrieve(['ica', 'cram_references', 'old_cram_reference'])]
+                [
+                    'ica',
+                    'cram_references',
+                    config_retrieve(['ica', 'cram_references', 'old_cram_reference']),
+                ],
             )
             cram_input = [
-                AnalysisDataInput(parameterCode='crams', dataIds=[cram_ica_fids['cram_fid']]),
-                AnalysisDataInput(parameterCode='cram_reference', dataIds=[cram_reference_id]),
+                AnalysisDataInput(
+                    parameterCode='crams',
+                    dataIds=[cram_ica_fids['cram_fid']],
+                ),
+                AnalysisDataInput(
+                    parameterCode='cram_reference',
+                    dataIds=[cram_reference_id],
+                ),
             ]
             cram_parameters = [
                 AnalysisParameterInput(
@@ -71,7 +85,7 @@ def submit_dragen_run(
                         "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
                         '--vc-gvcf-gq-bands 13 20 30 40'
                     ),
-                )
+                ),
             ]
     # Need the gcs path to the fastq list file to extract the fastq names from.
     elif fastq_csv_list_file_path and fastq_ids_path and individual_fastq_file_list_paths:
@@ -84,16 +98,30 @@ def submit_dragen_run(
                 fastq_file_list_id = line.split(':')[1].strip()
         with individual_fastq_file_list_paths.open() as individual_fastq_file_list_handle:
             # Load the csv into a dataframe and filter the fastq_list_file for the fastqs that match the csv
-            individual_fastq_csv_df: pd.DataFrame = pd.read_csv(individual_fastq_file_list_handle, sep=',')
+            individual_fastq_csv_df: pd.DataFrame = pd.read_csv(
+                individual_fastq_file_list_handle,
+                sep=',',
+            )
         with fastq_ids_path.open() as fastq_ids_handle:
-            fastq_ica_ids_df: pd.DataFrame = pd.read_csv(fastq_ids_handle, sep=r'\s+', names=['ica_id', 'fastq_name'])
+            fastq_ica_ids_df: pd.DataFrame = pd.read_csv(
+                fastq_ids_handle,
+                sep=r'\s+',
+                names=['ica_id', 'fastq_name'],
+            )
             fastq_ica_ids: list[str] = fastq_ica_ids_df[
-                fastq_ica_ids_df['fastq_name'].isin(individual_fastq_csv_df['Read1File'].tolist())
-                | fastq_ica_ids_df['fastq_name'].isin(individual_fastq_csv_df['Read2File'].tolist())
+                fastq_ica_ids_df['fastq_name'].isin(
+                    individual_fastq_csv_df['Read1File'].tolist(),
+                )
+                | fastq_ica_ids_df['fastq_name'].isin(
+                    individual_fastq_csv_df['Read2File'].tolist(),
+                )
             ]['ica_id'].tolist()
             fastq_input = [
                 AnalysisDataInput(parameterCode='fastqs', dataIds=fastq_ica_ids),
-                AnalysisDataInput(parameterCode='fastq_list', dataIds=[fastq_file_list_id]),
+                AnalysisDataInput(
+                    parameterCode='fastq_list',
+                    dataIds=[fastq_file_list_id],
+                ),
             ]
             fastq_parameters = [
                 AnalysisParameterInput(code='vc-hard-filter', value='false'),
@@ -123,9 +151,18 @@ def submit_dragen_run(
         analysisInput=NextflowAnalysisInput(
             inputs=[
                 AnalysisDataInput(parameterCode='ref_tar', dataIds=[dragen_ht_id]),
-                AnalysisDataInput(parameterCode='qc_cross_cont_vcf', dataIds=[qc_cross_cont_vcf_id]),
-                AnalysisDataInput(parameterCode='qc_coverage_region_1', dataIds=[qc_cov_region_1_id]),
-                AnalysisDataInput(parameterCode='qc_coverage_region_2', dataIds=[qc_cov_region_2_id]),
+                AnalysisDataInput(
+                    parameterCode='qc_cross_cont_vcf',
+                    dataIds=[qc_cross_cont_vcf_id],
+                ),
+                AnalysisDataInput(
+                    parameterCode='qc_coverage_region_1',
+                    dataIds=[qc_cov_region_1_id],
+                ),
+                AnalysisDataInput(
+                    parameterCode='qc_coverage_region_2',
+                    dataIds=[qc_cov_region_2_id],
+                ),
                 *cram_input,
                 *fastq_input,
             ],
@@ -156,7 +193,9 @@ def submit_dragen_run(
         )
         return api_response.body['id']  # type: ignore[ReportUnknownVariableType]
     except icasdk.ApiException as e:
-        raise icasdk.ApiException(f'Exception when calling ProjectAnalysisApi->create_nextflow_analysis: {e}') from e
+        raise icasdk.ApiException(
+            f'Exception when calling ProjectAnalysisApi->create_nextflow_analysis: {e}',
+        ) from e
 
 
 def run(
@@ -183,7 +222,7 @@ def run(
         output_path (str): The path to write the pipeline ID to
     """  # noqa: E501
 
-    secrets: dict[Literal['projectID', 'apiKey'], str] = utils.get_ica_secrets()
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
 

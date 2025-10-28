@@ -11,8 +11,8 @@ from icasdk import Configuration
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
+from dragen_align_pa import ica_utils
 from dragen_align_pa.constants import ICA_REST_ENDPOINT
-from dragen_align_pa.utils import create_upload_object_id, get_ica_secrets
 
 
 def _inisalise_fastq_upload_job(cohort: Cohort) -> PythonJob:
@@ -54,7 +54,7 @@ def _run(
     fastq_list_file_path_dict: dict[str, cpg_utils.Path],
     bucket: cpg_utils.Path,
 ) -> None:
-    secrets: dict[Literal['projectID', 'apiKey'], str] = get_ica_secrets()
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
     configuration: Configuration = Configuration(host=ICA_REST_ENDPOINT)
@@ -64,7 +64,7 @@ def _run(
 
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance: project_data_api.ProjectDataApi = project_data_api.ProjectDataApi(  # pyright: ignore[reportUnknownVariableType]
-            api_client
+            api_client,
         )
         for sequencing_group in cohort.get_sequencing_group_ids():
             fastq_list_file_name: str = fastq_list_file_path_dict[sequencing_group].name
@@ -73,7 +73,7 @@ def _run(
                 f'/{bucket_name}{config_retrieve(["ica", "data_prep", "output_folder"])}/{sequencing_group}'
             )
 
-            fastq_list_ica_file_id: str = create_upload_object_id(
+            fastq_list_ica_file_id: str = ica_utils.create_upload_object_id(
                 api_instance=api_instance,
                 path_params=path_parameters,
                 sg_name=sequencing_group,
@@ -83,18 +83,30 @@ def _run(
             )
             if fastq_list_ica_file_id != 'AVAILABLE':
                 upload_url: str = api_instance.create_upload_url_for_data(  # pyright: ignore[reportUnknownVariableType]
-                    path_params=path_parameters | {'dataId': fastq_list_ica_file_id}  # pyright: ignore[reportArgumentType]
+                    path_params=path_parameters | {'dataId': fastq_list_ica_file_id},  # pyright: ignore[reportArgumentType]
                 ).body['url']  # type: ignore[ReportUnknownVariableType]
 
-                with fastq_list_file_path_dict[sequencing_group].open('r') as fastq_list_fh:
+                with fastq_list_file_path_dict[sequencing_group].open(
+                    'r',
+                ) as fastq_list_fh:
                     data: str = fastq_list_fh.read()
-                    response: requests.Response = requests.put(url=upload_url, data=data, timeout=300)  # pyright: ignore[reportUnknownVariableType]
+                    response: requests.Response = requests.put(
+                        url=upload_url,
+                        data=data,
+                        timeout=300,
+                    )  # pyright: ignore[reportUnknownVariableType]
                     if isinstance(response, requests.Response):
                         response.raise_for_status()
-                        logger.info(f'Upload of {fastq_list_file_name} to ICA successful.')
-                        logger.info(f'Upload response: {response.status_code}, {response.text}')
+                        logger.info(
+                            f'Upload of {fastq_list_file_name} to ICA successful.',
+                        )
+                        logger.info(
+                            f'Upload response: {response.status_code}, {response.text}',
+                        )
                     else:
-                        logger.info('Error: Did not receive a valid response from ICA upload endpoint.')
+                        logger.info(
+                            'Error: Did not receive a valid response from ICA upload endpoint.',
+                        )
                 sg_and_fastq_list.append(f'{sequencing_group}:{fastq_list_ica_file_id}')
 
     # Write the sequencing group and fastq list ICA file IDs to the outputs path
