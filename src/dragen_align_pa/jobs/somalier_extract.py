@@ -30,7 +30,7 @@ def _initialise_somalier_job(
     somalier_job: PythonJob = get_batch().new_python_job(
         job_name, (sequencing_group.get_job_attrs() or {}) | {'tool': 'somalier'}
     )
-    somalier_job.image(image_path('somalier'))  # Ensure this image has somalier, python, and gsutil
+    somalier_job.image(image_path('somalier'))
 
     # Configure resources
     somalier_job.storage(storage=utils.calculate_needed_storage(cram_path=cram_path.path))
@@ -60,13 +60,13 @@ def _copy_inputs_locally(
     gcs_paths: dict[str, str],
     local_dir: str,
 ) -> dict[str, str]:
-    """Copies files from GCS to the specified local directory using gsutil."""
+    """Copies files from GCS to the specified local directory using gcloud storage."""
     local_paths = {}
     # Ensure the target directory exists (it should be $BATCH_TMPDIR)
     os.makedirs(local_dir, exist_ok=True)
     for key, gcs_path in gcs_paths.items():
         local_path = os.path.join(local_dir, os.path.basename(gcs_path))
-        _run_subprocess_with_log(['gsutil', 'cp', gcs_path, local_path], f'Copy {key}')
+        _run_subprocess_with_log(['gcloud', 'storage', 'cp', gcs_path, local_path], f'Copy {key}')
         local_paths[key] = local_path
     logger.info(f'Successfully copied all input files to {local_dir}.')
     return local_paths
@@ -106,7 +106,7 @@ def _find_and_upload_output(local_output_dir: str, gcs_output_path: str) -> str:
         )
     local_output_path = str(somalier_files[0])
 
-    _run_subprocess_with_log(['gsutil', 'mv', local_output_path, gcs_output_path], 'Upload output')
+    _run_subprocess_with_log(['gcloud', 'storage', 'mv', local_output_path, gcs_output_path], 'Upload output')
     return local_output_path
 
 

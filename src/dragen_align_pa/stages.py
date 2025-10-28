@@ -2,6 +2,7 @@ import sys
 from typing import TYPE_CHECKING
 
 import cpg_utils
+from cpg_flow.filetypes import CramPath
 from cpg_flow.inputs import get_multicohort
 from cpg_flow.stage import (
     CohortStage,
@@ -32,6 +33,7 @@ from dragen_align_pa.jobs import (
     manage_dragen_pipeline,
     prepare_ica_for_analysis,
     run_multiqc,
+    somalier_extract,
     upload_data_to_ica,
     upload_fastq_file_list,
     validate_md5_sums,
@@ -493,7 +495,60 @@ class DownloadDataFromIca(SequencingGroupStage):
         )
 
 
-@stage(required_stages=[DownloadDataFromIca])
+@stage(required_stages=[DownloadCramFromIca])  # Depends on CRAM being downloaded
+class SomalierExtract(SequencingGroupStage):
+    """
+    Run Somalier extract on CRAM files to generate fingerprints.
+    """
+
+    def expected_outputs(self, sequencing_group: SequencingGroup) -> cpg_utils.Path:
+        """
+        Expected Somalier fingerprint output file.
+        Uses SG ID for filename.
+        """
+        # Define the output path within the main QC output area
+        somalier_dir = sequencing_group.dataset.prefix() / GCP_FOLDER_FOR_ICA_DOWNLOAD / 'somalier'
+        return somalier_dir / f'{sequencing_group.id}.somalier'
+
+    def queue_jobs(
+        self,
+        sequencing_group: SequencingGroup,
+        inputs: StageInput,
+    ) -> StageOutput | None:
+        """
+        Queue a job to run somalier extract.
+        """
+        cram_path = inputs.as_path(
+            target=sequencing_group,
+            stage=DownloadCramFromIca,
+            key='cram',
+        )
+        crai_path = inputs.as_path(
+            target=sequencing_group,
+            stage=DownloadCramFromIca,
+            key='crai',
+        )
+
+        out_somalier_path = self.expected_outputs(sequencing_group)
+
+        job: PythonJob | None = somalier_extract.somalier_extract(
+            sequencing_group=sequencing_group,
+            cram_path=CramPath(cram_path, crai_path),
+            out_somalier_path=out_somalier_path,
+            overwrite=sequencing_group.forced or self.forced,
+        )
+
+        if job:
+            return self.make_outputs(
+                sequencing_group,
+                data=out_somalier_path,
+                jobs=job,
+            )
+        # If can_reuse returns None, job is skipped
+        return self.make_outputs(sequencing_group, data=out_somalier_path, skipped=True)
+
+
+@stage(required_stages=[DownloadDataFromIca, SomalierExtract])
 class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:  # pyright: ignore[reportIncompatibleMethodOverride]
         multiqc_data: str = output_path(f'{DRAGEN_VERSION}/qc/{cohort.name}_multiqc_data.json')
