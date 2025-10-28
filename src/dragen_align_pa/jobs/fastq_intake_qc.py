@@ -150,7 +150,7 @@ def _run(cohort: Cohort, outputs: dict[str, cpg_utils.Path]) -> cpg_utils.Path:
             path_parameters=path_parameters,
         )
 
-        folder_path: str = f'/{BUCKET_NAME}{config_retrieve(["ica", "data_prep", "output_folder"])}'
+        folder_path: str = f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}'
 
         md5_outputs_folder_id: str = _create_md5_output_folder(
             folder_path=folder_path,

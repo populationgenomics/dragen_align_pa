@@ -2,10 +2,9 @@ import os
 import shutil
 import subprocess
 
-from cpg_flow.resources import STANDARD
 from cpg_flow.targets import Cohort
 from cpg_utils import Path
-from cpg_utils.config import image_path
+from cpg_utils.config import get_driver_image
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
@@ -17,8 +16,8 @@ def _initialise_multiqc_job(cohort: Cohort) -> PythonJob:
         name='RunMultiQc',
         attributes=(cohort.get_job_attrs() or {} | {'tool': 'MultiQC'}),  # pyright: ignore[reportUnknownArgumentType]
     )
-    py_job.image(image_path('multiqc', '1.30-3'))  # Ensure this image has gcloud CLI
-    STANDARD.set_resources(j=py_job, ncpu=4, storage_gb=20)  # Increased storage slightly for safety
+    py_job.image(get_driver_image())
+    py_job.storage('10Gi')
     return py_job
 
 

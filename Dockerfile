@@ -35,7 +35,8 @@ COPY third_party third_party/
 RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
     && pip install . \
     && pip install third_party/popgen_cli-2.1.0-py3-none-any.whl \
-    && pip install typing-extensions==4.12.0
+    && pip install typing-extensions==4.12.0 \
+    && pip install multiqc==1.30
 
 RUN wget https://github.com/brentp/somalier/releases/download/v${SOMALIER_VERSION}/somalier && \
     chmod +x somalier && \
