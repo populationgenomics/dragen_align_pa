@@ -11,9 +11,10 @@ from icasdk.model.analysis_parameter_input import AnalysisParameterInput
 from icasdk.model.analysis_tag import AnalysisTag
 from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
+from icecream import ic
 from loguru import logger
 
-from dragen_align_pa import ica_utils  # <-- Changed
+from dragen_align_pa import ica_utils
 from dragen_align_pa.constants import ICA_REST_ENDPOINT
 
 
@@ -236,15 +237,17 @@ def run(
     with icasdk.ApiClient(configuration=configuration) as api_client:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         path_params: dict[str, str] = {'projectId': project_id}
-        analysis_run_id: str = submit_dragen_run(
-            cram_ica_fids_path=cram_ica_fids_path,
-            fastq_csv_list_file_path=fastq_csv_list_file_path,
-            fastq_ids_path=fastq_ids_path,
-            individual_fastq_file_list_paths=individual_fastq_file_list_paths,
-            ica_output_folder_id=analysis_output_fid['analysis_output_fid'],
-            project_id=path_params,
-            api_instance=api_instance,
-            sg_name=sg_name,
+        analysis_run_id: str = ic(
+            submit_dragen_run(
+                cram_ica_fids_path=cram_ica_fids_path,
+                fastq_csv_list_file_path=fastq_csv_list_file_path,
+                fastq_ids_path=fastq_ids_path,
+                individual_fastq_file_list_paths=individual_fastq_file_list_paths,
+                ica_output_folder_id=analysis_output_fid['analysis_output_fid'],
+                project_id=path_params,
+                api_instance=api_instance,
+                sg_name=sg_name,
+            )
         )
 
         logger.info(f'Submitted ICA run with pipeline ID: {analysis_run_id}')
