@@ -35,7 +35,7 @@ def _initalise_upload_job(sequencing_group: SequencingGroup) -> PythonJob:
 
     upload_job.image(image=get_driver_image())
     # Storage is requested to hold the CRAM file locally during transfer
-    upload_job.storage(utils.calculate_needed_storage(cram=str(sequencing_group.cram)))
+    upload_job.storage(utils.calculate_needed_storage(cram_path=sequencing_group.cram.path))
     upload_job.memory('8Gi')
     upload_job.spot(is_spot=False)
 

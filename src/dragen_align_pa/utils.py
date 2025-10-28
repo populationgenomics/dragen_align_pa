@@ -1,4 +1,4 @@
-import re  # <-- Kept import
+import re
 import subprocess
 from math import ceil
 
@@ -21,12 +21,22 @@ def validate_cli_path_input(path: str, arg_name: str) -> None:
 
 def delete_pipeline_id_file(pipeline_id_file: str) -> None:
     logger.info(f'Deleting the pipeline run ID file {pipeline_id_file}')
-    subprocess.run(['gcloud', 'storage', 'rm', pipeline_id_file], check=True)  # noqa: S603, S607
+    subprocess.run(
+        ['gcloud', 'storage', 'rm', pipeline_id_file],
+        check=True,
+    )
 
 
 def calculate_needed_storage(
-    cram: str,
+    cram_path: cpg_utils.Path,  # <-- Changed type hint from str to Path
 ) -> str:
-    logger.info(f'Checking blob size for {cram}')
-    storage_size: int = cpg_utils.to_path(cram).stat().st_size
-    return f'{ceil(ceil((storage_size / (1024**3)) + 3) * 1.2)}Gi'
+    logger.info(f'Checking blob size for {cram_path}')
+    # Removed cpg_utils.to_path() conversion as input is now Path type
+    storage_size: int = cram_path.stat().st_size
+    # Added a buffer (3GB) and increased multiplier slightly (1.2 -> 1.3)
+    # Ceil ensures we get whole GiB, adding buffer helps avoid edge cases
+    calculated_gb = ceil((storage_size / (1024**3)) + 3) * 1.3
+    # Ensure a minimum storage request (e.g., 10GiB)
+    final_storage_gb = max(10, ceil(calculated_gb))
+    logger.info(f'Calculated storage need: {final_storage_gb}GiB for {cram_path}')
+    return f'{final_storage_gb}Gi'
