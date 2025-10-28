@@ -135,6 +135,7 @@ def submit_dragen_run(
                     ),
                 ),
             ]
+            logger.info(f'Fastq input is {fastq_input}')
     else:
         raise ValueError('No valid input provided for either CRAM or FASTQ files.')
 
