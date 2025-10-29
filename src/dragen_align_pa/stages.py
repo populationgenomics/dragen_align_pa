@@ -90,7 +90,6 @@ class FastqIntakeQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
         intake_qc_results: dict[str, cpg_utils.Path] = {
             'fastq_ids_outpath': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_fastq_ids.txt',
-            # 'ica_md5sum_file': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_ica_md5sum.md5sum',
             'md5sum_pipeline_run': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_ica_md5sum_pipeline.json',
             'md5sum_pipeline_success': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_md5_pipeline_success',
             f'{cohort.name}_md5_errors': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_md5_errors.log',
