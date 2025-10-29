@@ -2,8 +2,8 @@ import cpg_utils
 import pandas as pd
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve, get_driver_image
-from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
+from loguru import logger
 
 from dragen_align_pa import utils
 from dragen_align_pa.constants import BUCKET, GCP_FOLDER_FOR_ICA_PREP
@@ -14,44 +14,124 @@ def validate_md5_sums(
     cohort: Cohort,
     outputs: cpg_utils.Path,
 ) -> PythonJob:
+    """
+    Creates a PythonJob to validate MD5 sums from ICA against a manifest.
+    """
     job: PythonJob = utils.initialise_python_job(
         job_name='ValidateMd5Sums',
         target=cohort,
-        tool_name='md5sum',
+        tool_name='validate-md5',
     )
     job.image(image=get_driver_image())
 
-    validation_success: str = job.call(
+    job.call(
         _run,
         ica_md5sum_file_path=ica_md5sum_file_path,
         cohort_name=cohort.name,
-    ).as_str()
-
-    get_batch().write_output(resource=validation_success, dest=outputs)
+        success_output_path=outputs,  # Pass the output path here
+    )
 
     return job
 
 
-def _run(ica_md5sum_file_path: cpg_utils.Path, cohort_name: str) -> str:
+def _run(
+    ica_md5sum_file_path: cpg_utils.Path,
+    cohort_name: str,
+    success_output_path: cpg_utils.Path,  # New argument
+) -> None:  # Changed return type to None
+    """
+    Compares MD5 sums from ICA pipeline output with the manifest.
+    Writes an error log if mismatches are found and raises an Exception.
+    Writes a success file if all checksums match.
+    """
     manifest_file_path: cpg_utils.Path = config_retrieve(['workflow', 'manifest_gcp_path'])
-    with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
-        supplied_manifest_data: pd.DataFrame = pd.read_csv(
-            manifest_fh, usecols=['Filenames', 'Checksum'], dtype={'Filenames': 'object', 'Checksum': 'object'}
+    mismatched_files: list[str] = []
+    error_log_path: cpg_utils.Path = BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort_name}_md5_errors.log'
+
+    try:
+        # Load manifest data
+        with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
+            supplied_manifest_data: pd.DataFrame = pd.read_csv(
+                manifest_fh,
+                usecols=['Filenames', 'Checksum'],
+                dtype={'Filenames': str, 'Checksum': str},  # Use str dtype
+            ).set_index('Filenames')  # Use filename as index for easier lookup
+
+        # Load ICA MD5 data
+        with ica_md5sum_file_path.open('r') as ica_md5_fh:
+            ica_md5_data: pd.DataFrame = pd.read_csv(
+                ica_md5_fh,
+                sep=r'\s+',  # Matches one or more whitespace chars
+                header=None,  # Explicitly state no header
+                names=['IcaChecksum', 'IcaRawPath'],  # Use descriptive names
+                dtype={'IcaChecksum': str, 'IcaRawPath': str},
+            )
+            # Extract filename from the path provided by ICA MD5 tool
+            # Assuming format like '/path/to/filename.fastq.gz'
+            ica_md5_data['Filenames'] = ica_md5_data['IcaRawPath'].str.split('/').str[-1]
+            ica_md5_data = ica_md5_data.set_index('Filenames')[['IcaChecksum']]  # Keep only checksum, index by filename
+
+        # Merge (outer join handles files present in only one list)
+        merged_checksum_data: pd.DataFrame = supplied_manifest_data.join(
+            ica_md5_data,
+            how='outer',  # Keep all files from both lists
         )
-    with ica_md5sum_file_path.open('r') as ica_md5_fh:
-        ica_md5_data: pd.DataFrame = pd.read_csv(
-            ica_md5_fh,
-            sep=r'\s+',
-            names=['IcaChecksum', 'Filenames'],
-            dtype={'IcaChecksum': 'object', 'Filenames': 'object'},
-        )
-    merged_checksum_data: pd.DataFrame = supplied_manifest_data.merge(ica_md5_data, on='Filenames', how='outer')
-    merged_checksum_data['Match'] = merged_checksum_data['Checksum'].equals(merged_checksum_data['IcaChecksum'])
-    if not merged_checksum_data['Match'].all():
-        error_log: cpg_utils.Path = BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort_name}_md5_errors.log'
-        with error_log.open() as error_fh:
-            merged_checksum_data[~merged_checksum_data['Match']]['Filenames'].map(lambda x: error_fh.write(x))
+
+        # Iterate and check for mismatches or missing files
+        for filename, row in merged_checksum_data.iterrows():
+            manifest_checksum = row['Checksum']
+            ica_checksum = row['IcaChecksum']
+
+            if pd.isna(manifest_checksum):
+                logger.error(f"File '{filename}' found in ICA output but MISSING from manifest.")
+                mismatched_files.append(f'{filename} (MISSING FROM MANIFEST)')
+            elif pd.isna(ica_checksum):
+                logger.error(f"File '{filename}' found in manifest but MISSING from ICA output.")
+                mismatched_files.append(f'{filename} (MISSING FROM ICA OUTPUT)')
+            elif manifest_checksum.strip().lower() != ica_checksum.strip().lower():  # Case-insensitive compare
+                logger.error(
+                    f"Checksum MISMATCH for '{filename}': Manifest='{manifest_checksum}', ICA='{ica_checksum}'"
+                )
+                mismatched_files.append(f'{filename} (CHECKSUM MISMATCH)')
+            else:
+                # Checksums match
+                logger.info(f"Checksum OK for '{filename}'")
+
+    except FileNotFoundError as e:
+        logger.error(f'Input file not found during MD5 validation: {e}')
+        raise
+    except pd.errors.EmptyDataError as e:
+        logger.error(f'Input file is empty or invalid during MD5 validation: {e}')
+        raise
+    except Exception as e:
+        logger.error(f'An unexpected error occurred during MD5 validation: {e}')
+        raise
+
+    # Handle results
+    if mismatched_files:
+        logger.error(f'{len(mismatched_files)} files failed MD5 validation.')
+        # Write detailed error log
+        try:
+            with error_log_path.open('w') as error_fh:
+                error_fh.write('Files with MD5 validation errors:\n')
+                error_fh.write('===================================\n')
+                for line in mismatched_files:
+                    error_fh.write(f'- {line}\n')
+            logger.info(f'Detailed error report written to {error_log_path}')
+        except Exception as log_e:
+            logger.error(f'Failed to write MD5 error log to {error_log_path}: {log_e}')
+
+        # Raise a clear exception
         raise Exception(
-            f'The following files have non-matching checksums: {merged_checksum_data[~merged_checksum_data["Match"]]["Filenames"].map(lambda x: print(x))}. Check the log file at {error_log}.'  # noqa: E501
+            f'{len(mismatched_files)} files failed MD5 validation. Check the log file at {error_log_path} for details.'
         )
-    return 'SUCCESS'
+    # All files validated successfully, write the success file
+    logger.info('All MD5 checksums validated successfully.')
+    try:
+        with success_output_path.open('w') as success_fh:
+            success_fh.write('SUCCESS')
+        logger.info(f'Success file written to {success_output_path}')
+    except Exception as success_e:
+        logger.error(f'Failed to write MD5 success file to {success_output_path}: {success_e}')
+        # Raise an error here as well, because the stage expects this file
+        raise

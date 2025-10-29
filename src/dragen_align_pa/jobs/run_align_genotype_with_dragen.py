@@ -1,5 +1,5 @@
 import json
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 import cpg_utils
 import icasdk
@@ -16,6 +16,121 @@ from loguru import logger
 
 from dragen_align_pa import ica_utils
 from dragen_align_pa.constants import ICA_REST_ENDPOINT
+
+# Input Data Parameter Codes
+PARAM_CODE_CRAMS: Final = 'crams'
+PARAM_CODE_CRAM_REFERENCE: Final = 'cram_reference'
+PARAM_CODE_FASTQS: Final = 'fastqs'
+PARAM_CODE_FASTQ_LIST: Final = 'fastq_list'
+PARAM_CODE_REF_TAR: Final = 'ref_tar'
+PARAM_CODE_QC_CROSS_CONT_VCF: Final = 'qc_cross_cont_vcf'
+PARAM_CODE_QC_COVERAGE_REGION_1: Final = 'qc_coverage_region_1'
+PARAM_CODE_QC_COVERAGE_REGION_2: Final = 'qc_coverage_region_2'
+
+# Input Parameter Codes (Settings)
+PARAM_CODE_ADDITIONAL_ARGS: Final = 'additional_args'
+PARAM_CODE_ENABLE_MAP_ALIGN: Final = 'enable_map_align'
+PARAM_CODE_ENABLE_MAP_ALIGN_OUTPUT: Final = 'enable_map_align_output'
+PARAM_CODE_OUTPUT_FORMAT: Final = 'output_format'
+PARAM_CODE_ENABLE_DUPLICATE_MARKING: Final = 'enable_duplicate_marking'
+PARAM_CODE_ENABLE_VARIANT_CALLER: Final = 'enable_variant_caller'
+PARAM_CODE_VC_EMIT_REF_CONFIDENCE: Final = 'vc_emit_ref_confidence'
+PARAM_CODE_VC_ENABLE_VCF_OUTPUT: Final = 'vc_enable_vcf_output'
+PARAM_CODE_ENABLE_CNV: Final = 'enable_cnv'
+PARAM_CODE_CNV_SEGMENTATION_MODE: Final = 'cnv_segmentation_mode'
+PARAM_CODE_ENABLE_SV: Final = 'enable_sv'
+PARAM_CODE_ENABLE_CYP2D6: Final = 'enable_cyp2d6'
+PARAM_CODE_REPEAT_GENOTYPE_ENABLE: Final = 'repeat_genotype_enable'
+PARAM_CODE_DRAGEN_REPORTS: Final = 'dragen_reports'
+PARAM_CODE_VC_GVCF_GQ_BANDS: Final = 'vc-gvcf-gq-bands'
+
+
+def _prepare_fastq_inputs(
+    sg_name: str,
+    fastq_csv_list_file_path: cpg_utils.Path,
+    fastq_ids_path: cpg_utils.Path,
+    individual_fastq_file_list_paths: cpg_utils.Path,
+) -> tuple[list[AnalysisDataInput], list[AnalysisParameterInput]]:
+    """
+    Reads input files to find ICA FASTQ file IDs and the FASTQ list file ID,
+    then constructs the specific ICA input objects for FASTQ mode.
+    """
+    logger.info(f'Preparing FASTQ inputs for sequencing group {sg_name}')
+    fastq_file_list_id: str | None = None
+
+    # Find the FASTQ List CSV file ID for this SG
+    with fastq_csv_list_file_path.open() as fastq_list_file_handle:
+        for line in fastq_list_file_handle:
+            if sg_name in line:
+                try:
+                    fastq_file_list_id = line.split(':')[1].strip()
+                    break  # Found the ID for this SG
+                except IndexError:
+                    logger.warning(f'Malformed line in {fastq_csv_list_file_path}: {line.strip()}')
+                    continue  # Skip malformed lines
+
+    if not fastq_file_list_id:
+        # This was the original error cause
+        raise ValueError(f'Could not find FASTQ List file ID for {sg_name} in {fastq_csv_list_file_path}')
+
+    # Find the individual FASTQ file IDs for this SG
+    fastq_ica_ids: list[str] = []
+    try:
+        with individual_fastq_file_list_paths.open() as individual_fastq_file_list_handle:
+            individual_fastq_csv_df: pd.DataFrame = pd.read_csv(
+                individual_fastq_file_list_handle,
+                sep=',',
+            )
+        with fastq_ids_path.open() as fastq_ids_handle:
+            fastq_ica_ids_df: pd.DataFrame = pd.read_csv(
+                fastq_ids_handle,
+                sep=r'\s+',  # Assumes tab or space separated ID<whitespace>Name
+                header=None,  # Explicitly state no header
+                names=['ica_id', 'fastq_name'],
+                dtype={'ica_id': str, 'fastq_name': str},  # Ensure string type
+            )
+
+            # Filter the ICA ID dataframe based on filenames present in the SG's FASTQ list CSV
+            relevant_filenames = set(individual_fastq_csv_df['Read1File'].tolist()) | set(
+                individual_fastq_csv_df['Read2File'].tolist()
+            )
+
+            fastq_ica_ids = fastq_ica_ids_df[fastq_ica_ids_df['fastq_name'].isin(relevant_filenames)]['ica_id'].tolist()
+
+            # Debugging and validation
+            ic(sg_name, fastq_file_list_id, len(fastq_ica_ids))
+            if not fastq_ica_ids:
+                logger.warning(
+                    f'No matching FASTQ file IDs found for {sg_name} using files in {individual_fastq_file_list_paths}'
+                )
+                # Depending on requirements, you might want to raise an error here instead
+
+    except FileNotFoundError as e:
+        logger.error(f'Required input file not found: {e}')
+        raise
+    except pd.errors.EmptyDataError as e:
+        logger.error(f'Input CSV file is empty or invalid: {e}')
+        raise
+    except Exception as e:
+        logger.error(f'Error processing FASTQ input files for {sg_name}: {e}')
+        raise
+
+    # Construct the ICA input objects
+    fastq_data_inputs = [
+        AnalysisDataInput(parameterCode=PARAM_CODE_FASTQS, dataIds=fastq_ica_ids),
+        AnalysisDataInput(
+            parameterCode=PARAM_CODE_FASTQ_LIST,
+            dataIds=[fastq_file_list_id],  # Must be a list containing the ID
+        ),
+    ]
+    fastq_parameter_inputs = [
+        AnalysisParameterInput(
+            code=PARAM_CODE_ADDITIONAL_ARGS,
+            value=("--qc-coverage-reports-1 cov_report,cov_report --qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "),
+        ),
+    ]
+
+    return fastq_data_inputs, fastq_parameter_inputs
 
 
 def submit_dragen_run(
@@ -45,15 +160,16 @@ def submit_dragen_run(
         f'Loaded Dragen ICA configuration values, user reference: {user_reference}',
     )
 
-    cram_input: list[AnalysisDataInput] | None = []
-    cram_parameters: list[AnalysisParameterInput] | None = []
-    fastq_input: list[AnalysisDataInput] | None = []
-    fastq_parameters: list[AnalysisParameterInput] | None = []
+    specific_data_inputs: list[AnalysisDataInput] = []
+    specific_parameter_inputs: list[AnalysisParameterInput] = []
 
     if cram_ica_fids_path:
         logger.info(f'Using CRAM input for sequencing group {sg_name}')
         with cram_ica_fids_path.open() as cram_ica_fids_handle:
             cram_ica_fids: dict[str, str] = json.load(cram_ica_fids_handle)
+            if 'cram_fid' not in cram_ica_fids:
+                raise ValueError(f"Missing 'cram_fid' in {cram_ica_fids_path}")
+
             cram_reference_id: str = config_retrieve(
                 [
                     'ica',
@@ -61,19 +177,19 @@ def submit_dragen_run(
                     config_retrieve(['ica', 'cram_references', 'old_cram_reference']),
                 ],
             )
-            cram_input = [
+            specific_data_inputs = [
                 AnalysisDataInput(
-                    parameterCode='crams',
+                    parameterCode=PARAM_CODE_CRAMS,
                     dataIds=[cram_ica_fids['cram_fid']],
                 ),
                 AnalysisDataInput(
-                    parameterCode='cram_reference',
+                    parameterCode=PARAM_CODE_CRAM_REFERENCE,
                     dataIds=[cram_reference_id],
                 ),
             ]
-            cram_parameters = [
+            specific_parameter_inputs = [
                 AnalysisParameterInput(
-                    code='additional_args',
+                    code=PARAM_CODE_ADDITIONAL_ARGS,
                     value=(
                         '--read-trimmers polyg '
                         '--soft-read-trimmers none '
@@ -84,61 +200,58 @@ def submit_dragen_run(
                         '--qc-coverage-count-soft-clipped-bases true '
                         '--qc-coverage-reports-1 cov_report,cov_report '
                         "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
-                        '--vc-gvcf-gq-bands 13 20 30 40'
                     ),
                 ),
             ]
-    # Need the gcs path to the fastq list file to extract the fastq names from.
     elif fastq_csv_list_file_path and fastq_ids_path and individual_fastq_file_list_paths:
         logger.info(f'Using FASTQ input for sequencing group {sg_name}')
-        fastq_file_list_id: str | None = None
-        with fastq_csv_list_file_path.open() as fastq_list_file_handle:
-            for line in fastq_list_file_handle:
-                if sg_name not in line:
-                    continue
-                fastq_file_list_id = line.split(':')[1].strip()
-        with individual_fastq_file_list_paths.open() as individual_fastq_file_list_handle:
-            # Load the csv into a dataframe and filter the fastq_list_file for the fastqs that match the csv
-            individual_fastq_csv_df: pd.DataFrame = pd.read_csv(
-                individual_fastq_file_list_handle,
-                sep=',',
-            )
-        with fastq_ids_path.open() as fastq_ids_handle:
-            fastq_ica_ids_df: pd.DataFrame = pd.read_csv(
-                fastq_ids_handle,
-                sep=r'\s+',
-                names=['ica_id', 'fastq_name'],
-            )
-            fastq_ica_ids: list[str] = fastq_ica_ids_df[
-                fastq_ica_ids_df['fastq_name'].isin(
-                    individual_fastq_csv_df['Read1File'].tolist(),
-                )
-                | fastq_ica_ids_df['fastq_name'].isin(
-                    individual_fastq_csv_df['Read2File'].tolist(),
-                )
-            ]['ica_id'].tolist()
-            ic(sg_name, fastq_ica_ids, fastq_file_list_id)
-            fastq_input = [
-                AnalysisDataInput(parameterCode='fastqs', dataIds=fastq_ica_ids),
-                AnalysisDataInput(
-                    parameterCode='fastq_list',
-                    dataIds=[fastq_file_list_id],
-                ),
-            ]
-            fastq_parameters = [
-                AnalysisParameterInput(
-                    code='additional_args',
-                    value=(
-                        '--qc-coverage-reports-1 cov_report,cov_report '
-                        "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
-                        '--vc-gvcf-gq-bands 13 20 30 40 '
-                    ),
-                ),
-            ]
+        specific_data_inputs, specific_parameter_inputs = _prepare_fastq_inputs(
+            sg_name=sg_name,
+            fastq_csv_list_file_path=fastq_csv_list_file_path,
+            fastq_ids_path=fastq_ids_path,
+            individual_fastq_file_list_paths=individual_fastq_file_list_paths,
+        )
     else:
-        raise ValueError('No valid input provided for either CRAM or FASTQ files.')
+        raise ValueError('No valid input files provided for either CRAM or FASTQ mode.')
 
-    header_params: dict[Any, Any] = {}
+    # Construct the common parts of the analysis body
+    common_data_inputs: list[AnalysisDataInput] = [
+        AnalysisDataInput(parameterCode=PARAM_CODE_REF_TAR, dataIds=[dragen_ht_id]),
+        AnalysisDataInput(
+            parameterCode=PARAM_CODE_QC_CROSS_CONT_VCF,
+            dataIds=[qc_cross_cont_vcf_id],
+        ),
+        AnalysisDataInput(
+            parameterCode=PARAM_CODE_QC_COVERAGE_REGION_1,
+            dataIds=[qc_cov_region_1_id],
+        ),
+        AnalysisDataInput(
+            parameterCode=PARAM_CODE_QC_COVERAGE_REGION_2,
+            dataIds=[qc_cov_region_2_id],
+        ),
+    ]
+
+    common_parameter_inputs: list[AnalysisParameterInput] = [
+        AnalysisParameterInput(code=PARAM_CODE_ENABLE_MAP_ALIGN, value='true'),
+        AnalysisParameterInput(code=PARAM_CODE_ENABLE_MAP_ALIGN_OUTPUT, value='true'),
+        AnalysisParameterInput(code=PARAM_CODE_OUTPUT_FORMAT, value='CRAM'),
+        AnalysisParameterInput(code=PARAM_CODE_ENABLE_DUPLICATE_MARKING, value='true'),
+        AnalysisParameterInput(code=PARAM_CODE_ENABLE_VARIANT_CALLER, value='true'),
+        AnalysisParameterInput(code=PARAM_CODE_VC_EMIT_REF_CONFIDENCE, value='GVCF'),
+        AnalysisParameterInput(code=PARAM_CODE_VC_ENABLE_VCF_OUTPUT, value='false'),
+        AnalysisParameterInput(code=PARAM_CODE_ENABLE_CNV, value='true'),
+        AnalysisParameterInput(code=PARAM_CODE_CNV_SEGMENTATION_MODE, value='SLM'),
+        AnalysisParameterInput(code=PARAM_CODE_ENABLE_SV, value='true'),
+        AnalysisParameterInput(code=PARAM_CODE_ENABLE_CYP2D6, value='true'),
+        AnalysisParameterInput(code=PARAM_CODE_REPEAT_GENOTYPE_ENABLE, value='true'),
+        AnalysisParameterInput(code=PARAM_CODE_DRAGEN_REPORTS, value='false'),
+        AnalysisParameterInput(code=PARAM_CODE_VC_GVCF_GQ_BANDS, value='13 20 30 40'),
+    ]
+
+    # Combine common and specific inputs/parameters
+    all_data_inputs: list[AnalysisDataInput] = common_data_inputs + specific_data_inputs
+    all_parameter_inputs: list[AnalysisParameterInput] = common_parameter_inputs + specific_parameter_inputs
+
     body = CreateNextflowAnalysis(
         userReference=user_reference,
         pipelineId=dragen_pipeline_id,
@@ -149,42 +262,11 @@ def submit_dragen_run(
         ),
         outputParentFolderId=ica_output_folder_id,
         analysisInput=NextflowAnalysisInput(
-            inputs=[
-                AnalysisDataInput(parameterCode='ref_tar', dataIds=[dragen_ht_id]),
-                AnalysisDataInput(
-                    parameterCode='qc_cross_cont_vcf',
-                    dataIds=[qc_cross_cont_vcf_id],
-                ),
-                AnalysisDataInput(
-                    parameterCode='qc_coverage_region_1',
-                    dataIds=[qc_cov_region_1_id],
-                ),
-                AnalysisDataInput(
-                    parameterCode='qc_coverage_region_2',
-                    dataIds=[qc_cov_region_2_id],
-                ),
-                *cram_input,
-                *fastq_input,
-            ],
-            parameters=[
-                AnalysisParameterInput(code='enable_map_align', value='true'),
-                AnalysisParameterInput(code='enable_map_align_output', value='true'),
-                AnalysisParameterInput(code='output_format', value='CRAM'),
-                AnalysisParameterInput(code='enable_duplicate_marking', value='true'),
-                AnalysisParameterInput(code='enable_variant_caller', value='true'),
-                AnalysisParameterInput(code='vc_emit_ref_confidence', value='GVCF'),
-                AnalysisParameterInput(code='vc_enable_vcf_output', value='false'),
-                AnalysisParameterInput(code='enable_cnv', value='true'),
-                AnalysisParameterInput(code='cnv_segmentation_mode', value='SLM'),
-                AnalysisParameterInput(code='enable_sv', value='true'),
-                AnalysisParameterInput(code='enable_cyp2d6', value='true'),
-                AnalysisParameterInput(code='repeat_genotype_enable', value='true'),
-                AnalysisParameterInput(code='dragen_reports', value='false'),
-                *cram_parameters,
-                *fastq_parameters,
-            ],
+            inputs=all_data_inputs,
+            parameters=all_parameter_inputs,
         ),
     )
+    header_params: dict[Any, Any] = {}
     try:
         api_response = api_instance.create_nextflow_analysis(  # type: ignore[ReportUnknownVariableType]
             path_params=project_id,
