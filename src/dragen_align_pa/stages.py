@@ -581,8 +581,8 @@ class SomalierExtract(SequencingGroupStage):
 @stage(required_stages=[DownloadDataFromIca, SomalierExtract])
 class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:  # pyright: ignore[reportIncompatibleMethodOverride]
-        multiqc_data: str = output_path(f'{DRAGEN_VERSION}/qc/{cohort.name}_multiqc_data.json')
-        multiqc_report: str = output_path(f'{DRAGEN_VERSION}/qc/{cohort.name}_multiqc_report.html', category='web')
+        multiqc_data: str = output_path(f'ica/{DRAGEN_VERSION}/qc/{cohort.name}_multiqc_data.json')
+        multiqc_report: str = output_path(f'ica/{DRAGEN_VERSION}/qc/{cohort.name}_multiqc_report.html', category='web')
         return {
             'multiqc_data': multiqc_data,
             'multiqc_report': multiqc_report,
@@ -614,28 +614,46 @@ class RunMultiQc(CohortStage):
         DownloadMlrGvcfFromIca,
         DownloadDataFromIca,
         RunMultiQc,
+        FastqIntakeQc,
     ]
 )
-class DeleteDataInIca(SequencingGroupStage):
+class DeleteDataInIca(CohortStage):
     """
-    Delete all the data in ICA for a dataset, so we don't pay storage costs once processing is finished
+    Delete all the data in ICA for a dataset, so we don't pay storage costs
+    once processing is finished. This includes generated analysis folders
+    and the original source data (uploaded CRAMs or FASTQs).
     """
 
-    def expected_outputs(self, sequencing_group: SequencingGroup) -> cpg_utils.Path:
-        bucket_name: cpg_utils.Path = sequencing_group.dataset.prefix()
-        return bucket_name / GCP_FOLDER_FOR_ICA_PREP / 'placeholder_for_delete.txt'
+    def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
+        bucket_name: cpg_utils.Path = cohort.dataset.prefix()
+        # Changed to cohort-level placeholder
+        return bucket_name / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_delete_placeholder.txt'
 
-    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
-        # Inputs from previous stage
-        ica_fid_path: cpg_utils.Path = inputs.as_path(target=sequencing_group, stage=PrepareIcaForDragenAnalysis)
-        alignment_fid_paths: cpg_utils.Path = inputs.as_path(target=sequencing_group, stage=UploadDataToIca)
-
-        outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
-
-        ica_delete_job: PythonJob = delete_data_in_ica.delete_data_in_ica(
-            sequencing_group=sequencing_group,
-            ica_fid_path=ica_fid_path,
-            alignment_fid_paths=alignment_fid_paths,
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+        # Get all analysis output folder FIDs (generated data)
+        analysis_output_fids_paths: dict[str, cpg_utils.Path] = inputs.as_dict(
+            target=cohort, stage=PrepareIcaForDragenAnalysis
         )
 
-        return self.make_outputs(target=sequencing_group, data=outputs, jobs=ica_delete_job)
+        # Initialize paths for source data
+        cram_fid_paths_dict: dict[str, cpg_utils.Path] | None = None
+        fastq_ids_list_path: cpg_utils.Path | None = None
+
+        # Conditionally get source data FIDs based on READS_TYPE
+        if READS_TYPE == 'cram':
+            # Get all uploaded CRAM FIDs
+            cram_fid_paths_dict = inputs.as_path_by_target(stage=UploadDataToIca)
+        elif READS_TYPE == 'fastq':
+            # Get the path to the list of FASTQ FIDs
+            fastq_ids_list_path = inputs.as_path(target=cohort, stage=FastqIntakeQc, key='fastq_ids_outpath')
+
+        outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
+
+        ica_delete_job: PythonJob = delete_data_in_ica.delete_data_in_ica(
+            cohort=cohort,
+            analysis_output_fids_paths=analysis_output_fids_paths,
+            cram_fid_paths_dict=cram_fid_paths_dict,
+            fastq_ids_list_path=fastq_ids_list_path,
+        )
+
+        return self.make_outputs(target=cohort, data=outputs, jobs=ica_delete_job)
