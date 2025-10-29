@@ -7,7 +7,6 @@ pipeline status checking, and data streaming.
 import hashlib
 import json
 import os
-import subprocess
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 if TYPE_CHECKING:
@@ -23,6 +22,7 @@ from icasdk.apis.tags import project_analysis_api, project_data_api
 from icasdk.model.create_data import CreateData
 from loguru import logger
 
+from dragen_align_pa import utils
 from dragen_align_pa.constants import ICA_CLI_SETUP
 
 # --- Secret Management ---
@@ -50,40 +50,6 @@ def get_ica_secrets() -> dict[Literal['projectID', 'apiKey'], str]:
     return json.loads(response.payload.data.decode('UTF-8'))
 
 
-# --- CLI Interaction ---
-
-
-def run_cli_command(
-    command: str | list[str],
-    capture_output: bool = False,
-    shell: bool = False,
-) -> subprocess.CompletedProcess:
-    """
-    Runs a subprocess command with robust error logging.
-    """
-    executable = '/bin/bash' if shell else None
-    cmd_str = command if isinstance(command, str) else ' '.join(command)
-
-    try:
-        logger.info(f'Running command: {cmd_str}')
-        return subprocess.run(
-            command,
-            check=True,
-            text=True,
-            capture_output=capture_output,
-            shell=shell,
-            executable=executable,
-        )
-    except subprocess.CalledProcessError as e:
-        logger.error(f'Command failed with return code {e.returncode}: {cmd_str}')
-        if e.stdout:
-            logger.error(f'STDOUT: {e.stdout.strip()}')
-        if e.stderr:
-            logger.error(f'STDERR: {e.stderr.strip()}')
-        # Re-raise as a generic exception to fail the job
-        raise ValueError('A subprocess command failed. See logs.') from e
-
-
 def find_ica_file_path_by_name(parent_folder: str, file_name: str) -> str:
     """
     Finds a file in ICA using the CLI and returns its full `details.path`.
@@ -103,7 +69,7 @@ def find_ica_file_path_by_name(parent_folder: str, file_name: str) -> str:
         '-o',
         'json',
     ]
-    result = run_cli_command(command, capture_output=True)
+    result = utils.run_subprocess_with_log(command, f'Find ICA file {file_name}')
     try:
         data = json.loads(result.stdout)
         if not data.get('items'):
@@ -633,7 +599,7 @@ def perform_upload_if_needed(cram_status: str | None, paths: dict[str, str]) -> 
     # Authenticate ICA CLI
     logger.info('Authenticating ICA CLI...')
     # This command uses shell=True, but ICA_CLI_SETUP is a trusted constant
-    run_cli_command(ICA_CLI_SETUP, shell=True)
+    utils.run_subprocess_with_log(ICA_CLI_SETUP, 'Authenticate ICA CLI', shell=True)
 
     local_dir = os.path.dirname(paths['local_cram_path'])
     if not os.path.exists(local_dir):
@@ -644,14 +610,15 @@ def perform_upload_if_needed(cram_status: str | None, paths: dict[str, str]) -> 
     logger.info(
         f'Downloading {paths["cram_name"]} from GCS to {paths["local_cram_path"]}...',
     )
-    run_cli_command(
+    utils.run_subprocess_with_log(
         ['gcloud', 'storage', 'cp', paths['gcs_cram_path'], paths['local_cram_path']],
+        f'Download {paths["cram_name"]}',
     )
 
     logger.info(
         f'Uploading {paths["local_cram_path"]} to ICA (using CLI for large file)...',
     )
-    run_cli_command(
+    utils.run_subprocess_with_log(
         [
             'icav2',
             'projectdata',
@@ -659,6 +626,7 @@ def perform_upload_if_needed(cram_status: str | None, paths: dict[str, str]) -> 
             paths['local_cram_path'],
             paths['ica_folder_path'],
         ],
+        f'Upload {paths["cram_name"]}',
     )
 
     # Clean up the large local file

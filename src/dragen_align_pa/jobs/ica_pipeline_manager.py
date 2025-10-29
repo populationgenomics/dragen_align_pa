@@ -7,24 +7,22 @@ runs (submission, monitoring, cancellation, and failure handling) for a cohort.
 
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 import cpg_utils
-from cpg_flow.targets import Cohort
+from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import config_retrieve, try_get_ar_guid
 from loguru import logger
-
-if TYPE_CHECKING:
-    from cpg_flow.targets.sequencing_group import SequencingGroup
 
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline
 from dragen_align_pa.utils import delete_pipeline_id_file
 
+ProcessingTarget = Cohort | SequencingGroup
+
 
 def manage_ica_pipeline_loop(  # noqa: PLR0915
-    cohort: Cohort,
+    targets_to_process: Sequence[ProcessingTarget],
     outputs: dict[str, cpg_utils.Path],
     pipeline_name: str,
     is_mlr_pipeline: bool,
@@ -39,7 +37,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
     Generic loop to manage ICA pipeline execution for a cohort.
 
     Args:
-        cohort: The cohort to process.
+        targets_to_process: The list of targets (Cohort or SequencingGroup) to process.
         outputs: The outputs dictionary for the stage.
         api_root: The ICA API root endpoint.
         pipeline_name: Name of the pipeline (e.g., "Dragen", "MLR") for logging.
@@ -57,10 +55,11 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
         allow_retry: Whether to retry a failed pipeline once.
         sleep_time_seconds: Time to sleep between polling loops.
     """
-    logger.info(f'Starting {pipeline_name} management job for {cohort.name}')
+    cohort_name = targets_to_process[0].name if targets_to_process else 'unknown'
+    logger.info(f'Starting {pipeline_name} management job for {cohort_name}')
     logger.add(sink='tmp_errors.log', format='{time} - {level} - {message}', level='ERROR')
     logger.error(
-        f'Error logging for {pipeline_name} {cohort.name} run on {datetime.now()}'  # noqa: DTZ005
+        f'Error logging for {pipeline_name} {cohort_name} run on {datetime.now()}'  # noqa: DTZ005
     )
 
     ar_guid: str = try_get_ar_guid()
@@ -70,20 +69,23 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
     retried_pipelines: list[str] = []
     completed_pipelines: list[str] = []
 
-    sequencing_groups: list[SequencingGroup] = cohort.get_sequencing_groups()
-    total_sgs: int = len(sequencing_groups)
+    total_targets: int = len(targets_to_process)
 
-    while (len(completed_pipelines) + len(cancelled_pipelines) + len(failed_pipelines)) < total_sgs:
-        for sequencing_group in sequencing_groups:
-            sg_name: str = sequencing_group.name
-            pipeline_id_arguid_file: cpg_utils.Path = outputs[pipeline_id_file_key_template.format(sg_name=sg_name)]
-            pipeline_success_file: cpg_utils.Path = outputs[success_file_key_template.format(sg_name=sg_name)]
+    while (len(completed_pipelines) + len(cancelled_pipelines) + len(failed_pipelines)) < total_targets:
+        for target in targets_to_process:
+            target_name: str = target.name
+            pipeline_id_arguid_file: cpg_utils.Path = outputs[pipeline_id_file_key_template.format(sg_name=target_name)]
+            pipeline_success_file: cpg_utils.Path = outputs[success_file_key_template.format(sg_name=target_name)]
 
-            if pipeline_success_file.exists() and sg_name not in completed_pipelines:
-                completed_pipelines.append(sg_name)
+            if pipeline_success_file.exists() and target_name not in completed_pipelines:
+                completed_pipelines.append(target_name)
                 continue
 
-            if sg_name in completed_pipelines or sg_name in cancelled_pipelines or sg_name in failed_pipelines:
+            if (
+                target_name in completed_pipelines
+                or target_name in cancelled_pipelines
+                or target_name in failed_pipelines
+            ):
                 continue
 
             ica_pipeline_id: str = ''
@@ -93,23 +95,23 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                     ica_pipeline_id = json.load(pipeline_fid_handle)['pipeline_id']
 
             if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False) and ica_pipeline_id:
-                logger.info(f'Cancelling {pipeline_name} pipeline run: {ica_pipeline_id} for {sg_name}')
+                logger.info(f'Cancelling {pipeline_name} pipeline run: {ica_pipeline_id} for {target_name}')
                 cancel_ica_pipeline_run.run(
                     ica_pipeline_id=ica_pipeline_id,
                     is_mlr=is_mlr_pipeline,
                 )
                 delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
-                cancelled_pipelines.append(sg_name)
+                cancelled_pipelines.append(target_name)
             else:
-                submit_callable: Callable[[], str] = submit_function_factory(sg_name)
+                submit_callable: Callable[[], str] = submit_function_factory(target_name)
 
                 if not pipeline_id_file_exists:
-                    logger.info(f'Submitting new {pipeline_name} ICA pipeline for {sg_name}')
+                    logger.info(f'Submitting new {pipeline_name} ICA pipeline for {target_name}')
                     ica_pipeline_id = submit_callable()
                     with pipeline_id_arguid_file.open('w') as f:
                         f.write(json.dumps({'pipeline_id': ica_pipeline_id, 'ar_guid': ar_guid}))
                 else:
-                    logger.info(f'Checking status of existing {pipeline_name} ICA pipeline for {sg_name}')
+                    logger.info(f'Checking status of existing {pipeline_name} ICA pipeline for {target_name}')
 
                 pipeline_status: str = monitor_dragen_pipeline.run(
                     ica_pipeline_id=ica_pipeline_id,
@@ -117,43 +119,43 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                 )
 
                 if pipeline_status == 'INPROGRESS':
-                    if sg_name not in running_pipelines:
-                        running_pipelines.append(sg_name)
+                    if target_name not in running_pipelines:
+                        running_pipelines.append(target_name)
 
                 elif pipeline_status == 'SUCCEEDED':
-                    logger.info(f'{pipeline_name} pipeline {ica_pipeline_id} has succeeded for {sg_name}')
-                    completed_pipelines.append(sg_name)
-                    if sg_name in running_pipelines:
-                        running_pipelines.remove(sg_name)
+                    logger.info(f'{pipeline_name} pipeline {ica_pipeline_id} has succeeded for {target_name}')
+                    completed_pipelines.append(target_name)
+                    if target_name in running_pipelines:
+                        running_pipelines.remove(target_name)
                     with pipeline_success_file.open('w') as success_file:
                         success_file.write(
-                            f'ICA {pipeline_name} pipeline {ica_pipeline_id} has succeeded for {sg_name}.'
+                            f'ICA {pipeline_name} pipeline {ica_pipeline_id} has succeeded for {target_name}.'
                         )
 
                 elif pipeline_status in ['ABORTING', 'ABORTED']:
-                    logger.info(f'{pipeline_name} pipeline {ica_pipeline_id} has been cancelled for {sg_name}.')
-                    cancelled_pipelines.append(sg_name)
-                    if sg_name in running_pipelines:
-                        running_pipelines.remove(sg_name)
+                    logger.info(f'{pipeline_name} pipeline {ica_pipeline_id} has been cancelled for {target_name}.')
+                    cancelled_pipelines.append(target_name)
+                    if target_name in running_pipelines:
+                        running_pipelines.remove(target_name)
                     delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
 
                 elif pipeline_status in ['FAILED', 'FAILEDFINAL']:
-                    logger.error(f'{pipeline_name} pipeline {ica_pipeline_id} has failed for {sg_name}.')
-                    if sg_name in running_pipelines:
-                        running_pipelines.remove(sg_name)
+                    logger.error(f'{pipeline_name} pipeline {ica_pipeline_id} has failed for {target_name}.')
+                    if target_name in running_pipelines:
+                        running_pipelines.remove(target_name)
 
                     delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
 
-                    if allow_retry and sg_name not in retried_pipelines:
-                        logger.info(f'Retrying {pipeline_name} pipeline for {sg_name}')
+                    if allow_retry and target_name not in retried_pipelines:
+                        logger.info(f'Retrying {pipeline_name} pipeline for {target_name}')
                         ica_pipeline_id = submit_callable()
                         with pipeline_id_arguid_file.open('w') as f:
                             f.write(json.dumps({'pipeline_id': ica_pipeline_id, 'ar_guid': ar_guid}))
-                        retried_pipelines.append(sg_name)
+                        retried_pipelines.append(target_name)
                     else:
-                        failed_pipelines.append(sg_name)
+                        failed_pipelines.append(target_name)
                         logger.error(
-                            f'{sg_name} failed {pipeline_name} pipeline {ica_pipeline_id} and '
+                            f'{target_name} failed {pipeline_name} pipeline {ica_pipeline_id} and '
                             f'retry is not allowed or already attempted.'
                         )
 
@@ -176,7 +178,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                 f'The following {pipeline_name} pipelines have been cancelled: {" ".join(cancelled_pipelines)}'
             )
 
-        if failed_pipelines and float(len(failed_pipelines)) / float(total_sgs) > 0.05:  # noqa: PLR2004
+        if failed_pipelines and float(len(failed_pipelines)) / float(total_targets) > 0.05:  # noqa: PLR2004
             logger.error(
                 f'More than 5% of {pipeline_name} pipelines have failed. '
                 f'Failing pipelines: {" ".join(failed_pipelines)}'
@@ -186,7 +188,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                 f'Failing pipelines: {" ".join(failed_pipelines)}'
             )
 
-        if (len(completed_pipelines) + len(cancelled_pipelines) + len(failed_pipelines)) == total_sgs:
+        if (len(completed_pipelines) + len(cancelled_pipelines) + len(failed_pipelines)) == total_targets:
             break
 
         logger.info(

@@ -26,11 +26,12 @@ from dragen_align_pa.constants import (
 from dragen_align_pa.jobs import (
     delete_data_in_ica,
     download_ica_pipeline_outputs,
+    download_md5_results,
     download_specific_files_from_ica,
-    fastq_intake_qc,
     make_fastq_file_list,
     manage_dragen_mlr,
     manage_dragen_pipeline,
+    new_manage_md5_pipeline,
     prepare_ica_for_analysis,
     run_multiqc,
     somalier_extract,
@@ -89,16 +90,17 @@ class FastqIntakeQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
         intake_qc_results: dict[str, cpg_utils.Path] = {
             'fastq_ids_outpath': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_fastq_ids.txt',
-            'ica_md5sum_file': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_ica_md5sum.md5sum',
+            # 'ica_md5sum_file': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_ica_md5sum.md5sum',
             'md5sum_pipeline_run': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_ica_md5sum_pipeline.json',
             'md5sum_pipeline_success': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_md5_pipeline_success',
+            f'{cohort.name}_md5_errors': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_md5_errors.log',
         }
         return intake_qc_results
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         if READS_TYPE == 'fastq':
             outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
-            md5job: PythonJob = fastq_intake_qc.run_md5_job(cohort=cohort, outputs=outputs)
+            md5job: PythonJob = new_manage_md5_pipeline.run_md5_management_job(cohort=cohort, outputs=outputs)
 
             return self.make_outputs(target=cohort, data=outputs, jobs=md5job)  # pyright: ignore[reportArgumentType]
 
@@ -106,6 +108,36 @@ class FastqIntakeQc(CohortStage):
 
 
 @stage(required_stages=[FastqIntakeQc])
+class DownloadMd5Results(CohortStage):
+    """
+    Downloads the 'all_md5.txt' result file from a successful
+    MD5 Checksum pipeline run.
+    """
+
+    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        return {'ica_md5sum_file': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_ica_md5sum.md5sum'}
+
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
+
+        if READS_TYPE == 'fastq':
+            # Get the pipeline run file from the previous stage
+            md5_pipeline_file: cpg_utils.Path = inputs.as_path(
+                target=cohort, stage=FastqIntakeQc, key='md5sum_pipeline_run'
+            )
+
+            download_job: PythonJob = download_md5_results.download_md5_results_job(
+                cohort=cohort,
+                md5_pipeline_file=md5_pipeline_file,
+                md5_outpath=outputs['ica_md5sum_file'],
+            )
+
+            return self.make_outputs(target=cohort, data=outputs, jobs=download_job)  # pyright: ignore[reportArgumentType]
+
+        return None
+
+
+@stage(required_stages=[DownloadMd5Results])
 class ValidateMd5Sums(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
         return BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_md5_validation_success.txt'
@@ -115,7 +147,7 @@ class ValidateMd5Sums(CohortStage):
 
         if READS_TYPE == 'fastq':
             ica_md5sum_file_path: cpg_utils.Path = inputs.as_path(
-                target=cohort, stage=FastqIntakeQc, key='ica_md5sum_file'
+                target=cohort, stage=DownloadMd5Results, key='ica_md5sum_file'
             )
             md5_validation_job: PythonJob = validate_md5_sums.validate_md5_sums(
                 ica_md5sum_file_path=ica_md5sum_file_path,

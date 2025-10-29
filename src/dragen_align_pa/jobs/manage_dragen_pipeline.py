@@ -87,14 +87,14 @@ def _run(
             else None,
         )
 
-    pipeline_id_key = '{sg_name}_pipeline_id_and_arguid'
+    pipeline_id_key = '{target_name}_pipeline_id_and_arguid'
 
     manage_ica_pipeline_loop(
-        cohort=cohort,
+        targets_to_process=cohort.get_sequencing_groups(),
         outputs=outputs,
         pipeline_name='Dragen',
         is_mlr_pipeline=False,
-        success_file_key_template='{sg_name}_success',
+        success_file_key_template='{target_name}_success',
         pipeline_id_file_key_template=pipeline_id_key,
         error_log_key=f'{cohort.name}_errors',
         submit_function_factory=_create_submit_callable,

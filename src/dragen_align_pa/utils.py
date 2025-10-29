@@ -47,15 +47,18 @@ def calculate_needed_storage(
 
 
 def run_subprocess_with_log(
-    cmd: list[str],
+    cmd: str | list[str],
     step_name: str,
     stdin_input: str | None = None,
+    shell: bool = False,
 ) -> None:
     """
     Runs a subprocess command with robust logging.
-    (This version is from run_multiqc.py and includes stdin handling)
+    Logs the command, its output, and errors if any occur.
     """
-    logger.info(f'Running {step_name} command: {" ".join(cmd)}')
+    cmd_str = cmd if isinstance(cmd, str) else ' '.join(cmd)
+    executable = '/bin/bash' if shell else None
+    logger.info(f'Running {step_name} command: {cmd_str}')
     try:
         process = subprocess.run(
             cmd,
@@ -63,6 +66,8 @@ def run_subprocess_with_log(
             capture_output=True,
             text=True,
             input=stdin_input,  # Pass stdin if provided
+            shell=shell,
+            executable=executable,
         )
         logger.info(f'{step_name} completed successfully.')
         if process.stdout:
@@ -71,7 +76,7 @@ def run_subprocess_with_log(
             logger.info(f'{step_name} STDERR:\n{process.stderr.strip()}')
     except subprocess.CalledProcessError as e:
         logger.error(f'{step_name} failed with return code {e.returncode}')
-        logger.error(f'CMD: {" ".join(e.cmd)}')
+        logger.error(f'CMD: {cmd_str}')
         logger.error(f'STDOUT: {e.stdout}')
         logger.error(f'STDERR: {e.stderr}')
         raise

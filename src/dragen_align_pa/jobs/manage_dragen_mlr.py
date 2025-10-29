@@ -43,7 +43,11 @@ def _submit_mlr_run(
     try:
         # --- 1. Authenticate ---
         # shell=True is required for the multi-line ICA_CLI_SETUP script
-        ica_utils.run_cli_command(ICA_CLI_SETUP, shell=True)
+        utils.run_subprocess_with_log(
+            ICA_CLI_SETUP,
+            'Authenticate ICA CLI',
+            shell=True,
+        )
 
         # --- 2. Find input file paths ---
         cram_path: str = ica_utils.find_ica_file_path_by_name(
@@ -59,12 +63,13 @@ def _submit_mlr_run(
         gvcf_url: str = f'ica://OurDNA-DRAGEN-378/{gvcf_path.lstrip("/")}'
 
         # --- 3. Set ICA project context ---
-        ica_utils.run_cli_command(
+        utils.run_subprocess_with_log(
             ['icav2', 'projects', 'enter', mlr_project],
+            f'Set ICA project to {mlr_project}',
         )
 
         # --- 4. Download MLR config JSON ---
-        ica_utils.run_cli_command(
+        utils.run_subprocess_with_log(
             [
                 'icav2',
                 'projectdata',
@@ -73,6 +78,7 @@ def _submit_mlr_run(
                 local_config_path,
                 '--exclude-source-path',
             ],
+            'Download MLR config',
         )
 
         # --- 5. Build and run the popgen-cli command ---
@@ -100,7 +106,7 @@ def _submit_mlr_run(
             '--analysis-instance-tier',
             config_retrieve(['ica', 'mlr', 'analysis_instance_tier']),
         ]
-        ica_utils.run_cli_command(submit_command)  # <-- Changed
+        utils.run_subprocess_with_log(submit_command, 'Submit popgen-cli MLR')
 
         # --- 6. Read the pipeline ID from the output JSON ---
         output_json_path = os.path.join(
@@ -188,12 +194,12 @@ def _run(
         )
 
     manage_ica_pipeline_loop(
-        cohort=cohort,
+        targets_to_process=cohort.get_sequencing_groups(),
         outputs=outputs,
         pipeline_name='MLR',
         is_mlr_pipeline=True,
-        success_file_key_template='{sg_name}_mlr_success',
-        pipeline_id_file_key_template='{sg_name}_mlr_pipeline_id',
+        success_file_key_template='{target_name}_mlr_success',
+        pipeline_id_file_key_template='{target_name}_mlr_pipeline_id',
         error_log_key=f'{cohort.name}_mlr_errors',
         submit_function_factory=_create_submit_callable,
         allow_retry=False,

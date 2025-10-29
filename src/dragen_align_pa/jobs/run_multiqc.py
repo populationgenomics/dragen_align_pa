@@ -128,7 +128,7 @@ def run_multiqc(
     Creates and calls the PythonJob to run MultiQC.
     Gathers all required QC input paths.
     """
-    from dragen_align_pa.stages import DownloadDataFromIca, SomalierExtract
+    from dragen_align_pa.stages import DownloadDataFromIca, SomalierExtract  # noqa: PLC0415
 
     # 1. Get Dragen metric directory prefixes for each SG
     dragen_metric_prefixes: list[Path] = []
