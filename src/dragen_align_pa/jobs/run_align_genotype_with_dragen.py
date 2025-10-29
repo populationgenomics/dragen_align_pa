@@ -159,6 +159,14 @@ def submit_dragen_run(
                     parameterCode='cram_reference',
                     dataIds=[cram_reference_id],
                 ),
+                AnalysisDataInput(
+                    parameterCode='qc_coverage_region_1',
+                    dataIds=[qc_cov_region_1_id],
+                ),
+                AnalysisDataInput(
+                    parameterCode='qc_coverage_region_2',
+                    dataIds=[qc_cov_region_2_id],
+                ),
             ]
             specific_parameter_inputs = [
                 AnalysisParameterInput(
@@ -184,6 +192,12 @@ def submit_dragen_run(
             fastq_ids_path=fastq_ids_path,
             individual_fastq_file_list_paths=individual_fastq_file_list_paths,
         )
+        specific_data_inputs.append(
+            AnalysisDataInput(
+                parameterCode='qc_coverage_region_beds',
+                dataIds=[qc_cov_region_1_id, qc_cov_region_2_id],
+            ),
+        )
     else:
         raise ValueError('No valid input files provided for either CRAM or FASTQ mode.')
 
@@ -193,14 +207,6 @@ def submit_dragen_run(
         AnalysisDataInput(
             parameterCode='qc_cross_cont_vcf',
             dataIds=[qc_cross_cont_vcf_id],
-        ),
-        AnalysisDataInput(
-            parameterCode='qc_coverage_region_1',
-            dataIds=[qc_cov_region_1_id],
-        ),
-        AnalysisDataInput(
-            parameterCode='qc_coverage_region_2',
-            dataIds=[qc_cov_region_2_id],
         ),
     ]
 
