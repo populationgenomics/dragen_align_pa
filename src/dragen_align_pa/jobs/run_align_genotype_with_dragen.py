@@ -132,7 +132,6 @@ def submit_dragen_run(
                         '--qc-coverage-reports-1 cov_report,cov_report '
                         "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
                         '--vc-gvcf-gq-bands 13 20 30 40 '
-                        "--vc-hard-filter 'DRAGENHardQUAL:all:QUAL<5.0;LowDepth:all:DP<=1' "
                     ),
                 ),
             ]
