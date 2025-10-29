@@ -120,7 +120,7 @@ When successful, the pipeline downloads all results to your dataset's GCS bucket
   * **Somalier Fingerprints:**
       * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/somalier/`
     * **Aggregated QC Report:**
-            * `gs://{BUCKET}/{DRAGEN_VERSION}/qc/{cohort_name}_multiqc_report.html`
+            * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/qc/{cohort_name}_multiqc_report.html`
 
 ---
 
