@@ -74,8 +74,10 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
     while (len(completed_pipelines) + len(cancelled_pipelines) + len(failed_pipelines)) < total_targets:
         for target in targets_to_process:
             target_name: str = target.name
-            pipeline_id_arguid_file: cpg_utils.Path = outputs[pipeline_id_file_key_template.format(sg_name=target_name)]
-            pipeline_success_file: cpg_utils.Path = outputs[success_file_key_template.format(sg_name=target_name)]
+            pipeline_id_arguid_file: cpg_utils.Path = outputs[
+                pipeline_id_file_key_template.format(target_name=target_name)
+            ]
+            pipeline_success_file: cpg_utils.Path = outputs[success_file_key_template.format(target_name=target_name)]
 
             if pipeline_success_file.exists() and target_name not in completed_pipelines:
                 completed_pipelines.append(target_name)

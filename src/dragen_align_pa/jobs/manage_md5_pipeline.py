@@ -1,20 +1,86 @@
-import json
-import time
 from collections.abc import Callable
 from functools import partial
+from typing import Literal
 
 import cpg_utils
 import icasdk
-from cpg_utils.config import config_retrieve, try_get_ar_guid
-from icasdk import Configuration
+import pandas as pd
+from cpg_flow.targets import Cohort
+from cpg_utils.config import config_retrieve, get_driver_image, try_get_ar_guid
+from hailtop.batch.job import PythonJob
+from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa.jobs import (
-    cancel_ica_pipeline_run,
-    monitor_dragen_pipeline,
-    run_intake_qc_pipeline,
-)
-from dragen_align_pa.utils import delete_pipeline_id_file
+from dragen_align_pa import ica_utils, utils
+from dragen_align_pa.constants import BUCKET_NAME, ICA_REST_ENDPOINT
+from dragen_align_pa.jobs import run_intake_qc_pipeline
+from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
+
+
+def _get_fastq_ica_id_list(
+    fastq_filenames: list[str],
+    fastq_ids_outpath: cpg_utils.Path,
+    api_instance: project_data_api.ProjectDataApi,
+    path_parameters: dict[str, str],
+) -> list[str]:
+    """
+    (Moved from fastq_intake_qc.py)
+    Finds ICA file IDs for a list of fastq filenames.
+    """
+    fastq_ids: list[str] = []
+    fastq_ids_and_filenames: list[str] = []
+
+    # Handle potentially large lists by batching API calls
+    batch_size = 100
+    for i in range(0, len(fastq_filenames), batch_size):
+        batch_filenames = fastq_filenames[i : i + batch_size]
+        logger.info(
+            f'Querying ICA for {len(batch_filenames)} FASTQ IDs (batch {i // batch_size + 1})...',
+        )
+        api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
+            path_params=path_parameters,  # pyright: ignore[reportArgumentType]
+            query_params={'filename': batch_filenames, 'filenameMatchMode': 'EXACT'},
+        )  # type: ignore
+        for item in api_response.body['items']:  # pyright: ignore[reportUnknownArgumentType]
+            file_id = item['data']['id']  # pyright: ignore[reportUnknownVariableType]
+            file_name = item['data']['details']['name']  # pyright: ignore[reportUnknownVariableType]
+            fastq_ids.append(file_id)
+            fastq_ids_and_filenames.append(f'{file_id}\t{file_name}')
+
+    if len(fastq_ids) != len(fastq_filenames):
+        logger.warning(
+            f'Mismatch: Found {len(fastq_ids)} file IDs in ICA, '
+            f'but {len(fastq_filenames)} were expected from manifest.',
+        )
+        # This could be a critical error, depending on requirements
+        # For now, we'll just log and continue with the files we found.
+
+    with fastq_ids_outpath.open('w') as fq_outpath:
+        fq_outpath.write('\n'.join(fastq_ids_and_filenames))
+
+    logger.info(f'Found {len(fastq_ids)} total FASTQ file IDs.')
+    return fastq_ids
+
+
+def _create_md5_output_folder(
+    folder_path: str,
+    api_instance: project_data_api.ProjectDataApi,
+    cohort_name: str,
+    path_parameters: dict[str, str],
+) -> str:
+    """
+    (Moved from fastq_intake_qc.py)
+    Creates the output folder in ICA for the MD5 pipeline.
+    """
+    object_id, _ = ica_utils.create_upload_object_id(
+        api_instance=api_instance,
+        path_params=path_parameters,
+        sg_name=cohort_name,
+        file_name=cohort_name,  # Folder name is the cohort name
+        folder_path=folder_path,
+        object_type='FOLDER',
+    )
+    return object_id
 
 
 def _submit_md5_run(
@@ -27,6 +93,7 @@ def _submit_md5_run(
 ) -> str:
     """
     Submits the MD5 intake QC pipeline to ICA.
+    (This is the original submit function from this file)
     """
     logger.info(f'Submitting new MD5 ICA pipeline for {cohort_name}')
     md5_pipeline_id: str = run_intake_qc_pipeline.run_md5_pipeline(
@@ -40,203 +107,106 @@ def _submit_md5_run(
     return md5_pipeline_id
 
 
-def _check_for_success(
+def run_md5_management_job(
+    cohort: Cohort,
     outputs: dict[str, cpg_utils.Path],
-    cohort_name: str,
-) -> cpg_utils.Path | None:
+) -> PythonJob:
     """
-    Checks for a pre-existing success file.
-    Returns the pipeline ID file path if successful, else None.
+    Creates the PythonJob that will run the MD5 pipeline management loop.
+    This replaces the old fastq_intake_qc.run_md5_job.
     """
-    pipeline_id_file = outputs['md5sum_pipeline_run']
-    pipeline_success_file = outputs['md5sum_pipeline_success']
-
-    if pipeline_success_file.exists():
-        logger.info(f'MD5 pipeline for {cohort_name} already marked as SUCCEEDED.')
-        if not pipeline_id_file.exists():
-            # This case should not happen, but good to check
-            raise FileNotFoundError(
-                f'MD5 success file exists at {pipeline_success_file} but '
-                f'pipeline ID file is missing at {pipeline_id_file}.',
-            )
-        return pipeline_id_file
-    return None
-
-
-def _get_existing_pipeline_id(pipeline_id_file: cpg_utils.Path) -> tuple[str, bool]:
-    """
-    Tries to read an existing pipeline ID from a file.
-    Returns (pipeline_id, file_existed_and_was_valid)
-    """
-    ica_pipeline_id = ''
-    if pipeline_id_file.exists():
-        try:
-            with pipeline_id_file.open('r') as f:
-                ica_pipeline_id = json.load(f)['pipeline_id']
-            return ica_pipeline_id, True  # File exists and is valid
-        except (json.JSONDecodeError, KeyError):
-            logger.warning(
-                f'Could not parse pipeline ID from {pipeline_id_file}. Assuming invalid, will delete and resubmit.',
-            )
-            delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_file))
-
-    return ica_pipeline_id, False  # File either didn't exist or was invalid
+    job: PythonJob = utils.initialise_python_job(
+        job_name='ManageMd5Pipeline',
+        target=cohort,
+        tool_name='ICA-MD5-Manager',
+    )
+    job.image(image=get_driver_image())
+    job.call(
+        _run_management,  # Calls the new _run function
+        cohort=cohort,
+        outputs=outputs,
+    )
+    return job
 
 
-def _handle_cancellation(
-    ica_pipeline_id: str,
-    cohort_name: str,
-    pipeline_id_file: cpg_utils.Path,
+def _run_management(
+    cohort: Cohort,
+    outputs: dict[str, cpg_utils.Path],
 ) -> None:
     """
-    Checks for and executes pipeline cancellation.
-    Raises an Exception if cancellation is triggered.
+    This function runs inside the PythonJob.
+    It performs the pre-submission setup (getting FASTQ IDs, creating folders)
+    and then calls the generic pipeline manager.
+    (This replaces the old fastq_intake_qc._run and manage_md5_pipeline.manage_md5_pipeline)
     """
-    if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False) and ica_pipeline_id:
-        logger.info(
-            f'Cancelling MD5 pipeline run: {ica_pipeline_id} for {cohort_name}',
-        )
-        cancel_ica_pipeline_run.run(ica_pipeline_id=ica_pipeline_id, is_mlr=False)
-        delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_file))
-        raise Exception(
-            f'MD5 pipeline {ica_pipeline_id} for {cohort_name} has been cancelled.',
-        )
 
-
-def _handle_failed_status(
-    ica_pipeline_id: str,
-    cohort_name: str,
-    pipeline_id_file: cpg_utils.Path,
-    submit_callable: Callable[[], str],
-    has_retried: bool,
-    ar_guid: str,
-) -> tuple[str, bool]:
-    """
-    Handles a FAILED/FAILEDFINAL status, including retry logic.
-    Returns (new_pipeline_id, new_has_retried_state)
-    Raises Exception if retry fails or is not allowed.
-    """
-    logger.error(f'MD5 pipeline {ica_pipeline_id} has FAILED for {cohort_name}.')
-    delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_file))
-
-    if not has_retried:
-        logger.info(f'Retrying failed MD5 pipeline for {cohort_name}.')
-        new_pipeline_id = submit_callable()  # Retry once
-        with pipeline_id_file.open('w') as f:
-            f.write(
-                json.dumps({'pipeline_id': new_pipeline_id, 'ar_guid': ar_guid}),
-            )
-        return new_pipeline_id, True  # (new_id, has_retried=True)
-
-    logger.error(f'MD5 pipeline {ica_pipeline_id} failed after one retry.')
-    raise Exception(
-        f'MD5 pipeline {ica_pipeline_id} for {cohort_name} failed after one retry.',
+    cohort_name: str = cohort.name
+    manifest_file_path: cpg_utils.Path = config_retrieve(
+        ['workflow', 'manifest_gcp_path'],
     )
+    with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
+        supplied_manifest_data: pd.DataFrame = pd.read_csv(
+            manifest_fh,
+            usecols=['Filenames'],
+        )
+    fastq_filenames: list[str] = supplied_manifest_data['Filenames'].to_list()
 
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
+    project_id: str = secrets['projectID']
+    api_key: str = secrets['apiKey']
 
-def _run_monitoring_loop(
-    ica_pipeline_id: str,
-    cohort_name: str,
-    pipeline_id_file: cpg_utils.Path,
-    submit_callable: Callable[[], str],
-    ar_guid: str,
-) -> cpg_utils.Path:
-    """
-    Continuously monitors the ICA pipeline until a terminal state is reached.
-    """
-    has_retried = False
-    while True:
-        pipeline_status: str = monitor_dragen_pipeline.run(
-            ica_pipeline_id=ica_pipeline_id,
-            is_mlr=False,
+    configuration = icasdk.Configuration(host=ICA_REST_ENDPOINT)
+    configuration.api_key['ApiKeyAuth'] = api_key
+    path_parameters: dict[str, str] = {'projectId': project_id}
+
+    with icasdk.ApiClient(configuration=configuration) as api_client:
+        api_instance = project_data_api.ProjectDataApi(api_client)
+
+        # Get all ica file ids for the fastq files
+        ica_fastq_ids: list[str] = _get_fastq_ica_id_list(
+            fastq_filenames=fastq_filenames,
+            fastq_ids_outpath=outputs['fastq_ids_outpath'],
+            api_instance=api_instance,
+            path_parameters=path_parameters,
         )
 
-        if pipeline_status == 'SUCCEEDED':
-            logger.info(
-                f'MD5 pipeline {ica_pipeline_id} has SUCCEEDED for {cohort_name}',
-            )
-            return pipeline_id_file
+        if not ica_fastq_ids:
+            logger.error('No FASTQ file IDs found in ICA. Cannot start MD5 pipeline.')
+            raise ValueError('No FASTQ file IDs found in ICA.')
 
-        if pipeline_status in ['ABORTING', 'ABORTED']:
-            logger.warning(
-                f'MD5 pipeline {ica_pipeline_id} has been ABORTED for {cohort_name}.',
-            )
-            delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_file))
-            raise Exception(
-                f'MD5 pipeline {ica_pipeline_id} for {cohort_name} was aborted.',
-            )
+        folder_path: str = f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}'
 
-        if pipeline_status in ['FAILED', 'FAILEDFINAL']:
-            ica_pipeline_id, has_retried = _handle_failed_status(
-                ica_pipeline_id=ica_pipeline_id,
-                cohort_name=cohort_name,
-                pipeline_id_file=pipeline_id_file,
-                submit_callable=submit_callable,
-                has_retried=has_retried,
-                ar_guid=ar_guid,
-            )
-            continue  # Continue to monitor the new pipeline_id
-
-        # Status is INPROGRESS, REQUESTED, or AWAITINGINPUT
-        logger.info(
-            f'MD5 pipeline {ica_pipeline_id} status is {pipeline_status}. Waiting 300s.',
+        md5_outputs_folder_id: str = _create_md5_output_folder(
+            folder_path=folder_path,
+            api_instance=api_instance,
+            cohort_name=cohort_name,
+            path_parameters=path_parameters,
         )
-        time.sleep(300)
 
-
-def manage_md5_pipeline(
-    cohort_name: str,
-    ica_fastq_ids: list[str],
-    outputs: dict[str, cpg_utils.Path],
-    api_config: Configuration,
-    project_id: str,
-    md5_outputs_folder_id: str,
-) -> cpg_utils.Path:
-    """
-    Manages a single cohort-level ICA pipeline by submitting,
-    monitoring, and handling failures/retries.
-    """
-    # 1. Check for existing success
-    if success_file_path := _check_for_success(outputs, cohort_name):
-        return success_file_path
-
-    pipeline_id_file = outputs['md5sum_pipeline_run']
     ar_guid: str = try_get_ar_guid()
-
-    # 2. Check for existing pipeline ID
-    ica_pipeline_id, pipeline_id_file_exists = _get_existing_pipeline_id(
-        pipeline_id_file,
-    )
-
-    # 3. Handle cancellation
-    _handle_cancellation(ica_pipeline_id, cohort_name, pipeline_id_file)
-
-    # 4. Setup submit function
     submit_callable = partial(
         _submit_md5_run,
         cohort_name=cohort_name,
         ica_fastq_ids=ica_fastq_ids,
-        api_config=api_config,
+        api_config=configuration,
         project_id=project_id,
         ar_guid=ar_guid,
         md5_outputs_folder_id=md5_outputs_folder_id,
     )
 
-    # 5. Submit if it doesn't exist
-    if not pipeline_id_file_exists:
-        ica_pipeline_id = submit_callable()
-        with pipeline_id_file.open('w') as f:
-            f.write(json.dumps({'pipeline_id': ica_pipeline_id, 'ar_guid': ar_guid}))
-    else:
-        logger.info(
-            f'Checking status of existing MD5 ICA pipeline for {cohort_name}: {ica_pipeline_id}',
-        )
+    def _create_submit_callable_factory(target_name: str) -> Callable[[], str]:
+        _ = target_name  # Unused, we know it's the cohort_name
+        return submit_callable
 
-    # 6. Monitor loop
-    return _run_monitoring_loop(
-        ica_pipeline_id=ica_pipeline_id,
-        cohort_name=cohort_name,
-        pipeline_id_file=pipeline_id_file,
-        submit_callable=submit_callable,
-        ar_guid=ar_guid,
+    manage_ica_pipeline_loop(
+        targets_to_process=[cohort],
+        outputs=outputs,
+        pipeline_name='MD5 Checksum',
+        is_mlr_pipeline=False,
+        success_file_key_template='md5sum_pipeline_success',
+        pipeline_id_file_key_template='md5sum_pipeline_run',
+        error_log_key=f'{cohort_name}_md5_errors',
+        submit_function_factory=_create_submit_callable_factory,
+        allow_retry=True,
+        sleep_time_seconds=300,
     )

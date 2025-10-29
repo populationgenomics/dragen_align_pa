@@ -31,7 +31,7 @@ from dragen_align_pa.jobs import (
     make_fastq_file_list,
     manage_dragen_mlr,
     manage_dragen_pipeline,
-    new_manage_md5_pipeline,
+    manage_md5_pipeline,
     prepare_ica_for_analysis,
     run_multiqc,
     somalier_extract,
@@ -100,7 +100,7 @@ class FastqIntakeQc(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         if READS_TYPE == 'fastq':
             outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
-            md5job: PythonJob = new_manage_md5_pipeline.run_md5_management_job(cohort=cohort, outputs=outputs)
+            md5job: PythonJob = manage_md5_pipeline.run_md5_management_job(cohort=cohort, outputs=outputs)
 
             return self.make_outputs(target=cohort, data=outputs, jobs=md5job)  # pyright: ignore[reportArgumentType]
 
