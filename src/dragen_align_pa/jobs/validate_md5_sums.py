@@ -37,8 +37,8 @@ def validate_md5_sums(
 def _run(
     ica_md5sum_file_path: cpg_utils.Path,
     cohort_name: str,
-    success_output_path: cpg_utils.Path,  # New argument
-) -> None:  # Changed return type to None
+    success_output_path: cpg_utils.Path,
+) -> None:
     """
     Compares MD5 sums from ICA pipeline output with the manifest.
     Writes an error log if mismatches are found and raises an Exception.

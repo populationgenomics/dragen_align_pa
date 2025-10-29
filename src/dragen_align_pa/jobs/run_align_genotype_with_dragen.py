@@ -1,5 +1,5 @@
 import json
-from typing import Any, Final, Literal
+from typing import Any, Literal
 
 import cpg_utils
 import icasdk
@@ -16,33 +16,6 @@ from loguru import logger
 
 from dragen_align_pa import ica_utils
 from dragen_align_pa.constants import ICA_REST_ENDPOINT
-
-# Input Data Parameter Codes
-PARAM_CODE_CRAMS: Final = 'crams'
-PARAM_CODE_CRAM_REFERENCE: Final = 'cram_reference'
-PARAM_CODE_FASTQS: Final = 'fastqs'
-PARAM_CODE_FASTQ_LIST: Final = 'fastq_list'
-PARAM_CODE_REF_TAR: Final = 'ref_tar'
-PARAM_CODE_QC_CROSS_CONT_VCF: Final = 'qc_cross_cont_vcf'
-PARAM_CODE_QC_COVERAGE_REGION_1: Final = 'qc_coverage_region_1'
-PARAM_CODE_QC_COVERAGE_REGION_2: Final = 'qc_coverage_region_2'
-
-# Input Parameter Codes (Settings)
-PARAM_CODE_ADDITIONAL_ARGS: Final = 'additional_args'
-PARAM_CODE_ENABLE_MAP_ALIGN: Final = 'enable_map_align'
-PARAM_CODE_ENABLE_MAP_ALIGN_OUTPUT: Final = 'enable_map_align_output'
-PARAM_CODE_OUTPUT_FORMAT: Final = 'output_format'
-PARAM_CODE_ENABLE_DUPLICATE_MARKING: Final = 'enable_duplicate_marking'
-PARAM_CODE_ENABLE_VARIANT_CALLER: Final = 'enable_variant_caller'
-PARAM_CODE_VC_EMIT_REF_CONFIDENCE: Final = 'vc_emit_ref_confidence'
-PARAM_CODE_VC_ENABLE_VCF_OUTPUT: Final = 'vc_enable_vcf_output'
-PARAM_CODE_ENABLE_CNV: Final = 'enable_cnv'
-PARAM_CODE_CNV_SEGMENTATION_MODE: Final = 'cnv_segmentation_mode'
-PARAM_CODE_ENABLE_SV: Final = 'enable_sv'
-PARAM_CODE_ENABLE_CYP2D6: Final = 'enable_cyp2d6'
-PARAM_CODE_REPEAT_GENOTYPE_ENABLE: Final = 'repeat_genotype_enable'
-PARAM_CODE_DRAGEN_REPORTS: Final = 'dragen_reports'
-PARAM_CODE_VC_GVCF_GQ_BANDS: Final = 'vc-gvcf-gq-bands'
 
 
 def _prepare_fastq_inputs(
@@ -117,15 +90,15 @@ def _prepare_fastq_inputs(
 
     # Construct the ICA input objects
     fastq_data_inputs = [
-        AnalysisDataInput(parameterCode=PARAM_CODE_FASTQS, dataIds=fastq_ica_ids),
+        AnalysisDataInput(parameterCode='fastqs', dataIds=fastq_ica_ids),
         AnalysisDataInput(
-            parameterCode=PARAM_CODE_FASTQ_LIST,
+            parameterCode='fastq_list',
             dataIds=[fastq_file_list_id],  # Must be a list containing the ID
         ),
     ]
     fastq_parameter_inputs = [
         AnalysisParameterInput(
-            code=PARAM_CODE_ADDITIONAL_ARGS,
+            code='additional_args',
             value=("--qc-coverage-reports-1 cov_report,cov_report --qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "),
         ),
     ]
@@ -179,17 +152,17 @@ def submit_dragen_run(
             )
             specific_data_inputs = [
                 AnalysisDataInput(
-                    parameterCode=PARAM_CODE_CRAMS,
+                    parameterCode='crams',
                     dataIds=[cram_ica_fids['cram_fid']],
                 ),
                 AnalysisDataInput(
-                    parameterCode=PARAM_CODE_CRAM_REFERENCE,
+                    parameterCode='cram_reference',
                     dataIds=[cram_reference_id],
                 ),
             ]
             specific_parameter_inputs = [
                 AnalysisParameterInput(
-                    code=PARAM_CODE_ADDITIONAL_ARGS,
+                    code='additional_args',
                     value=(
                         '--read-trimmers polyg '
                         '--soft-read-trimmers none '
@@ -216,36 +189,36 @@ def submit_dragen_run(
 
     # Construct the common parts of the analysis body
     common_data_inputs: list[AnalysisDataInput] = [
-        AnalysisDataInput(parameterCode=PARAM_CODE_REF_TAR, dataIds=[dragen_ht_id]),
+        AnalysisDataInput(parameterCode='ref_tar', dataIds=[dragen_ht_id]),
         AnalysisDataInput(
-            parameterCode=PARAM_CODE_QC_CROSS_CONT_VCF,
+            parameterCode='qc_cross_cont_vcf',
             dataIds=[qc_cross_cont_vcf_id],
         ),
         AnalysisDataInput(
-            parameterCode=PARAM_CODE_QC_COVERAGE_REGION_1,
+            parameterCode='qc_coverage_region_1',
             dataIds=[qc_cov_region_1_id],
         ),
         AnalysisDataInput(
-            parameterCode=PARAM_CODE_QC_COVERAGE_REGION_2,
+            parameterCode='qc_coverage_region_2',
             dataIds=[qc_cov_region_2_id],
         ),
     ]
 
     common_parameter_inputs: list[AnalysisParameterInput] = [
-        AnalysisParameterInput(code=PARAM_CODE_ENABLE_MAP_ALIGN, value='true'),
-        AnalysisParameterInput(code=PARAM_CODE_ENABLE_MAP_ALIGN_OUTPUT, value='true'),
-        AnalysisParameterInput(code=PARAM_CODE_OUTPUT_FORMAT, value='CRAM'),
-        AnalysisParameterInput(code=PARAM_CODE_ENABLE_DUPLICATE_MARKING, value='true'),
-        AnalysisParameterInput(code=PARAM_CODE_ENABLE_VARIANT_CALLER, value='true'),
-        AnalysisParameterInput(code=PARAM_CODE_VC_EMIT_REF_CONFIDENCE, value='GVCF'),
-        AnalysisParameterInput(code=PARAM_CODE_VC_ENABLE_VCF_OUTPUT, value='false'),
-        AnalysisParameterInput(code=PARAM_CODE_ENABLE_CNV, value='true'),
-        AnalysisParameterInput(code=PARAM_CODE_CNV_SEGMENTATION_MODE, value='SLM'),
-        AnalysisParameterInput(code=PARAM_CODE_ENABLE_SV, value='true'),
-        AnalysisParameterInput(code=PARAM_CODE_ENABLE_CYP2D6, value='true'),
-        AnalysisParameterInput(code=PARAM_CODE_REPEAT_GENOTYPE_ENABLE, value='true'),
-        AnalysisParameterInput(code=PARAM_CODE_DRAGEN_REPORTS, value='false'),
-        AnalysisParameterInput(code=PARAM_CODE_VC_GVCF_GQ_BANDS, value='13 20 30 40'),
+        AnalysisParameterInput(code='enable_map_align', value='true'),
+        AnalysisParameterInput(code='enable_map_align_output', value='true'),
+        AnalysisParameterInput(code='output_format', value='CRAM'),
+        AnalysisParameterInput(code='enable_duplicate_marking', value='true'),
+        AnalysisParameterInput(code='enable_variant_caller', value='true'),
+        AnalysisParameterInput(code='vc_emit_ref_confidence', value='GVCF'),
+        AnalysisParameterInput(code='vc_enable_vcf_output', value='false'),
+        AnalysisParameterInput(code='enable_cnv', value='true'),
+        AnalysisParameterInput(code='cnv_segmentation_mode', value='SLM'),
+        AnalysisParameterInput(code='enable_sv', value='true'),
+        AnalysisParameterInput(code='enable_cyp2d6', value='true'),
+        AnalysisParameterInput(code='repeat_genotype_enable', value='true'),
+        AnalysisParameterInput(code='dragen_reports', value='false'),
+        AnalysisParameterInput(code='vc_gvcf_gq_bands', value='13 20 30 40'),
     ]
 
     # Combine common and specific inputs/parameters
