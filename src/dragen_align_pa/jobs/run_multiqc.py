@@ -9,7 +9,6 @@ from hailtop.batch.job import PythonJob
 from loguru import logger
 
 from dragen_align_pa import utils
-from dragen_align_pa.stages import DownloadDataFromIca, SomalierExtract
 
 
 def _copy_inputs_to_local(input_paths_str: list[str], local_input_dir: str) -> None:
@@ -129,6 +128,7 @@ def run_multiqc(
     Creates and calls the PythonJob to run MultiQC.
     Gathers all required QC input paths.
     """
+    from dragen_align_pa.stages import DownloadDataFromIca, SomalierExtract
 
     # 1. Get Dragen metric directory prefixes for each SG
     dragen_metric_prefixes: list[Path] = []
