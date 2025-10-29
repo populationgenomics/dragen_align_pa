@@ -11,7 +11,6 @@ from icasdk.model.analysis_parameter_input import AnalysisParameterInput
 from icasdk.model.analysis_tag import AnalysisTag
 from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
-from icecream import ic
 from loguru import logger
 
 from dragen_align_pa import ica_utils
@@ -70,8 +69,6 @@ def _prepare_fastq_inputs(
 
             fastq_ica_ids = fastq_ica_ids_df[fastq_ica_ids_df['fastq_name'].isin(relevant_filenames)]['ica_id'].tolist()
 
-            # Debugging and validation
-            ic(sg_name, fastq_file_list_id, len(fastq_ica_ids))
             if not fastq_ica_ids:
                 logger.warning(
                     f'No matching FASTQ file IDs found for {sg_name} using files in {individual_fastq_file_list_paths}'
