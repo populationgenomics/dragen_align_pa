@@ -1,13 +1,15 @@
 import os
 import shutil
 
+from cpg_flow.stage import StageInput, StageInputNotFoundError
 from cpg_flow.targets import Cohort
-from cpg_utils import Path
+from cpg_utils import Path, to_path
 from cpg_utils.config import get_driver_image
 from hailtop.batch.job import PythonJob
 from loguru import logger
 
 from dragen_align_pa import utils
+from dragen_align_pa.stages import DownloadDataFromIca, SomalierExtract
 
 
 def _copy_inputs_to_local(input_paths_str: list[str], local_input_dir: str) -> None:
@@ -120,12 +122,52 @@ def _run(cohort_name: str, input_paths_str: list[str], outputs: dict[str, str]) 
 
 def run_multiqc(
     cohort: Cohort,
-    input_paths: list[Path],
+    inputs: StageInput,
     outputs: dict[str, str],
-) -> PythonJob:
+) -> PythonJob | None:
     """
     Creates and calls the PythonJob to run MultiQC.
+    Gathers all required QC input paths.
     """
+
+    # 1. Get Dragen metric directory prefixes for each SG
+    dragen_metric_prefixes: list[Path] = []
+    for sg in cohort.get_sequencing_groups():
+        try:
+            # The output of DownloadDataFromIca is the directory prefix
+            prefix = inputs.as_path(target=sg, stage=DownloadDataFromIca)
+            dragen_metric_prefixes.append(prefix)
+        except StageInputNotFoundError:
+            logger.warning(f'Dragen metrics directory not found for {sg.id}, skipping for MultiQC')
+
+    # 2. Get Somalier paths for each SG
+    somalier_paths_dict: dict[str, Path] = inputs.as_path_by_target(stage=SomalierExtract)
+    somalier_paths: list[Path] = list(somalier_paths_dict.values())
+
+    # 3. Collect all individual Dragen CSV file paths
+    all_dragen_csv_paths: list[Path] = []
+    for prefix in dragen_metric_prefixes:
+        try:
+            # Use rglob to find all CSV files recursively within the SG's metric directory
+            found_paths = [to_path(p) for p in prefix.rglob('*.csv')]
+            all_dragen_csv_paths.extend(found_paths)
+        except FileNotFoundError:
+            logger.warning(f'Directory {prefix} not found when searching for Dragen CSVs.')
+        except Exception as e:
+            logger.error(f'Error searching for CSVs in {prefix}: {e}')
+
+    # 4. Combine Dragen CSV paths and Somalier paths
+    all_qc_paths: list[Path] = all_dragen_csv_paths + somalier_paths
+
+    if not all_qc_paths:
+        logger.warning('No QC files (Dragen CSVs or Somalier) found to aggregate with MultiQC')
+        return None  # Return None to signal the stage to skip
+
+    logger.info(f'Found {len(all_qc_paths)} QC files for MultiQC aggregation.')
+    if all_qc_paths:
+        logger.info(f'Example QC paths: {all_qc_paths[:5]}')
+
+    # 5. Create the PythonJob
     py_job: PythonJob = utils.initialise_python_job(
         job_name='MultiQC',
         target=cohort,
@@ -135,7 +177,7 @@ def run_multiqc(
     py_job.storage('10Gi')
 
     # Convert Path objects to strings for the job function
-    input_paths_str: list[str] = [str(p) for p in input_paths]
+    input_paths_str: list[str] = [str(p) for p in all_qc_paths]
 
     py_job.call(
         _run,

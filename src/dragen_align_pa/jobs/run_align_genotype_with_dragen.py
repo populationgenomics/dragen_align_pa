@@ -126,7 +126,6 @@ def submit_dragen_run(
                 ),
             ]
             fastq_parameters = [
-                AnalysisParameterInput(code='vc-hard-filter', value='false'),
                 AnalysisParameterInput(
                     code='additional_args',
                     value=(
