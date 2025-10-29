@@ -64,7 +64,7 @@ def _run(
         api_instance = project_data_api.ProjectDataApi(api_client)
         folder_path: str = f'/{BUCKET_NAME}/{ica_analysis_output_folder}'
         for sg_name in cohort.get_sequencing_group_ids():
-            object_id: str = ica_utils.create_upload_object_id(
+            object_id, _ = ica_utils.create_upload_object_id(
                 api_instance=api_instance,
                 path_params=path_parameters,
                 sg_name=sg_name,

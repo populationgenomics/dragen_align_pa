@@ -117,6 +117,7 @@ def submit_dragen_run(
                     individual_fastq_csv_df['Read2File'].tolist(),
                 )
             ]['ica_id'].tolist()
+            ic(sg_name, fastq_ica_ids, fastq_file_list_id)
             fastq_input = [
                 AnalysisDataInput(parameterCode='fastqs', dataIds=fastq_ica_ids),
                 AnalysisDataInput(
@@ -136,8 +137,6 @@ def submit_dragen_run(
                     ),
                 ),
             ]
-            ic()
-            logger.info(f'Fastq input is {fastq_input}')
     else:
         raise ValueError('No valid input provided for either CRAM or FASTQ files.')
 

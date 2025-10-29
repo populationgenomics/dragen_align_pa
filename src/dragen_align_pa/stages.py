@@ -191,7 +191,6 @@ class UploadFastqFileList(CohortStage):
                 cohort=cohort,
                 outputs=outputs,
                 fastq_list_file_path_dict=fastq_list_file_path_dict,
-                bucket=BUCKET,
             )
 
             return self.make_outputs(target=cohort, data=outputs, jobs=upload_fastq_list_job)  # pyright: ignore[reportArgumentType]

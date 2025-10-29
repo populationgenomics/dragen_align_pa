@@ -166,9 +166,8 @@ def check_object_already_exists(
     file_name: str,
     folder_path: str,
     object_type: str,
-) -> str | None:
-    """Check if an object already exists in ICA, as trying to create another object at
-    the same path causes an error
+) -> tuple[str, str] | None:
+    """Check if an object already exists in ICA.
 
     Args:
         api_instance (project_data_api.ProjectDataApi): An instance of the ProjectDataApi
@@ -178,11 +177,11 @@ def check_object_already_exists(
         object_type (str): The type of hte object to create in ICA. Must be one of ['FILE', 'FOLDER']
 
     Raises:
-        NotImplementedError: Only checks for files with the status 'PARTIAL'
+        NotImplementedError: Only checks for files with the status 'PARTIAL' or 'AVAILABLE'
         icasdk.ApiException: Other API errors
 
     Returns:
-        str | None: The object ID, if it exists, or else None
+        tuple[str, str] | None: (object_ID, object_status) if it exists, or else None
     """
     query_params: dict[str, Sequence[str] | list[str] | str] = {
         'filePath': [f'{folder_path}/{file_name}'],
@@ -202,15 +201,22 @@ def check_object_already_exists(
             path_params=path_params,  # type: ignore[ReportUnknownVariableType]
             query_params=query_params,  # type: ignore[ReportUnknownVariableType]
         )  # type: ignore[ReportUnknownVariableType]
+
         if len(api_response.body['items']) == 0:  # type: ignore[ReportUnknownVariableType]
             return None
-        status: str | None = api_response.body['items'][0]['data']['details']['status']  # pyright: ignore[reportUnknownVariableType]
-        if object_type == 'FOLDER' or status == 'PARTIAL':
-            return api_response.body['items'][0]['data']['id']  # pyright: ignore[reportUnknownVariableType]
-        if status == 'AVAILABLE':  # pyright: ignore[reportPossiblyUnboundVariable]
-            return status
+
+        object_data = api_response.body['items'][0]['data']  # pyright: ignore[reportUnknownVariableType]
+        object_id = object_data['id']  # pyright: ignore[reportUnknownVariableType]
+        status: str = object_data['details'].get('status', 'UNKNOWN')  # pyright: ignore[reportUnknownVariableType]
+
+        if object_type == 'FOLDER':
+            return object_id, status  # Folders have status, e.g., 'AVAILABLE'
+
+        if status in ('PARTIAL', 'AVAILABLE'):
+            return object_id, status
+
         # Statuses are ["PARTIAL", "AVAILABLE", "ARCHIVING", "ARCHIVED", "UNARCHIVING", "DELETING", ]
-        raise NotImplementedError('Checking for other status is not implemented yet.')
+        raise NotImplementedError(f'Checking for file status "{status}" is not implemented yet.')
     except icasdk.ApiException as e:
         raise icasdk.ApiException(
             f'Exception when calling ProjectDataApi -> get_project_data_list: {e}',
@@ -224,7 +230,7 @@ def create_upload_object_id(
     file_name: str,
     folder_path: str,
     object_type: str,
-) -> str:
+) -> tuple[str, str]:
     """Create an object in ICA that can be used to upload data to,
     or to write analysis outputs into
 
@@ -240,18 +246,22 @@ def create_upload_object_id(
         icasdk.ApiException: Any API error
 
     Returns:
-        str: The ID of the object that was created, or the existing ID if it was already present.
+        tuple[str, str]: (object_ID, status)
+        Status will be from ICA, e.g. 'AVAILABLE', 'PARTIAL'.
     """
-    existing_object_id: str | None = check_object_already_exists(
+    existing_object_details: tuple[str, str] | None = check_object_already_exists(
         api_instance=api_instance,
         path_params=path_params,
         file_name=file_name,
         folder_path=folder_path,
         object_type=object_type,
     )
-    logger.info(f'{existing_object_id}')
-    if existing_object_id:
-        return existing_object_id
+
+    if existing_object_details:
+        object_id, status = existing_object_details
+        logger.info(f'Found existing {object_type} with ID {object_id} and status {status}')
+        return object_id, status
+
     logger.info(f'Creating a new {object_type} object at {folder_path}/{file_name}')
     try:
         if object_type == 'FILE':
@@ -270,7 +280,10 @@ def create_upload_object_id(
             path_params=path_params,  # type: ignore[ReportUnknownVariableType]
             body=body,
         )
-        return api_response.body['data']['id']  # type: ignore[ReportUnknownVariableType]
+        new_object_id = api_response.body['data']['id']  # type: ignore[ReportUnknownVariableType]
+        new_status = api_response.body['data']['details']['status']  # type: ignore[ReportUnknownVariableType]
+        logger.info(f'Created new {object_type} with ID {new_object_id} and status {new_status}')
+        return new_object_id, new_status
     except icasdk.ApiException as e:
         raise icasdk.ApiException(
             f'Exception when calling ProjectDataApi -> create_data_in_project: {e}',

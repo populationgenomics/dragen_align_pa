@@ -50,7 +50,7 @@ def _create_md5_output_folder(
     cohort_name: str,
     path_parameters: dict[str, str],
 ) -> str:
-    return ica_utils.create_upload_object_id(
+    object_id, _ = ica_utils.create_upload_object_id(
         api_instance=api_instance,
         path_params=path_parameters,
         sg_name=cohort_name,
@@ -58,6 +58,7 @@ def _create_md5_output_folder(
         folder_path=folder_path,
         object_type='FOLDER',
     )
+    return object_id
 
 
 def _get_md5_pipeline_outputs(
