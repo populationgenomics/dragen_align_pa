@@ -7,6 +7,7 @@ pipeline status checking, and data streaming.
 import hashlib
 import json
 import os
+from subprocess import CompletedProcess
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 if TYPE_CHECKING:
@@ -69,7 +70,7 @@ def find_ica_file_path_by_name(parent_folder: str, file_name: str) -> str:
         '-o',
         'json',
     ]
-    result = utils.run_subprocess_with_log(command, f'Find ICA file {file_name}')
+    result: CompletedProcess[Any] | None = utils.run_subprocess_with_log(command, f'Find ICA file {file_name}')
     try:
         data = json.loads(result.stdout)
         if not data.get('items'):

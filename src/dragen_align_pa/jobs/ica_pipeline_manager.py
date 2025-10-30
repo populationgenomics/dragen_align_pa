@@ -9,6 +9,7 @@ import json
 import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
+from typing import TypeAlias
 
 import cpg_utils
 from cpg_flow.targets import Cohort, SequencingGroup
@@ -18,7 +19,7 @@ from loguru import logger
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline
 from dragen_align_pa.utils import delete_pipeline_id_file
 
-ProcessingTarget = Cohort | SequencingGroup
+ProcessingTarget: TypeAlias = Cohort | SequencingGroup
 
 
 def manage_ica_pipeline_loop(  # noqa: PLR0915
@@ -55,7 +56,13 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
         allow_retry: Whether to retry a failed pipeline once.
         sleep_time_seconds: Time to sleep between polling loops.
     """
-    cohort_name = targets_to_process[0].name if targets_to_process else 'unknown'
+    if targets_to_process:
+        # Explicitly get the first target after checking the sequence is not empty
+        first_target = targets_to_process[0]
+        # Both Cohort and SequencingGroup have a .name attribute
+        cohort_name = first_target.name
+    else:
+        cohort_name = 'unknown'
     logger.info(f'Starting {pipeline_name} management job for {cohort_name}')
     logger.add(sink='tmp_errors.log', format='{time} - {level} - {message}', level='ERROR')
     logger.error(

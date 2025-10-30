@@ -1,6 +1,7 @@
 import re
 import subprocess
 from math import ceil
+from typing import Any
 
 import cpg_utils
 from cpg_flow.targets import Cohort, SequencingGroup
@@ -51,7 +52,7 @@ def run_subprocess_with_log(
     step_name: str,
     stdin_input: str | None = None,
     shell: bool = False,
-) -> None:
+) -> subprocess.CompletedProcess[Any] | None:
     """
     Runs a subprocess command with robust logging.
     Logs the command, its output, and errors if any occur.
