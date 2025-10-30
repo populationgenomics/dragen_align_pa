@@ -3,8 +3,6 @@ Create Hail Batch jobs for Somalier extract using a BashJob, following
 the standard workflow job structure.
 """
 
-import os
-
 from cpg_flow.filetypes import CramPath
 from cpg_flow.targets import SequencingGroup
 from cpg_flow.utils import can_reuse
@@ -51,9 +49,7 @@ def somalier_extract(
     b_somalier_sites = b.read_input(str(reference_path('somalier_sites')))
 
     # Define the output file within the job's temporary output directory
-    somalier_job.outfile = (
-        f'{os.environ.get("BATCH_TMPDIR", "/io")}/{sequencing_group.id}/{sequencing_group.id}.somalier'
-    )
+    somalier_job.out_somalier = somalier_job.outdir / f'{sequencing_group.id}.somalier'
 
     # Set the command. Use the localized file paths.
     somalier_job.command(
@@ -67,6 +63,6 @@ def somalier_extract(
     )
 
     # Write the declared output file to its final GCS location
-    b.write_output(somalier_job.outfile, str(out_somalier_path))
+    b.write_output(somalier_job.out_somalier, str(out_somalier_path))
 
     return somalier_job
