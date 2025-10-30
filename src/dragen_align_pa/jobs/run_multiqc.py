@@ -83,8 +83,8 @@ def run_multiqc(
     )
 
     # Declare the output files
-    multiqc_job.html_output = multiqc_job.outdir / f'{report_name}.html'
-    multiqc_job.json_output = multiqc_job.outdir / f'{report_name}_data/multiqc_data.json'
+    multiqc_job.html_output = multiqc_job.outdir[f'{report_name}.html']
+    multiqc_job.json_output = multiqc_job.outdir[f'{report_name}_data']['multiqc_data.json']
 
     # Write outputs to their final GCS locations
     b.write_output(multiqc_job.html_output, outputs['multiqc_report'])

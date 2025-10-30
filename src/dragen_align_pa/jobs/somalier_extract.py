@@ -43,13 +43,16 @@ def somalier_extract(
 
     # Read GCS inputs. Hail Batch will localize them.
     # read_input_group localizes CRAM and CRAI together.
-    b_cram = b.read_input_group(cram=str(cram_path.path), crai=str(cram_path.index_path))
+    b_cram = b.read_input_group(
+        cram=str(cram_path.path),
+        crai=str(cram_path.index_path),
+    )
     b_ref_fasta = b.read_input(str(reference_path('broad/ref_fasta')))
     b.read_input(str(reference_path('broad/ref_fasta')) + '.fai')  # Localize FAI
     b_somalier_sites = b.read_input(str(reference_path('somalier_sites')))
 
     # Define the output file within the job's temporary output directory
-    somalier_job.out_somalier = somalier_job.outdir / f'{sequencing_group.id}.somalier'
+    somalier_job.out_somalier = somalier_job.outdir[f'{sequencing_group.id}.somalier']
 
     # Set the command. Use the localized file paths.
     somalier_job.command(
