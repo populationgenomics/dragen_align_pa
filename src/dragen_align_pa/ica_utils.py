@@ -7,11 +7,11 @@ pipeline status checking, and data streaming.
 import hashlib
 import json
 import os
-from subprocess import CompletedProcess
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from subprocess import CompletedProcess
 
 import cpg_utils
 import icasdk
