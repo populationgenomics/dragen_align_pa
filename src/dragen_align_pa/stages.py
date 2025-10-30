@@ -466,7 +466,6 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
 
 
 @stage(
-    analysis_type='ica_data_download',
     required_stages=[
         ManageDragenPipeline,
         DownloadCramFromIca,
