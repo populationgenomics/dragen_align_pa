@@ -40,11 +40,11 @@ def _get_fastq_ica_id_list(
         api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
             path_params=path_parameters,  # pyright: ignore[reportArgumentType]
             query_params={'filename': batch_filenames, 'filenameMatchMode': 'EXACT'},
-        )  # type: ignore
+        )  # type: ignore[no-untyped-call]
         for item in api_response.body['items']:  # pyright: ignore[reportUnknownArgumentType]
             file_id = item['data']['id']  # pyright: ignore[reportUnknownVariableType]
             file_name = item['data']['details']['name']  # pyright: ignore[reportUnknownVariableType]
-            fastq_ids.append(file_id)
+            fastq_ids.append(file_id)  # type: ignore[arg-type]
             fastq_ids_and_filenames.append(f'{file_id}\t{file_name}')
 
     if len(fastq_ids) != len(fastq_filenames):
