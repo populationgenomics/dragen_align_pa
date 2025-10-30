@@ -53,15 +53,22 @@ def somalier_extract(
 
     # Define the output file within the job's temporary output directory
     somalier_job.out_somalier = somalier_job.outdir[f'{sequencing_group.id}.somalier']
+    final_output_path_in_job = f'{somalier_job.outdir}/{sequencing_group.id}.somalier'
 
     # Set the command. Use the localized file paths.
     somalier_job.command(
         f"""
         somalier extract \\
-        -d {somalier_job.outdir} \\
+        -d $BATCH_TMPDIR/{somalier_job.outdir} \\
         --sites {b_somalier_sites} \\
         -f {b_ref_fasta} \\
         {b_cram['cram']}
+
+        CRAM_BASENAME=$(basename {b_cram['cram']})
+        SOMALIER_OUTPUT_NAME=${{CRAM_BASENAME%.cram}}.somalier
+        CREATED_FILE_PATH=$BATCH_TMPDIR/{somalier_job.outdir}/$SOMALIER_OUTPUT_NAME
+
+        mv $CREATED_FILE_PATH {final_output_path_in_job}
         """
     )
 
