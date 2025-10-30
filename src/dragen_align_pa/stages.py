@@ -12,15 +12,9 @@ from cpg_flow.stage import (
     stage,  # type: ignore[ReportUnknownVariableType]
 )
 from cpg_flow.targets import Cohort, SequencingGroup
-from cpg_utils.config import output_path
 from loguru import logger
 
 from dragen_align_pa.constants import (
-    BUCKET,
-    DRAGEN_VERSION,
-    GCP_FOLDER_FOR_ICA_DOWNLOAD,
-    GCP_FOLDER_FOR_ICA_PREP,
-    GCP_FOLDER_FOR_RUNNING_PIPELINE,
     READS_TYPE,
 )
 from dragen_align_pa.jobs import (
@@ -39,6 +33,7 @@ from dragen_align_pa.jobs import (
     upload_fastq_file_list,
     validate_md5_sums,
 )
+from dragen_align_pa.utils import get_metrics_path, get_output_path, get_pipeline_path, get_prep_path, get_qc_path
 
 if TYPE_CHECKING:
     from hailtop.batch.job import PythonJob
@@ -59,7 +54,7 @@ class PrepareIcaForDragenAnalysis(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
         results: dict[str, cpg_utils.Path] = {
             **{
-                sg_name: BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{sg_name}_output_fid.json'
+                sg_name: get_prep_path(filename=f'{sg_name}_output_fid.json')
                 for sg_name in cohort.get_sequencing_group_ids()
             }
         }
@@ -89,10 +84,10 @@ class FastqIntakeQc(CohortStage):
 
     def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
         intake_qc_results: dict[str, cpg_utils.Path] = {
-            'fastq_ids_outpath': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_fastq_ids.txt',
-            'md5sum_pipeline_run': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_ica_md5sum_pipeline.json',
-            'md5sum_pipeline_success': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_md5_pipeline_success',
-            f'{cohort.name}_md5_errors': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_md5_errors.log',
+            'fastq_ids_outpath': get_prep_path(filename=f'{cohort.name}_fastq_ids.txt'),
+            'md5sum_pipeline_run': get_prep_path(filename=f'{cohort.name}_ica_md5sum_pipeline.json'),
+            'md5sum_pipeline_success': get_prep_path(filename=f'{cohort.name}_md5_pipeline_success'),
+            f'{cohort.name}_md5_errors': get_prep_path(filename=f'{cohort.name}_md5_errors.log'),
         }
         return intake_qc_results
 
@@ -114,7 +109,7 @@ class DownloadMd5Results(CohortStage):
     """
 
     def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
-        return {'ica_md5sum_file': BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_ica_md5sum.md5sum'}
+        return {'ica_md5sum_file': get_prep_path(filename=f'{cohort.name}_ica_md5sum.md5sum')}
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
@@ -139,7 +134,7 @@ class DownloadMd5Results(CohortStage):
 @stage(required_stages=[DownloadMd5Results])
 class ValidateMd5Sums(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
-        return BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_md5_validation_success.txt'
+        return get_prep_path(filename=f'{cohort.name}_md5_validation_success.txt')
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
@@ -164,7 +159,7 @@ class MakeFastqFileList(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
         results: dict[str, cpg_utils.Path] = {
             **{
-                sg_name: BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{sg_name}_fastq_list.csv'
+                sg_name: get_prep_path(filename=f'{sg_name}_fastq_list.csv')
                 for sg_name in cohort.get_sequencing_group_ids()
             }
         }
@@ -185,7 +180,7 @@ class MakeFastqFileList(CohortStage):
 @stage
 class UploadDataToIca(SequencingGroupStage):
     def expected_outputs(self, sequencing_group: SequencingGroup) -> cpg_utils.Path:
-        return BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{sequencing_group.name}_fids.json'
+        return get_prep_path(filename=f'{sequencing_group.name}_fids.json')
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         output: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
@@ -206,7 +201,7 @@ class UploadDataToIca(SequencingGroupStage):
 @stage(required_stages=[MakeFastqFileList, PrepareIcaForDragenAnalysis])
 class UploadFastqFileList(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:  # pyright: ignore[reportIncompatibleMethodOverride]
-        results: cpg_utils.Path = BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_fastq_csv_file_list_fid.json'
+        results: cpg_utils.Path = get_prep_path(filename=f'{cohort.name}_fastq_csv_file_list_fid.json')
         return results
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
@@ -254,13 +249,17 @@ class ManageDragenPipeline(CohortStage):
         self,
         cohort: Cohort,
     ) -> dict[str, cpg_utils.Path]:
-        sg_bucket: cpg_utils.Path = cohort.dataset.prefix()
-        prefix: cpg_utils.Path = sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE
-        results: dict[str, cpg_utils.Path] = {f'{cohort.name}_errors': prefix / f'{cohort.name}_errors.log'}
+        results: dict[str, cpg_utils.Path] = {
+            f'{cohort.name}_errors': get_pipeline_path(filename=f'{cohort.name}_errors.log')
+        }
         for sequencing_group in cohort.get_sequencing_groups():
             sg_name: str = sequencing_group.name
-            results |= {f'{sg_name}_success': prefix / f'{sg_name}_pipeline_success.json'}
-            results |= {f'{sg_name}_pipeline_id_and_arguid': prefix / f'{sg_name}_pipeline_id_and_arguid.json'}
+            results |= {f'{sg_name}_success': get_pipeline_path(filename=f'{sg_name}_pipeline_success.json')}
+            results |= {
+                f'{sg_name}_pipeline_id_and_arguid': get_pipeline_path(
+                    filename=f'{sg_name}_pipeline_id_and_arguid.json'
+                )
+            }
 
         return results
 
@@ -307,14 +306,14 @@ class ManageDragenMlr(CohortStage):
         self,
         cohort: Cohort,
     ) -> dict[str, cpg_utils.Path]:
-        sg_bucket: cpg_utils.Path = cohort.dataset.prefix()
-        prefix: cpg_utils.Path = sg_bucket / GCP_FOLDER_FOR_RUNNING_PIPELINE
-        results: dict[str, cpg_utils.Path] = {f'{cohort.name}_mlr_errors': prefix / f'{cohort.name}_mlr_errors.log'}
+        results: dict[str, cpg_utils.Path] = {
+            f'{cohort.name}_mlr_errors': get_pipeline_path(filename=f'{cohort.name}_mlr_errors.log')
+        }
         for sequencing_group in cohort.get_sequencing_groups():
             sg_name: str = sequencing_group.name
             results |= {
-                f'{sg_name}_mlr_success': prefix / f'{sg_name}_mlr_pipeline_success.json',
-                f'{sg_name}_mlr_pipeline_id': prefix / f'{sg_name}_mlr_pipeline_id.json',
+                f'{sg_name}_mlr_success': get_pipeline_path(filename=f'{sg_name}_mlr_pipeline_success.json'),
+                f'{sg_name}_mlr_pipeline_id': get_pipeline_path(filename=f'{sg_name}_mlr_pipeline_id.json'),
             }
         return results
 
@@ -352,10 +351,9 @@ class DownloadCramFromIca(SequencingGroupStage):
         self,
         sequencing_group: SequencingGroup,
     ) -> dict[str, cpg_utils.Path]:
-        bucket_name: cpg_utils.Path = sequencing_group.dataset.prefix()
         return {
-            'cram': bucket_name / GCP_FOLDER_FOR_ICA_DOWNLOAD / 'cram' / f'{sequencing_group.name}.cram',
-            'crai': bucket_name / GCP_FOLDER_FOR_ICA_DOWNLOAD / 'cram' / f'{sequencing_group.name}.cram.crai',
+            'cram': get_output_path(filename=f'cram/{sequencing_group.name}.cram'),
+            'crai': get_output_path(filename=f'cram/{sequencing_group.name}.cram.crai'),
         }
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
@@ -391,16 +389,9 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         self,
         sequencing_group: SequencingGroup,
     ) -> dict[str, cpg_utils.Path]:
-        bucket_name: cpg_utils.Path = sequencing_group.dataset.prefix()
         return {
-            'gvcf': bucket_name
-            / GCP_FOLDER_FOR_ICA_DOWNLOAD
-            / 'base_gvcf'
-            / f'{sequencing_group.name}.hard-filtered.gvcf.gz',
-            'gvcf_tbi': bucket_name
-            / GCP_FOLDER_FOR_ICA_DOWNLOAD
-            / 'base_gvcf'
-            / f'{sequencing_group.name}.hard-filtered.gvcf.gz.tbi',
+            'gvcf': get_output_path(filename=f'base_gvcf/{sequencing_group.name}.hard-filtered.gvcf.gz'),
+            'gvcf_tbi': get_output_path(filename=f'base_gvcf/{sequencing_group.name}.hard-filtered.gvcf.gz.tbi'),
         }
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
@@ -441,16 +432,9 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
         self,
         sequencing_group: SequencingGroup,
     ) -> dict[str, cpg_utils.Path]:
-        bucket_name: cpg_utils.Path = sequencing_group.dataset.prefix()
         return {
-            'gvcf': bucket_name
-            / GCP_FOLDER_FOR_ICA_DOWNLOAD
-            / 'recal_gvcf'
-            / f'{sequencing_group.name}.hard-filtered.recal.gvcf.gz',
-            'gvcf_tbi': bucket_name
-            / GCP_FOLDER_FOR_ICA_DOWNLOAD
-            / 'recal_gvcf'
-            / f'{sequencing_group.name}.hard-filtered.recal.gvcf.gz.tbi',
+            'gvcf': get_output_path(filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz'),
+            'gvcf_tbi': get_output_path(filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz.tbi'),
         }
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
@@ -501,8 +485,7 @@ class DownloadDataFromIca(SequencingGroupStage):
         self,
         sequencing_group: SequencingGroup,
     ) -> cpg_utils.Path:
-        bucket_name: cpg_utils.Path = sequencing_group.dataset.prefix()
-        return bucket_name / GCP_FOLDER_FOR_ICA_DOWNLOAD / 'dragen_metrics' / f'{sequencing_group.name}'
+        return get_metrics_path(filename=f'{sequencing_group.name}')
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
         outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
@@ -536,9 +519,7 @@ class SomalierExtract(SequencingGroupStage):
         Expected Somalier fingerprint output file.
         Uses SG ID for filename.
         """
-        # Define the output path within the main QC output area
-        somalier_dir = sequencing_group.dataset.prefix() / GCP_FOLDER_FOR_ICA_DOWNLOAD / 'somalier'
-        return somalier_dir / f'{sequencing_group.id}.somalier'
+        return get_output_path(filename=f'{sequencing_group.id}.somalier')
 
     def queue_jobs(
         self,
@@ -581,11 +562,9 @@ class SomalierExtract(SequencingGroupStage):
 @stage(required_stages=[DownloadDataFromIca, SomalierExtract])
 class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:  # pyright: ignore[reportIncompatibleMethodOverride]
-        multiqc_data: str = output_path(f'ica/{DRAGEN_VERSION}/qc/{cohort.name}_multiqc_data.json')
-        multiqc_report: str = output_path(f'ica/{DRAGEN_VERSION}/qc/{cohort.name}_multiqc_report.html', category='web')
         return {
-            'multiqc_data': multiqc_data,
-            'multiqc_report': multiqc_report,
+            'multiqc_data': str(get_output_path(filename=f'{cohort.name}_multiqc_data.json')),
+            'multiqc_report': str(get_qc_path(filename=f'{cohort.name}_multiqc_report.html', category='web')),
         }
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
@@ -625,9 +604,7 @@ class DeleteDataInIca(CohortStage):
     """
 
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
-        bucket_name: cpg_utils.Path = cohort.dataset.prefix()
-        # Changed to cohort-level placeholder
-        return bucket_name / GCP_FOLDER_FOR_ICA_PREP / f'{cohort.name}_delete_placeholder.txt'
+        return get_prep_path(filename=f'{cohort.name}_delete_placeholder.txt')
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         # Get all analysis output folder FIDs (generated data)

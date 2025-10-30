@@ -5,10 +5,12 @@ from typing import Any
 
 import cpg_utils
 from cpg_flow.targets import Cohort, SequencingGroup
-from cpg_utils.config import get_driver_image
+from cpg_utils.config import get_driver_image, output_path
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
+
+from dragen_align_pa.constants import DRAGEN_VERSION
 
 
 def validate_cli_path_input(path: str, arg_name: str) -> None:
@@ -98,3 +100,28 @@ def initialise_python_job(
     )
     py_job.image(get_driver_image())
     return py_job
+
+
+def get_prep_path(filename: str) -> cpg_utils.Path:
+    """Gets a path in the 'prepare' directory."""
+    return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/prepare/{filename}'))
+
+
+def get_pipeline_path(filename: str) -> cpg_utils.Path:
+    """Gets a path in the 'pipelines' (state) directory."""
+    return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/pipelines/{filename}'))
+
+
+def get_output_path(filename: str, category: str | None = None) -> cpg_utils.Path:
+    """Gets a path in the final 'output' directory."""
+    return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/output/{filename}', category=category))
+
+
+def get_metrics_path(filename: str, category: str | None = None) -> cpg_utils.Path:
+    """Gets a path in the 'metrics' directory."""
+    return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/dragen_metrics/{filename}', category=category))
+
+
+def get_qc_path(filename: str, category: str | None = None) -> cpg_utils.Path:
+    """Gets a path in the 'qc' directory."""
+    return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/qc/{filename}', category=category))
