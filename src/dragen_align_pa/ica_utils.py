@@ -370,9 +370,9 @@ def stream_file_to_gcs_and_verify(
         download_url = url_response.body['url']  # pyright: ignore[reportUnknownVariableType]
 
         # 2. Download and upload as a stream
-        md5_hasher = hashlib.md5()
+        md5_hasher = hashlib.md5()  # noqa: S324
         with requests.get(
-            download_url,
+            download_url,  # pyright: ignore[reportUnknownArgumentType]
             stream=True,
             timeout=600,
         ) as r:  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
