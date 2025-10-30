@@ -36,7 +36,7 @@ from dragen_align_pa.jobs import (
 from dragen_align_pa.utils import get_metrics_path, get_output_path, get_pipeline_path, get_prep_path, get_qc_path
 
 if TYPE_CHECKING:
-    from hailtop.batch.job import PythonJob
+    from hailtop.batch.job import BashJob, PythonJob
 
 
 logger.remove(0)
@@ -542,7 +542,7 @@ class SomalierExtract(SequencingGroupStage):
 
         out_somalier_path = self.expected_outputs(sequencing_group)
 
-        job: PythonJob | None = somalier_extract.somalier_extract(
+        job: BashJob | None = somalier_extract.somalier_extract(
             sequencing_group=sequencing_group,
             cram_path=CramPath(cram_path, crai_path),
             out_somalier_path=out_somalier_path,
@@ -570,7 +570,7 @@ class RunMultiQc(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         outputs: dict[str, str] = self.expected_outputs(cohort=cohort)
 
-        multiqc_job: PythonJob | None = run_multiqc.run_multiqc(
+        multiqc_job: BashJob | None = run_multiqc.run_multiqc(
             cohort=cohort,
             inputs=inputs,
             outputs=outputs,
