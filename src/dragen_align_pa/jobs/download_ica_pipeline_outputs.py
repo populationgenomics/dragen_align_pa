@@ -6,7 +6,6 @@ import json
 from typing import Literal
 
 import cpg_utils
-import icasdk
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.config import config_retrieve, get_driver_image
 from google.cloud import storage
@@ -18,7 +17,6 @@ from dragen_align_pa import ica_utils, utils
 from dragen_align_pa.constants import (
     BUCKET_NAME,
     GCP_FOLDER_FOR_ICA_DOWNLOAD,
-    ICA_REST_ENDPOINT,
 )
 
 
@@ -87,11 +85,9 @@ def _run(
 
     # --- Secure ICA Authentication ---
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
-    configuration = icasdk.Configuration(host=ICA_REST_ENDPOINT)
-    configuration.api_key['ApiKeyAuth'] = secrets['apiKey']
     path_parameters: dict[str, str] = {'projectId': secrets['projectID']}
 
-    with icasdk.ApiClient(configuration=configuration) as api_client:
+    with ica_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
 
         # --- List, filter, and download files ---

@@ -1,12 +1,10 @@
 from typing import Literal
 
-import icasdk
 from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_analysis_api
 from loguru import logger
 
 from dragen_align_pa import ica_utils
-from dragen_align_pa.constants import ICA_REST_ENDPOINT
 
 
 def run(ica_pipeline_id: str | dict[str, str], is_mlr: bool = False) -> str:
@@ -25,16 +23,13 @@ def run(ica_pipeline_id: str | dict[str, str], is_mlr: bool = False) -> str:
     """
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
-    api_key: str = secrets['apiKey']
 
-    configuration = icasdk.Configuration(host=ICA_REST_ENDPOINT)
-    configuration.api_key['ApiKeyAuth'] = api_key
     pipeline_id: str = ica_pipeline_id['pipeline_id'] if isinstance(ica_pipeline_id, dict) else ica_pipeline_id
 
     logger.info(
         f'Monitoring pipeline run {pipeline_id}',
     )
-    with icasdk.ApiClient(configuration=configuration) as api_client:
+    with ica_utils.get_ica_api_client() as api_client:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         if not is_mlr:
             path_params: dict[str, str] = {'projectId': project_id}

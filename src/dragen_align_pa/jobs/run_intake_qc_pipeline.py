@@ -12,7 +12,7 @@ from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
 def run_md5_pipeline(
     cohort_name: str,
     ica_fastq_ids: list[str],
-    api_config: icasdk.Configuration,
+    api_instance: project_analysis_api.ProjectAnalysisApi,
     project_id: str,
     ar_guid: str,
     md5_outputs_folder_id: str,
@@ -30,15 +30,11 @@ def run_md5_pipeline(
         analysisInput=NextflowAnalysisInput(inputs=[AnalysisDataInput(parameterCode='in', dataIds=ica_fastq_ids)]),
     )
 
-    with icasdk.ApiClient(configuration=api_config) as api_client:
-        api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
-        path_params: dict[str, str] = {'projectId': project_id}
-        try:
-            api_response = api_instance.create_nextflow_analysis(  # pyright: ignore[reportUnknownVariableType]
-                path_params=path_params, header_params=header_params, body=body
-            )
-            return api_response.body['id']  # pyright: ignore[reportUnknownVariableType]
-        except icasdk.ApiException as e:
-            raise icasdk.ApiException(
-                f'Exception when calling ProjectAnalysisApi->create_nextflow_analysis: {e}'
-            ) from e
+    path_params: dict[str, str] = {'projectId': project_id}
+    try:
+        api_response = api_instance.create_nextflow_analysis(  # pyright: ignore[reportUnknownVariableType]
+            path_params=path_params, header_params=header_params, body=body
+        )
+        return api_response.body['id']  # pyright: ignore[reportUnknownVariableType]
+    except icasdk.ApiException as e:
+        raise icasdk.ApiException(f'Exception when calling ProjectAnalysisApi->create_nextflow_analysis: {e}') from e

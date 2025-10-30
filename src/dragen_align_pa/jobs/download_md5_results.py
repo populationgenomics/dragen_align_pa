@@ -7,7 +7,6 @@ import json
 from typing import Literal
 
 import cpg_utils
-import icasdk
 import requests
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve, get_driver_image
@@ -16,7 +15,7 @@ from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_utils, utils
-from dragen_align_pa.constants import BUCKET_NAME, ICA_REST_ENDPOINT
+from dragen_align_pa.constants import BUCKET_NAME
 
 
 def download_md5_results_job(
@@ -52,15 +51,12 @@ def _run(
     """
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
-    api_key: str = secrets['apiKey']
 
-    configuration = icasdk.Configuration(host=ICA_REST_ENDPOINT)
-    configuration.api_key['ApiKeyAuth'] = api_key
     path_parameters: dict[str, str] = {'projectId': project_id}
 
     folder_path: str = f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}'
 
-    with icasdk.ApiClient(configuration=configuration) as api_client:
+    with ica_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
 
         # Get the ID

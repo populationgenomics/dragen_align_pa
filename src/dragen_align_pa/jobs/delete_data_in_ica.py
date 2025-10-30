@@ -2,7 +2,6 @@ import json
 from typing import Literal
 
 import cpg_utils
-import icasdk
 from cpg_flow.targets import Cohort
 from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
@@ -10,7 +9,6 @@ from icasdk.exceptions import ApiException, ApiValueError
 from loguru import logger
 
 from dragen_align_pa import ica_utils, utils
-from dragen_align_pa.constants import ICA_REST_ENDPOINT
 
 
 def delete_data_in_ica(
@@ -40,13 +38,9 @@ def _run(
 ) -> None:
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
-    api_key: str = secrets['apiKey']
 
     path_params: dict[str, str] = {'projectId': project_id}
     fids: list[str] = []
-
-    configuration = icasdk.Configuration(host=ICA_REST_ENDPOINT)
-    configuration.api_key['ApiKeyAuth'] = api_key
 
     # 1. Collect all generated data FIDs (analysis output folders)
     logger.info(f'Collecting {len(analysis_output_fids_paths)} analysis output folder FIDs...')
@@ -82,7 +76,7 @@ def _run(
 
     # 4. Delete all collected FIDs
     logger.info(f'Attempting to delete {len(fids)} total data objects from ICA...')
-    with icasdk.ApiClient(configuration=configuration) as api_client:
+    with ica_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
         for f_id in fids:
             request_path_params = path_params | {'dataId': f_id}

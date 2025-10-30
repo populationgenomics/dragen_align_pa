@@ -6,7 +6,6 @@ from icasdk.apis.tags import project_analysis_api
 from loguru import logger
 
 from dragen_align_pa import ica_utils
-from dragen_align_pa.constants import ICA_REST_ENDPOINT
 
 
 def run(ica_pipeline_id: str, is_mlr: bool = False) -> dict[str, str]:
@@ -25,10 +24,6 @@ def run(ica_pipeline_id: str, is_mlr: bool = False) -> dict[str, str]:
     """
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
-    api_key: str = secrets['apiKey']
-
-    configuration = icasdk.Configuration(host=ICA_REST_ENDPOINT)
-    configuration.api_key['ApiKeyAuth'] = api_key
 
     if not is_mlr:
         path_parameters: dict[str, str] = {'projectId': project_id}
@@ -38,7 +33,7 @@ def run(ica_pipeline_id: str, is_mlr: bool = False) -> dict[str, str]:
         }
     path_parameters = path_parameters | {'analysisId': ica_pipeline_id}
 
-    with icasdk.ApiClient(configuration=configuration) as api_client:
+    with ica_utils.get_ica_api_client() as api_client:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         try:
             api_instance.abort_analysis(

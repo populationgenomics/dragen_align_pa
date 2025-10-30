@@ -1,17 +1,15 @@
 from typing import Literal
 
 import cpg_utils
-import icasdk
 import requests
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve, get_driver_image
 from hailtop.batch.job import PythonJob
-from icasdk import Configuration
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_utils, utils
-from dragen_align_pa.constants import BUCKET_NAME, ICA_REST_ENDPOINT
+from dragen_align_pa.constants import BUCKET_NAME
 
 
 def upload_fastq_file_list(
@@ -48,13 +46,11 @@ def _run(
 ) -> None:
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
-    api_key: str = secrets['apiKey']
-    configuration: Configuration = Configuration(host=ICA_REST_ENDPOINT)
-    configuration.api_key['ApiKeyAuth'] = api_key
+
     path_parameters: dict[str, str] = {'projectId': project_id}
     sg_and_fastq_list: list[str] = []
 
-    with icasdk.ApiClient(configuration=configuration) as api_client:
+    with ica_utils.get_ica_api_client() as api_client:
         api_instance: project_data_api.ProjectDataApi = project_data_api.ProjectDataApi(  # pyright: ignore[reportUnknownVariableType]
             api_client,
         )

@@ -3,16 +3,15 @@ from functools import partial
 from typing import Literal
 
 import cpg_utils
-import icasdk
 import pandas as pd
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve, get_driver_image, try_get_ar_guid
 from hailtop.batch.job import PythonJob
-from icasdk.apis.tags import project_data_api
+from icasdk.apis.tags import project_analysis_api, project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_utils, utils
-from dragen_align_pa.constants import BUCKET_NAME, ICA_REST_ENDPOINT
+from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.jobs import run_intake_qc_pipeline
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
 
@@ -24,7 +23,6 @@ def _get_fastq_ica_id_list(
     path_parameters: dict[str, str],
 ) -> list[str]:
     """
-
     Finds ICA file IDs for a list of fastq filenames.
     """
     fastq_ids: list[str] = []
@@ -86,7 +84,7 @@ def _create_md5_output_folder(
 def _submit_md5_run(
     cohort_name: str,
     ica_fastq_ids: list[str],
-    api_config: icasdk.Configuration,
+    api_instance: project_analysis_api.ProjectAnalysisApi,
     project_id: str,
     ar_guid: str,
     md5_outputs_folder_id: str,
@@ -99,7 +97,7 @@ def _submit_md5_run(
     md5_pipeline_id: str = run_intake_qc_pipeline.run_md5_pipeline(
         cohort_name=cohort_name,
         ica_fastq_ids=ica_fastq_ids,
-        api_config=api_config,
+        api_instance=api_instance,
         project_id=project_id,
         ar_guid=ar_guid,
         md5_outputs_folder_id=md5_outputs_folder_id,
@@ -153,13 +151,10 @@ def _run_management(
 
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
-    api_key: str = secrets['apiKey']
 
-    configuration = icasdk.Configuration(host=ICA_REST_ENDPOINT)
-    configuration.api_key['ApiKeyAuth'] = api_key
     path_parameters: dict[str, str] = {'projectId': project_id}
 
-    with icasdk.ApiClient(configuration=configuration) as api_client:
+    with ica_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
 
         # Get all ica file ids for the fastq files
@@ -188,14 +183,14 @@ def _run_management(
         _submit_md5_run,
         cohort_name=cohort_name,
         ica_fastq_ids=ica_fastq_ids,
-        api_config=configuration,
+        api_instance=api_instance,
         project_id=project_id,
         ar_guid=ar_guid,
         md5_outputs_folder_id=md5_outputs_folder_id,
     )
 
     def _create_submit_callable_factory(target_name: str) -> Callable[[], str]:
-        _ = target_name  # Unused, we know it's the cohort_name
+        _ = target_name
         return submit_callable
 
     manage_ica_pipeline_loop(

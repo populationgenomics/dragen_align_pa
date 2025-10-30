@@ -11,7 +11,6 @@ Uses a hybrid PythonJob approach:
 import os
 from typing import Literal
 
-import icasdk
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.config import config_retrieve, get_driver_image
 from hailtop.batch.job import PythonJob
@@ -19,7 +18,7 @@ from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_utils, utils
-from dragen_align_pa.constants import BUCKET_NAME, ICA_REST_ENDPOINT
+from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.utils import validate_cli_path_input
 
 
@@ -104,29 +103,24 @@ def _run(
     project_id: str = secrets['projectID']
     path_params: dict[str, str] = {'projectId': project_id}
 
-    configuration = icasdk.Configuration(host=ICA_REST_ENDPOINT)
-    configuration.api_key['ApiKeyAuth'] = secrets['apiKey']
-
     # 3. --- Check File Existence ---
     cram_status: str | None = None
-    with icasdk.ApiClient(configuration=configuration) as api_client:
+    with ica_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
         cram_status = ica_utils.check_file_existence(
-            api_instance,
-            path_params,
-            paths['ica_folder_path'],
-            paths['cram_name'],
+            api_instance=api_instance,
+            path_params=path_params,
+            ica_folder_path=paths['ica_folder_path'],
+            cram_name=paths['cram_name'],
         )
 
-    # 4. --- Perform Upload (if needed) ---
-    ica_utils.perform_upload_if_needed(cram_status, paths)
+        # 4. --- Perform Upload (if needed) ---
+        ica_utils.perform_upload_if_needed(cram_status, paths)
 
-    # 5. --- Get Final File ID and Write Output ---
-    with icasdk.ApiClient(configuration=configuration) as api_client:
-        api_instance = project_data_api.ProjectDataApi(api_client)
+        # 5. --- Get Final File ID and Write Output ---
         ica_utils.finalize_upload(
-            api_instance,
-            path_params,
-            paths,
-            output_path_str,
+            api_instance=api_instance,
+            path_params=path_params,
+            paths=paths,
+            output_path_str=output_path_str,
         )

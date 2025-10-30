@@ -14,7 +14,6 @@ from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
 from loguru import logger
 
 from dragen_align_pa import ica_utils
-from dragen_align_pa.constants import ICA_REST_ENDPOINT
 
 
 def _prepare_fastq_inputs(
@@ -282,15 +281,11 @@ def run(
 
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
-    api_key: str = secrets['apiKey']
-
-    configuration = icasdk.Configuration(host=ICA_REST_ENDPOINT)
-    configuration.api_key['ApiKeyAuth'] = api_key
 
     with analysis_output_fid_path.open() as analysis_outputs_fid_handle:
         analysis_output_fid: dict[str, str] = json.load(analysis_outputs_fid_handle)
 
-    with icasdk.ApiClient(configuration=configuration) as api_client:
+    with ica_utils.get_ica_api_client() as api_client:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         path_params: dict[str, str] = {'projectId': project_id}
         analysis_run_id: str = submit_dragen_run(

@@ -4,9 +4,11 @@ API and CLI. It provides helper functions for authentication, file/folder operat
 pipeline status checking, and data streaming.
 """
 
+import contextlib
 import hashlib
 import json
 import os
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 if TYPE_CHECKING:
@@ -19,12 +21,14 @@ import requests
 from google.cloud import exceptions as gcs_exceptions
 from google.cloud import secretmanager
 from google.cloud.storage.bucket import Bucket
+from icasdk import ApiClient, Configuration
 from icasdk.apis.tags import project_analysis_api, project_data_api
+from icasdk.exceptions import ApiException
 from icasdk.model.create_data import CreateData
 from loguru import logger
 
 from dragen_align_pa import utils
-from dragen_align_pa.constants import ICA_CLI_SETUP
+from dragen_align_pa.constants import ICA_CLI_SETUP, ICA_REST_ENDPOINT
 
 # --- Secret Management ---
 
@@ -49,6 +53,29 @@ def get_ica_secrets() -> dict[Literal['projectID', 'apiKey'], str]:
         request={'name': secret_path},
     )
     return json.loads(response.payload.data.decode('UTF-8'))
+
+
+@contextlib.contextmanager
+def get_ica_api_client() -> Iterator[ApiClient]:
+    """
+    Provides a context-managed icasdk.ApiClient.
+    Handles fetching secrets, configuring, and closing the client.
+    """
+    secrets: dict[Literal['projectID', 'apiKey'], str] = get_ica_secrets()
+    api_key: str = secrets['apiKey']
+
+    configuration = Configuration(host=ICA_REST_ENDPOINT)
+    configuration.api_key['ApiKeyAuth'] = api_key
+
+    with ApiClient(configuration=configuration) as api_client:
+        try:
+            yield api_client
+        except ApiException as e:
+            logger.error(f'ICA API Exception caught by context manager: {e}')
+            raise
+        except Exception as e:
+            logger.error(f'Non-API Exception caught by context manager: {e}')
+            raise
 
 
 def find_ica_file_path_by_name(parent_folder: str, file_name: str) -> str:
