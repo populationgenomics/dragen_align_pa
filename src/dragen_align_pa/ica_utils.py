@@ -70,7 +70,7 @@ def find_ica_file_path_by_name(parent_folder: str, file_name: str) -> str:
         '-o',
         'json',
     ]
-    result: CompletedProcess[Any] | None = utils.run_subprocess_with_log(command, f'Find ICA file {file_name}')
+    result: CompletedProcess[Any] = utils.run_subprocess_with_log(command, f'Find ICA file {file_name}')
     try:
         data = json.loads(result.stdout)
         if not data.get('items'):
