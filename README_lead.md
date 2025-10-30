@@ -25,14 +25,14 @@ When a DRAGEN job is submitted to ICA, the pipeline writes a state file to GCS t
 
 This approach makes the pipeline resumable. If our internal Hail Batch job is interrupted, re-launching it will cause the pipeline to find this state file, read the job ID, and simply resume monitoring the already-running job instead of submitting a duplicate.
 
-4. __Explicit Cancellation__ 
+4. __Explicit Cancellation__
 Cancelling a job is an active process.
 
 To cancel, a user sets a "cancel" flag in the pipeline's configuration file and re-launches the pipeline.
 
 The pipeline manager detects this flag, reads the job ID from the GCS state file, and sends an explicit "abort" command to the ICA platform. It then deletes the state file, "resetting" the pipeline for that sample.
 
-5. __Hybrid Tooling__ 
+5. __Hybrid Tooling__
 The pipeline uses the best tool for each task:
 
 ICA SDK (Python): Used for all API interactions, such as submitting jobs, checking ob status, and getting download links.
@@ -53,7 +53,7 @@ source CRAM file to ICA to prepare it for the DRAGEN job.
 
 Download stages are optimized to stream data directly from  ICA to GCS without landing on the job's local disk. For key outputs (like the final CRAM), the pipeline verifies the file's integrity by checking its MD5 checksum as it's being downloaded.
 
-8. __Automated Cleanup__ 
+8. __Automated Cleanup__
 A final stage is included to manage costs. It gathers the IDs of all files and folders created during the run (both the uploaded source files and the DRAGEN results) and sends a command to delete them all from the ICA platform.
 
 ---

@@ -442,7 +442,7 @@ def list_and_filter_ica_files(
             query_params['pageToken'] = page_token
 
         try:
-            api_response = api_instance.get_project_data_list(  # pyrisght: ignore[reportUnknownVariableType] # pyright: ignore[reportUnknownVariableType]
+            api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
                 path_params=path_parameters,  # pyright: ignore[reportArgumentType]
                 query_params=query_params,  # type: ignore[reportArgumentType]
             )
@@ -529,7 +529,7 @@ def stream_files_to_gcs(
             logger.error(
                 f'Failed to stream/download {file_name} (ID: {file_id}): {e}',
             )
-        except gcs_exceptions.GoogleCloudError as e:  # <-- This is the more specific exception
+        except gcs_exceptions.GoogleCloudError as e:
             logger.error(f'An error occurred uploading to GCS for {file_name}: {e}')
 
 

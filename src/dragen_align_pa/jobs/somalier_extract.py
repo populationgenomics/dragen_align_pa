@@ -10,7 +10,7 @@ from cpg_flow.filetypes import CramPath
 from cpg_flow.targets import SequencingGroup
 from cpg_flow.utils import can_reuse
 from cpg_utils import Path, to_path
-from cpg_utils.config import reference_path
+from cpg_utils.config import get_driver_image, reference_path
 from hailtop.batch.job import PythonJob
 from loguru import logger
 
@@ -156,21 +156,21 @@ def somalier_extract(
         raise ValueError(f'CRAM for somalier is required to have CRAI index ({cram_path})')
 
     # Initialize the job using the helper function, passing cram_path for storage calc
-    somnalier_job: PythonJob = utils.initialise_python_job(
+    somalier_job: PythonJob = utils.initialise_python_job(
         job_name=f'Somalier extract {sequencing_group.id}',
         target=sequencing_group,
         tool_name='somalier',
     )
-    somnalier_job.image(image=utils.get_driver_image())
-    somnalier_job.storage(storage=utils.calculate_needed_storage(cram_path=cram_path.path))
-    somnalier_job.memory('8Gi')
+    somalier_job.image(image=get_driver_image())
+    somalier_job.storage(storage=utils.calculate_needed_storage(cram_path=cram_path.path))
+    somalier_job.memory('8Gi')
 
     # Get resource file paths
     ref_fasta = reference_path('broad/ref_fasta')
     somalier_sites = reference_path('somalier_sites')
 
     # Schedule the core logic function (_run_somalier_extract) to run within the job
-    somnalier_job.call(
+    somalier_job.call(
         _run_somalier_extract,
         cram_path_str=str(cram_path.path),
         crai_path_str=str(cram_path.index_path),
@@ -180,4 +180,4 @@ def somalier_extract(
         sites_path_str=str(somalier_sites),
     )
 
-    return somnalier_job
+    return somalier_job
