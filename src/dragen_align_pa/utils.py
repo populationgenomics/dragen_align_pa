@@ -33,10 +33,10 @@ def delete_pipeline_id_file(pipeline_id_file: str) -> None:
 
 
 def calculate_needed_storage(
-    cram_path: cpg_utils.Path,  # <-- Changed type hint from str to Path
+    cram_path: cpg_utils.Path,
 ) -> str:
     logger.info(f'Checking blob size for {cram_path}')
-    # Removed cpg_utils.to_path() conversion as input is now Path type
+
     storage_size: int = cram_path.stat().st_size
     # Added a buffer (3GB) and increased multiplier slightly (1.2 -> 1.3)
     # Ceil ensures we get whole GiB, adding buffer helps avoid edge cases
