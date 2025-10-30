@@ -55,7 +55,7 @@ def somalier_extract(
     somalier_job.command(
         f"""
         somalier extract \\
-        -d {somalier_job.outfile} \\
+        -d {somalier_job.outdir} \\
         --sites {b_somalier_sites} \\
         -f {b_ref_fasta} \\
         {b_cram['cram']}
