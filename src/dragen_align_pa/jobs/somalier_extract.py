@@ -51,7 +51,11 @@ def somalier_extract(
     b.read_input(str(reference_path('broad/ref_fasta')) + '.fai')  # Localize FAI
     b_somalier_sites = b.read_input(str(reference_path('somalier_sites')))
 
-    final_output_path_in_job = f'{somalier_job.outdir}/{sequencing_group.id}.somalier'
+    somalier_job.declare_resource_group(
+        somalier_output={
+            'somalier_file': f'{sequencing_group.id}.somalier',
+        }
+    )
 
     # Set the command. Use the localized file paths.
     somalier_job.command(
@@ -66,11 +70,11 @@ def somalier_extract(
         SOMALIER_OUTPUT_NAME=${{CRAM_BASENAME%.cram}}.somalier
         CREATED_FILE_PATH={somalier_job.outdir}/$SOMALIER_OUTPUT_NAME
 
-        mv $CREATED_FILE_PATH {final_output_path_in_job}
+        mv $CREATED_FILE_PATH {somalier_job.somalier_output}
         """
     )
 
     # Write the declared output file to its final GCS location
-    b.write_output(final_output_path_in_job, str(out_somalier_path))
+    b.write_output(somalier_job.somalier_output, str(out_somalier_path))
 
     return somalier_job
