@@ -107,6 +107,5 @@ def _run(
                 gcs_prefix=gcs_output_path_prefix,
                 expected_md5_hash=None,
             )
-        )
 
     logger.info('All files streamed to GCS successfully.')
