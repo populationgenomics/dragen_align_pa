@@ -24,7 +24,7 @@ def _get_fastq_ica_id_list(
     path_parameters: dict[str, str],
 ) -> list[str]:
     """
-    (Moved from fastq_intake_qc.py)
+
     Finds ICA file IDs for a list of fastq filenames.
     """
     fastq_ids: list[str] = []
@@ -69,7 +69,7 @@ def _create_md5_output_folder(
     path_parameters: dict[str, str],
 ) -> str:
     """
-    (Moved from fastq_intake_qc.py)
+
     Creates the output folder in ICA for the MD5 pipeline.
     """
     object_id, _ = ica_utils.create_upload_object_id(
@@ -113,7 +113,7 @@ def run_md5_management_job(
 ) -> PythonJob:
     """
     Creates the PythonJob that will run the MD5 pipeline management loop.
-    This replaces the old fastq_intake_qc.run_md5_job.
+
     """
     job: PythonJob = utils.initialise_python_job(
         job_name='ManageMd5Pipeline',
@@ -137,7 +137,7 @@ def _run_management(
     This function runs inside the PythonJob.
     It performs the pre-submission setup (getting FASTQ IDs, creating folders)
     and then calls the generic pipeline manager.
-    (This replaces the old fastq_intake_qc._run and manage_md5_pipeline.manage_md5_pipeline)
+
     """
 
     cohort_name: str = cohort.name
