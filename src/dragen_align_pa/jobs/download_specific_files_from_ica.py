@@ -18,7 +18,6 @@ from loguru import logger
 from dragen_align_pa import ica_utils, utils
 from dragen_align_pa.constants import (
     BUCKET_NAME,
-    GCP_FOLDER_FOR_ICA_DOWNLOAD,
 )
 
 
@@ -155,7 +154,7 @@ def _orchestrate_download(
         logger.info(f'Expected MD5 for {main_file_name} is {expected_hash}')
 
         # --- 3. Stream main file, verifying MD5 ---
-        ica_utils.stream_file_to_gcs_and_verify(
+        ica_utils.stream_ica_file_to_gcs(
             api_instance=api_instance,
             path_parameters=path_parameters,
             file_id=main_file_id,
@@ -166,7 +165,7 @@ def _orchestrate_download(
         )
 
         # --- 4. Stream index file (no verification) ---
-        ica_utils.stream_file_to_gcs_and_verify(
+        ica_utils.stream_ica_file_to_gcs(
             api_instance=api_instance,
             path_parameters=path_parameters,
             file_id=index_file_id,
@@ -217,7 +216,7 @@ def _run(
     logger.info(f'Targeting ICA folder: {base_ica_folder_path}')
 
     # --- 3. Setup GCS Client ---
-    gcs_output_path_prefix = f'{GCP_FOLDER_FOR_ICA_DOWNLOAD}/{spec.gcs_prefix}'
+    gcs_output_path_prefix = str(utils.get_output_path(f'{spec.gcs_prefix}')).removeprefix(f'gs://{BUCKET_NAME}/')
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 

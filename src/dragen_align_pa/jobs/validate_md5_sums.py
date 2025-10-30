@@ -6,7 +6,6 @@ from hailtop.batch.job import PythonJob
 from loguru import logger
 
 from dragen_align_pa import utils
-from dragen_align_pa.constants import BUCKET, GCP_FOLDER_FOR_ICA_PREP
 
 
 def validate_md5_sums(
@@ -46,7 +45,7 @@ def _run(
     """
     manifest_file_path: cpg_utils.Path = config_retrieve(['workflow', 'manifest_gcp_path'])
     mismatched_files: list[str] = []
-    error_log_path: cpg_utils.Path = BUCKET / GCP_FOLDER_FOR_ICA_PREP / f'{cohort_name}_md5_errors.log'
+    error_log_path: cpg_utils.Path = utils.get_prep_path(filename=f'{cohort_name}_md5_errors.log')
 
     try:
         # Load manifest data

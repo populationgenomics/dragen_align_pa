@@ -368,7 +368,7 @@ def get_md5_from_ica(
         raise
 
 
-def stream_file_to_gcs_and_verify(
+def stream_ica_file_to_gcs(
     api_instance: project_data_api.ProjectDataApi,
     path_parameters: dict[str, str],
     file_id: str,
@@ -379,7 +379,7 @@ def stream_file_to_gcs_and_verify(
 ) -> None:
     """
     Streams a file from ICA to GCS and optionally verifies its MD5.
-    (Used by download_specific_files_from_ica.py)
+    (Used by download_specific_files_from_ica.py and download_ica_pipeline_outputs.py)
     """
     gcs_blob_path = f'{gcs_prefix}/{file_name}'
     blob = gcs_bucket.blob(gcs_blob_path)

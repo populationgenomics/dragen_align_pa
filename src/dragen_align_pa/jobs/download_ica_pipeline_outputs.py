@@ -16,7 +16,6 @@ from loguru import logger
 from dragen_align_pa import ica_utils, utils
 from dragen_align_pa.constants import (
     BUCKET_NAME,
-    GCP_FOLDER_FOR_ICA_DOWNLOAD,
 )
 
 
@@ -79,7 +78,7 @@ def _run(
     logger.info(f'Targeting ICA folder: {base_ica_folder_path}')
 
     # --- Setup GCS Client ---
-    gcs_output_path_prefix = f'{GCP_FOLDER_FOR_ICA_DOWNLOAD}/dragen_metrics/{sg_name}'
+    gcs_output_path_prefix = str(utils.get_metrics_path(filename=f'{sg_name}')).removeprefix(f'gs://{BUCKET_NAME}/')
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
@@ -97,12 +96,17 @@ def _run(
             base_ica_folder_path=base_ica_folder_path,
         )
 
-        ica_utils.stream_files_to_gcs(
-            api_instance=api_instance,
-            path_parameters=path_parameters,
-            files_to_download=files_to_download,
-            gcs_bucket=gcs_bucket,
-            gcs_output_path_prefix=gcs_output_path_prefix,
+        for file_name, file_id in files_to_download:
+            logger.info(f'Preparing to download file: {file_name} (ID: {file_id})')
+            ica_utils.stream_ica_file_to_gcs(
+                api_instance=api_instance,
+                path_parameters=path_parameters,
+                file_id=file_id,
+                file_name=file_name,
+                gcs_bucket=gcs_bucket,
+                gcs_prefix=gcs_output_path_prefix,
+                expected_md5_hash=None,
+            )
         )
 
     logger.info('All files streamed to GCS successfully.')
