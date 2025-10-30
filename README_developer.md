@@ -139,3 +139,7 @@ To cancel an in-progress ICA run:
 2.  Set `ica.management.cancel_cohort_run = true` in the TOML config.
 3.  Re-launch the pipeline.
 4.  The `manage_ica_pipeline_loop` will detect this flag, read the `pipeline_id` from the JSON file, and call `cancel_ica_pipeline_run.run()` to send an abort request to the ICA API.
+
+---
+
+<sub><sup>This README was generated in part by Gemini 2.5 Pro.</sup></sub>
