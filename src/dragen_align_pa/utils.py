@@ -52,7 +52,7 @@ def run_subprocess_with_log(
     step_name: str,
     stdin_input: str | None = None,
     shell: bool = False,
-) -> subprocess.CompletedProcess[Any] | None:
+) -> subprocess.CompletedProcess[Any]:
     """
     Runs a subprocess command with robust logging.
     Logs the command, its output, and errors if any occur.
@@ -61,12 +61,12 @@ def run_subprocess_with_log(
     executable = '/bin/bash' if shell else None
     logger.info(f'Running {step_name} command: {cmd_str}')
     try:
-        process = subprocess.run(
+        process: subprocess.CompletedProcess[str] = subprocess.run(
             cmd,
             check=True,
             capture_output=True,
             text=True,
-            input=stdin_input,  # Pass stdin if provided
+            input=stdin_input,
             shell=shell,
             executable=executable,
         )
@@ -75,6 +75,7 @@ def run_subprocess_with_log(
             logger.info(f'{step_name} STDOUT:\n{process.stdout.strip()}')
         if process.stderr:
             logger.info(f'{step_name} STDERR:\n{process.stderr.strip()}')
+        return process
     except subprocess.CalledProcessError as e:
         logger.error(f'{step_name} failed with return code {e.returncode}')
         logger.error(f'CMD: {cmd_str}')
