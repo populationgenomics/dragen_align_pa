@@ -51,8 +51,6 @@ def somalier_extract(
     b.read_input(str(reference_path('broad/ref_fasta')) + '.fai')  # Localize FAI
     b_somalier_sites = b.read_input(str(reference_path('somalier_sites')))
 
-    # Define the output file within the job's temporary output directory
-    somalier_job.out_somalier = somalier_job.outdir[f'{sequencing_group.id}.somalier']
     final_output_path_in_job = f'{somalier_job.outdir}/{sequencing_group.id}.somalier'
 
     # Set the command. Use the localized file paths.
