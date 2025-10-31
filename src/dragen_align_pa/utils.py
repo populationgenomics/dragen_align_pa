@@ -117,11 +117,6 @@ def get_output_path(filename: str, category: str | None = None) -> cpg_utils.Pat
     return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/output/{filename}', category=category))
 
 
-def get_metrics_path(filename: str, category: str | None = None) -> cpg_utils.Path:
-    """Gets a path in the 'metrics' directory."""
-    return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/dragen_metrics/{filename}', category=category))
-
-
 def get_qc_path(filename: str, category: str | None = None) -> cpg_utils.Path:
     """Gets a path in the 'qc' directory."""
     return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/qc/{filename}', category=category))

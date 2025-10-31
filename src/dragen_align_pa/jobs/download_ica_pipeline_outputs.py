@@ -78,7 +78,9 @@ def _run(
     logger.info(f'Targeting ICA folder: {base_ica_folder_path}')
 
     # --- Setup GCS Client ---
-    gcs_output_path_prefix = str(utils.get_metrics_path(filename=f'{sg_name}')).removeprefix(f'gs://{BUCKET_NAME}/')
+    gcs_output_path_prefix = str(utils.get_output_path(filename=f'dragen_metrics/{sg_name}')).removeprefix(
+        f'gs://{BUCKET_NAME}/'
+    )
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 

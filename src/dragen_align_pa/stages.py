@@ -33,7 +33,7 @@ from dragen_align_pa.jobs import (
     upload_fastq_file_list,
     validate_md5_sums,
 )
-from dragen_align_pa.utils import get_metrics_path, get_output_path, get_pipeline_path, get_prep_path, get_qc_path
+from dragen_align_pa.utils import get_output_path, get_pipeline_path, get_prep_path, get_qc_path
 
 if TYPE_CHECKING:
     from hailtop.batch.job import BashJob, PythonJob
@@ -484,7 +484,7 @@ class DownloadDataFromIca(SequencingGroupStage):
         self,
         sequencing_group: SequencingGroup,
     ) -> cpg_utils.Path:
-        return get_metrics_path(filename=f'{sequencing_group.name}')
+        return get_output_path(filename=f'dragen_metrics/{sequencing_group.name}')
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
         outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
