@@ -61,7 +61,7 @@ def somalier_extract(
     somalier_job.command(
         f"""
         somalier extract \\
-        -d $BATCH_TMPDIR/{somalier_job.outdir} \\
+        -d {somalier_job.outdir} \\
         --sites {b_somalier_sites} \\
         -f {b_ref_fasta} \\
         {b_cram['cram']}

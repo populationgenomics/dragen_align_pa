@@ -75,13 +75,13 @@ def run_multiqc(
         f"""
         multiqc \\
         {multiqc_job.input_dir} \\
-        -o $BATCH_TMPDIR/{multiqc_job.outdir} \\
+        -o {multiqc_job.outdir} \\
         --title 'MultiQC Report for {cohort.name}' \\
         --filename '{report_name}.html' \\
         --cl-config 'max_table_rows: 10000'
 
-        mv $BATCH_TMPDIR/{multiqc_job.outdir}/{report_name}.html {multiqc_job.html}
-        mv $BATCH_TMPDIR/{multiqc_job.outdir}/{report_name}_data/multiqc_data.json {multiqc_job.json}
+        mv {multiqc_job.outdir}/{report_name}.html {multiqc_job.html}
+        mv {multiqc_job.outdir}/{report_name}_data/multiqc_data.json {multiqc_job.json}
         """
     )
 
