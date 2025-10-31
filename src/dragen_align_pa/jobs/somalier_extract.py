@@ -61,14 +61,14 @@ def somalier_extract(
     somalier_job.command(
         f"""
         somalier extract \\
-        -d {somalier_job.outdir} \\
+        -d $BATCH_TMPDIR/{sequencing_group.id} \\
         --sites {b_somalier_sites} \\
         -f {b_ref_fasta} \\
         {b_cram['cram']}
 
         CRAM_BASENAME=$(basename {b_cram['cram']})
         SOMALIER_OUTPUT_NAME=${{CRAM_BASENAME%.cram}}.somalier
-        CREATED_FILE_PATH={somalier_job.outdir}/$SOMALIER_OUTPUT_NAME
+        CREATED_FILE_PATH=$BATCH_TMPDIR/{sequencing_group.id}/$SOMALIER_OUTPUT_NAME
 
         mv $CREATED_FILE_PATH {somalier_job.somalier_output}
         """
