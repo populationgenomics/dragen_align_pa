@@ -703,3 +703,16 @@ def finalize_upload(
     logger.info(
         f'Successfully uploaded {paths["cram_name"]} for {paths["sg_name"]}.',
     )
+
+
+def get_pipeline_details(
+    pipeline_id_arguid_path: cpg_utils.Path,
+) -> tuple[str, str]:
+    """
+    Loads pipeline ID and AR GUID from the provided path.
+    """
+    with pipeline_id_arguid_path.open('r') as f:
+        data = json.load(f)
+        pipeline_id = data['pipeline_id']
+        ar_guid = f'_{data["ar_guid"]}_'
+    return pipeline_id, ar_guid

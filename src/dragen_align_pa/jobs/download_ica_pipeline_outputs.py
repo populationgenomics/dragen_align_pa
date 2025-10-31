@@ -2,7 +2,6 @@
 Download all non CRAM / GVCF outputs from ICA using the Python SDK.
 """
 
-import json
 from typing import Literal
 
 import cpg_utils
@@ -16,19 +15,6 @@ from dragen_align_pa import ica_utils, utils
 from dragen_align_pa.constants import (
     BUCKET_NAME,
 )
-
-
-def _get_pipeline_details(
-    pipeline_id_arguid_path: cpg_utils.Path,
-) -> tuple[str, str]:
-    """
-    Loads pipeline ID and AR GUID from the provided path.
-    """
-    with pipeline_id_arguid_path.open('r') as f:
-        data = json.load(f)
-        pipeline_id = data['pipeline_id']
-        ar_guid = f'_{data["ar_guid"]}_'
-    return pipeline_id, ar_guid
 
 
 def run(
@@ -46,7 +32,7 @@ def run(
     logger.info(f'Downloading bulk ICA data for {sg_name}.')
 
     # --- Get Pipeline ID and AR GUID ---
-    pipeline_id, ar_guid = _get_pipeline_details(pipeline_id_arguid_path)
+    pipeline_id, ar_guid = ica_utils.get_pipeline_details(pipeline_id_arguid_path)
     base_ica_folder_path = (
         f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
     )

@@ -2,7 +2,6 @@
 Download specific files (e.g., CRAM, GVCF) from ICA using the Python SDK.
 """
 
-import json
 from dataclasses import dataclass
 from typing import Literal
 
@@ -28,19 +27,6 @@ class FileTypeSpec:
     data_suffix: str  # e.g., 'cram'
     index_suffix: str  # e.g., 'cram.crai'
     md5_suffix: str  # e.g., 'md5sum' or 'md5'
-
-
-def _get_pipeline_details(
-    pipeline_id_arguid_path: cpg_utils.Path,
-) -> tuple[str, str]:
-    """
-    Loads pipeline ID and AR GUID from the provided path.
-    """
-    with pipeline_id_arguid_path.open('r') as f:
-        data = json.load(f)
-        pipeline_id = data['pipeline_id']
-        ar_guid = f'_{data["ar_guid"]}_'
-    return pipeline_id, ar_guid
 
 
 def _get_file_suffixes(filetype: str) -> FileTypeSpec:
@@ -176,7 +162,7 @@ def run(
     md5_gcp_name: str = f'{sg_name}.{spec.data_suffix}.md5sum'  # Always save as .md5sum in GCS
 
     # --- 2. Get Pipeline ID and AR GUID ---
-    pipeline_id, ar_guid = _get_pipeline_details(pipeline_id_arguid_path)
+    pipeline_id, ar_guid = ica_utils.get_pipeline_details(pipeline_id_arguid_path)
     base_ica_folder_path = (
         f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
     )
