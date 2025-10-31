@@ -69,6 +69,12 @@ def run_multiqc(
     input_files = [b.read_input(str(p)) for p in all_qc_paths]  # noqa: F841
 
     report_name = f'{cohort.name}_multiqc_report'
+    multiqc_job.declare_resource_group(
+        out={
+            'html': f'{report_name}.html',
+            'json': f'{report_name}_data/multiqc_data.json',
+        }
+    )
 
     # Define the command
     multiqc_job.command(

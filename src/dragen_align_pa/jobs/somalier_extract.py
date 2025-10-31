@@ -57,24 +57,35 @@ def somalier_extract(
         }
     )
 
-    # Set the command. Use the localized file paths.
+    declared_output_file = somalier_job.somalier_output.somalier_file
+
     somalier_job.command(
         f"""
+        set -ex
+
+        # Run somalier, writing to a temp dir
+        # We use $BATCH_TMPDIR to ensure it's a unique path
+        TMP_OUT_DIR=$BATCH_TMPDIR/{sequencing_group.id}
+        mkdir -p $TMP_OUT_DIR
+
         somalier extract \\
-        -d $BATCH_TMPDIR/{sequencing_group.id} \\
+        -d $TMP_OUT_DIR \\
         --sites {b_somalier_sites} \\
         -f {b_ref_fasta} \\
         {b_cram['cram']}
 
+        # Find the output file somalier created
         CRAM_BASENAME=$(basename {b_cram['cram']})
         SOMALIER_OUTPUT_NAME=${{CRAM_BASENAME%.cram}}.somalier
-        CREATED_FILE_PATH=$BATCH_TMPDIR/{sequencing_group.id}/$SOMALIER_OUTPUT_NAME
+        CREATED_FILE_PATH=$TMP_OUT_DIR/$SOMALIER_OUTPUT_NAME
 
-        mv $CREATED_FILE_PATH {somalier_job.somalier_output}
+        # Move the created file to the *path* of the declared resource.
+        # {declared_output_file} interpolates as a string path.
+        mv $CREATED_FILE_PATH {declared_output_file}
         """
     )
 
     # Write the declared output file to its final GCS location
-    b.write_output(somalier_job.somalier_output, str(out_somalier_path))
+    b.write_output(declared_output_file, str(out_somalier_path))
 
     return somalier_job
