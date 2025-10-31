@@ -65,8 +65,8 @@ def run_multiqc(
     multiqc_job.storage('10Gi')
 
     # Read all QC files into the job's input directory
-    # Hail Batch will place them all in b.input_dir
-    input_files = [b.read_input(str(p)) for p in all_qc_paths]  # noqa: F841
+    input_file_dict: dict[str, str] = {f'file_{i}': str(p) for i, p in enumerate(all_qc_paths)}
+    b_input_dir_resource = b.read_input_group(**input_file_dict)
 
     report_name = f'{cohort.name}_multiqc_report'
     multiqc_job.declare_resource_group(
@@ -80,7 +80,7 @@ def run_multiqc(
     multiqc_job.command(
         f"""
         multiqc \\
-        {multiqc_job.input_dir} \\
+        {b_input_dir_resource} \\
         -o {multiqc_job.outdir} \\
         --title 'MultiQC Report for {cohort.name}' \\
         --filename '{report_name}.html' \\
