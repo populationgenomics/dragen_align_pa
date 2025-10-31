@@ -12,6 +12,7 @@ from cpg_flow.stage import (
     stage,  # type: ignore[ReportUnknownVariableType]
 )
 from cpg_flow.targets import Cohort, SequencingGroup
+from cpg_utils.config import config_retrieve, get_driver_image
 from loguru import logger
 
 from dragen_align_pa.constants import (
@@ -33,7 +34,14 @@ from dragen_align_pa.jobs import (
     upload_fastq_file_list,
     validate_md5_sums,
 )
-from dragen_align_pa.utils import get_output_path, get_pipeline_path, get_prep_path, get_qc_path
+from dragen_align_pa.utils import (
+    calculate_needed_storage,
+    get_output_path,
+    get_pipeline_path,
+    get_prep_path,
+    get_qc_path,
+    initialise_python_job,
+)
 
 if TYPE_CHECKING:
     from hailtop.batch.job import BashJob, PythonJob
@@ -63,7 +71,15 @@ class PrepareIcaForDragenAnalysis(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:  # noqa: ARG002
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
-        ica_prep_job: PythonJob = prepare_ica_for_analysis.run_ica_prep_job(
+        job: PythonJob = initialise_python_job(
+            job_name='PrepareIcaForDragenAnalysis',
+            target=cohort,
+            tool_name='ICA',
+        )
+        job.image(image=get_driver_image())
+
+        job.call(
+            prepare_ica_for_analysis.run,
             cohort=cohort,
             output=outputs,
         )
@@ -71,7 +87,7 @@ class PrepareIcaForDragenAnalysis(CohortStage):
         return self.make_outputs(
             target=cohort,
             data=outputs,  # pyright: ignore[reportArgumentType]
-            jobs=ica_prep_job,
+            jobs=job,
         )
 
 
@@ -94,9 +110,19 @@ class FastqIntakeQc(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         if READS_TYPE == 'fastq':
             outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
-            md5job: PythonJob = manage_md5_pipeline.run_md5_management_job(cohort=cohort, outputs=outputs)
+            job: PythonJob = initialise_python_job(
+                job_name='ManageMd5Pipeline',
+                target=cohort,
+                tool_name='ICA-MD5-Manager',
+            )
+            job.image(image=get_driver_image())
+            job.call(
+                manage_md5_pipeline.run,
+                cohort=cohort,
+                outputs=outputs,
+            )
 
-            return self.make_outputs(target=cohort, data=outputs, jobs=md5job)  # pyright: ignore[reportArgumentType]
+            return self.make_outputs(target=cohort, data=outputs, jobs=job)  # pyright: ignore[reportArgumentType]
 
         return None
 
@@ -120,13 +146,20 @@ class DownloadMd5Results(CohortStage):
                 target=cohort, stage=FastqIntakeQc, key='md5sum_pipeline_run'
             )
 
-            download_job: PythonJob = download_md5_results.download_md5_results_job(
-                cohort=cohort,
+            job: PythonJob = initialise_python_job(
+                job_name='DownloadMd5Results',
+                target=cohort,
+                tool_name='ICA-Python',
+            )
+            job.image(image=get_driver_image())
+            job.call(
+                download_md5_results.run,
+                cohort_name=cohort.name,
                 md5_pipeline_file=md5_pipeline_file,
                 md5_outpath=outputs['ica_md5sum_file'],
             )
 
-            return self.make_outputs(target=cohort, data=outputs, jobs=download_job)  # pyright: ignore[reportArgumentType]
+            return self.make_outputs(target=cohort, data=outputs, jobs=job)  # pyright: ignore[reportArgumentType]
 
         return None
 
@@ -143,13 +176,21 @@ class ValidateMd5Sums(CohortStage):
             ica_md5sum_file_path: cpg_utils.Path = inputs.as_path(
                 target=cohort, stage=DownloadMd5Results, key='ica_md5sum_file'
             )
-            md5_validation_job: PythonJob = validate_md5_sums.validate_md5_sums(
+            job: PythonJob = initialise_python_job(
+                job_name='ValidateMd5Sums',
+                target=cohort,
+                tool_name='validate-md5',
+            )
+            job.image(image=get_driver_image())
+
+            job.call(
+                validate_md5_sums.run,
                 ica_md5sum_file_path=ica_md5sum_file_path,
-                cohort=cohort,
-                outputs=outputs,
+                cohort_name=cohort.name,
+                success_output_path=outputs,  # Pass the output path here
             )
 
-            return self.make_outputs(target=cohort, data=outputs, jobs=md5_validation_job)
+            return self.make_outputs(target=cohort, data=outputs, jobs=job)
 
         return None
 
@@ -169,11 +210,16 @@ class MakeFastqFileList(CohortStage):
         if READS_TYPE == 'fastq':
             outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
-            make_fastq_list_file_job: PythonJob = make_fastq_file_list.make_fastq_list_file(
-                outputs=outputs,
-                cohort=cohort,
+            job: PythonJob = initialise_python_job(
+                job_name='MakeFastqFileList',
+                target=cohort,
+                tool_name='ICA',
             )
-            return self.make_outputs(target=cohort, data=outputs, jobs=make_fastq_list_file_job)  # pyright: ignore[reportArgumentType]
+
+            job.image(image=get_driver_image())
+            job.call(make_fastq_file_list.run, outputs=outputs, cohort=cohort)
+
+            return self.make_outputs(target=cohort, data=outputs, jobs=job)  # pyright: ignore[reportArgumentType]
         return None
 
 
@@ -185,15 +231,29 @@ class UploadDataToIca(SequencingGroupStage):
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         output: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
         if READS_TYPE == 'cram':
-            upload_job: PythonJob = upload_data_to_ica.upload_data_to_ica(
+            upload_folder = config_retrieve(['ica', 'data_prep', 'upload_folder'])
+
+            job: PythonJob = initialise_python_job(
+                job_name='UploadDataToIca',
+                target=sequencing_group,
+                tool_name='ICA-Python',
+            )
+            job.image(image=get_driver_image())
+            job.storage(calculate_needed_storage(cram_path=sequencing_group.cram.path))
+            job.memory('8Gi')
+            job.spot(is_spot=False)
+
+            job.call(
+                upload_data_to_ica.run,
                 sequencing_group=sequencing_group,
-                output=str(output),
+                output_path_str=output,
+                upload_folder=upload_folder,
             )
 
             return self.make_outputs(
                 target=sequencing_group,
                 data=output,
-                jobs=upload_job,
+                jobs=job,
             )
         return None
 
@@ -212,13 +272,20 @@ class UploadFastqFileList(CohortStage):
                 stage=MakeFastqFileList,
             )
 
-            upload_fastq_list_job: PythonJob = upload_fastq_file_list.upload_fastq_file_list(
+            job: PythonJob = initialise_python_job(
+                job_name='UploadFastqFileList',
+                target=cohort,
+                tool_name='ICA',
+            )
+            job.image(image=get_driver_image())
+            job.call(
+                upload_fastq_file_list.run,
                 cohort=cohort,
                 outputs=outputs,
                 fastq_list_file_path_dict=fastq_list_file_path_dict,
             )
 
-            return self.make_outputs(target=cohort, data=outputs, jobs=upload_fastq_list_job)  # pyright: ignore[reportArgumentType]
+            return self.make_outputs(target=cohort, data=outputs, jobs=job)  # pyright: ignore[reportArgumentType]
 
         return None
 
@@ -283,7 +350,15 @@ class ManageDragenPipeline(CohortStage):
             target=cohort, stage=PrepareIcaForDragenAnalysis
         )
 
-        management_job: PythonJob = manage_dragen_pipeline.manage_ica_pipeline(
+        job: PythonJob = initialise_python_job(
+            job_name=f'Manage Dragen pipeline runs for cohort: {cohort.name}',
+            target=cohort,
+            tool_name='Dragen',
+        )
+        job.image(image=get_driver_image())
+
+        job.call(
+            manage_dragen_pipeline.run,
             cohort=cohort,
             outputs=outputs,
             cram_ica_fids_path=cram_ica_fids_path,
@@ -296,7 +371,7 @@ class ManageDragenPipeline(CohortStage):
         return self.make_outputs(
             target=cohort,
             data=outputs,  # pyright: ignore[reportArgumentType]
-            jobs=management_job,
+            jobs=job,
         )
 
 
@@ -326,13 +401,21 @@ class ManageDragenMlr(CohortStage):
             stage=ManageDragenPipeline,
         )
 
-        mlr_job: PythonJob = manage_dragen_mlr.run_mlr(
+        job: PythonJob = initialise_python_job(
+            job_name='MlrWithDragen',
+            target=cohort,
+            tool_name='ICA',
+        )
+        job.image(image=get_driver_image())
+
+        job.call(
+            manage_dragen_mlr.run,
             cohort=cohort,
             pipeline_id_arguid_path_dict=pipeline_id_arguid_path_dict,
             outputs=outputs,
         )
 
-        return self.make_outputs(target=cohort, data=outputs, jobs=mlr_job)  # pyright: ignore[reportArgumentType]
+        return self.make_outputs(target=cohort, data=outputs, jobs=job)  # pyright: ignore[reportArgumentType]
 
 
 @stage(
@@ -365,8 +448,18 @@ class DownloadCramFromIca(SequencingGroupStage):
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
-        ica_download_job: PythonJob = download_specific_files_from_ica.download_data_from_ica(
+        ica_download_job: PythonJob = initialise_python_job(
             job_name='DownloadCramFromIca',
+            target=sequencing_group,
+            tool_name='ICA-Python',
+        )
+        ica_download_job.image(image=get_driver_image())
+        ica_download_job.storage('8Gi')
+        ica_download_job.memory('8Gi')
+        ica_download_job.spot(is_spot=False)
+
+        ica_download_job.call(
+            download_specific_files_from_ica.run,
             sequencing_group=sequencing_group,
             filetype='cram',
             pipeline_id_arguid_path=pipeline_id_arguid_path,
@@ -408,8 +501,18 @@ class DownloadGvcfFromIca(SequencingGroupStage):
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
-        ica_download_job: PythonJob = download_specific_files_from_ica.download_data_from_ica(
+        ica_download_job: PythonJob = initialise_python_job(
             job_name='DownloadGvcfFromIca',
+            target=sequencing_group,
+            tool_name='ICA-Python',
+        )
+        ica_download_job.image(image=get_driver_image())
+        ica_download_job.storage('8Gi')
+        ica_download_job.memory('8Gi')
+        ica_download_job.spot(is_spot=False)
+
+        ica_download_job.call(
+            download_specific_files_from_ica.run,
             sequencing_group=sequencing_group,
             filetype='base_gvcf',
             pipeline_id_arguid_path=pipeline_id_arguid_path,
@@ -451,8 +554,18 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
-        ica_download_job: PythonJob = download_specific_files_from_ica.download_data_from_ica(
+        ica_download_job: PythonJob = initialise_python_job(
             job_name='DownloadMlrGvcfFromIca',
+            target=sequencing_group,
+            tool_name='ICA-Python',
+        )
+        ica_download_job.image(image=get_driver_image())
+        ica_download_job.storage('8Gi')
+        ica_download_job.memory('8Gi')
+        ica_download_job.spot(is_spot=False)
+
+        ica_download_job.call(
+            download_specific_files_from_ica.run,
             sequencing_group=sequencing_group,
             filetype='recal_gvcf',
             pipeline_id_arguid_path=pipeline_id_arguid_path,
@@ -495,7 +608,17 @@ class DownloadDataFromIca(SequencingGroupStage):
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
-        ica_download_job: PythonJob = download_ica_pipeline_outputs.download_bulk_data_from_ica(
+        ica_download_job: PythonJob = initialise_python_job(
+            job_name='Download ICA bulk data',
+            target=sequencing_group,
+            tool_name='ICA-Python',
+        )
+        ica_download_job.image(image=get_driver_image())
+        ica_download_job.spot(is_spot=False)
+        ica_download_job.memory(memory='8Gi')
+
+        ica_download_job.call(
+            download_ica_pipeline_outputs.run,
             sequencing_group=sequencing_group,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
         )
@@ -625,8 +748,14 @@ class DeleteDataInIca(CohortStage):
 
         outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
-        ica_delete_job: PythonJob = delete_data_in_ica.delete_data_in_ica(
-            cohort=cohort,
+        ica_delete_job: PythonJob = initialise_python_job(
+            job_name='DeleteDataInIca',
+            target=cohort,
+            tool_name='ICA',
+        )
+
+        ica_delete_job.call(
+            delete_data_in_ica.run,
             analysis_output_fids_paths=analysis_output_fids_paths,
             cram_fid_paths_dict=cram_fid_paths_dict,
             fastq_ids_list_path=fastq_ids_list_path,

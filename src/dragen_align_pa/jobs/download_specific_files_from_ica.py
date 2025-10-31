@@ -8,10 +8,9 @@ from typing import Literal
 
 import cpg_utils
 from cpg_flow.targets import SequencingGroup
-from cpg_utils.config import config_retrieve, get_driver_image
+from cpg_utils.config import config_retrieve
 from google.cloud import storage
 from google.cloud.storage.bucket import Bucket
-from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
@@ -29,38 +28,6 @@ class FileTypeSpec:
     data_suffix: str  # e.g., 'cram'
     index_suffix: str  # e.g., 'cram.crai'
     md5_suffix: str  # e.g., 'md5sum' or 'md5'
-
-
-def download_data_from_ica(
-    job_name: str,
-    sequencing_group: SequencingGroup,
-    filetype: str,
-    pipeline_id_arguid_path: cpg_utils.Path,
-) -> PythonJob:
-    """
-    Creates a PythonJob to download a specific data file, its index, and its MD5
-    from an ICA analysis run, verify the MD5, and upload all three to GCS.
-    """
-    sg_name: str = sequencing_group.name
-    logger.info(f'Queueing Python job to download {filetype} for {sg_name}')
-
-    job: PythonJob = utils.initialise_python_job(
-        job_name=job_name,
-        target=sequencing_group,
-        tool_name='ICA-Python',
-    )
-    job.image(image=get_driver_image())
-    job.storage('8Gi')
-    job.memory('8Gi')
-    job.spot(is_spot=False)
-
-    job.call(
-        _run,
-        sequencing_group=sequencing_group,
-        filetype=filetype,
-        pipeline_id_arguid_path=pipeline_id_arguid_path,
-    )
-    return job
 
 
 def _get_pipeline_details(
@@ -185,7 +152,7 @@ def _orchestrate_download(
         raise  # Re-raise to fail the job
 
 
-def _run(
+def run(
     sequencing_group: SequencingGroup,
     filetype: str,
     pipeline_id_arguid_path: cpg_utils.Path,

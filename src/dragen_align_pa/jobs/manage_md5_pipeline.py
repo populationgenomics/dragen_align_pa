@@ -5,12 +5,11 @@ from typing import Literal
 import cpg_utils
 import pandas as pd
 from cpg_flow.targets import Cohort
-from cpg_utils.config import config_retrieve, get_driver_image, try_get_ar_guid
-from hailtop.batch.job import PythonJob
+from cpg_utils.config import config_retrieve, try_get_ar_guid
 from icasdk.apis.tags import project_analysis_api, project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_utils, utils
+from dragen_align_pa import ica_utils
 from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.jobs import run_intake_qc_pipeline
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
@@ -105,29 +104,7 @@ def _submit_md5_run(
     return md5_pipeline_id
 
 
-def run_md5_management_job(
-    cohort: Cohort,
-    outputs: dict[str, cpg_utils.Path],
-) -> PythonJob:
-    """
-    Creates the PythonJob that will run the MD5 pipeline management loop.
-
-    """
-    job: PythonJob = utils.initialise_python_job(
-        job_name='ManageMd5Pipeline',
-        target=cohort,
-        tool_name='ICA-MD5-Manager',
-    )
-    job.image(image=get_driver_image())
-    job.call(
-        _run_management,  # Calls the new _run function
-        cohort=cohort,
-        outputs=outputs,
-    )
-    return job
-
-
-def _run_management(
+def run(
     cohort: Cohort,
     outputs: dict[str, cpg_utils.Path],
 ) -> None:

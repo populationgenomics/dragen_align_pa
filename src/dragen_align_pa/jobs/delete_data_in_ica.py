@@ -2,36 +2,14 @@ import json
 from typing import Literal
 
 import cpg_utils
-from cpg_flow.targets import Cohort
-from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
 from icasdk.exceptions import ApiException, ApiValueError
 from loguru import logger
 
-from dragen_align_pa import ica_utils, utils
+from dragen_align_pa import ica_utils
 
 
-def delete_data_in_ica(
-    cohort: Cohort,
-    analysis_output_fids_paths: dict[str, cpg_utils.Path],
-    cram_fid_paths_dict: dict[str, cpg_utils.Path] | None,
-    fastq_ids_list_path: cpg_utils.Path | None,
-) -> PythonJob:
-    delete_job: PythonJob = utils.initialise_python_job(
-        job_name='DeleteDataInIca',
-        target=cohort,
-        tool_name='ICA',
-    )
-    delete_job.call(
-        _run,
-        analysis_output_fids_paths=analysis_output_fids_paths,
-        cram_fid_paths_dict=cram_fid_paths_dict,
-        fastq_ids_list_path=fastq_ids_list_path,
-    )
-    return delete_job
-
-
-def _run(
+def run(
     analysis_output_fids_paths: dict[str, cpg_utils.Path],
     cram_fid_paths_dict: dict[str, cpg_utils.Path] | None,
     fastq_ids_list_path: cpg_utils.Path | None,

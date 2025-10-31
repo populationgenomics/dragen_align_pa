@@ -3,36 +3,15 @@ from typing import Literal
 
 import cpg_utils
 from cpg_flow.targets import Cohort
-from cpg_utils.config import config_retrieve, get_driver_image
-from hailtop.batch.job import PythonJob
+from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_utils, utils
+from dragen_align_pa import ica_utils
 from dragen_align_pa.constants import BUCKET_NAME
 
 
-def run_ica_prep_job(
-    cohort: Cohort,
-    output: dict[str, cpg_utils.Path],
-) -> PythonJob:
-    job: PythonJob = utils.initialise_python_job(
-        job_name='PrepareIcaForDragenAnalysis',
-        target=cohort,
-        tool_name='ICA',
-    )
-    job.image(image=get_driver_image())
-
-    job.call(
-        _run,
-        cohort=cohort,
-        output=output,
-    )
-
-    return job
-
-
-def _run(
+def run(
     cohort: Cohort,
     output: dict[str, cpg_utils.Path],
 ) -> None:

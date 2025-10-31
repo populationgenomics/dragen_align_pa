@@ -7,9 +7,8 @@ from typing import Literal
 
 import cpg_utils
 from cpg_flow.targets import SequencingGroup
-from cpg_utils.config import config_retrieve, get_driver_image
+from cpg_utils.config import config_retrieve
 from google.cloud import storage
-from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
@@ -17,30 +16,6 @@ from dragen_align_pa import ica_utils, utils
 from dragen_align_pa.constants import (
     BUCKET_NAME,
 )
-
-
-def download_bulk_data_from_ica(
-    sequencing_group: SequencingGroup,
-    pipeline_id_arguid_path: cpg_utils.Path,
-) -> PythonJob:
-    """
-    Creates a PythonJob to download all metric files from an ICA analysis run.
-    """
-    job: PythonJob = utils.initialise_python_job(
-        job_name='Download ICA bulk data',
-        target=sequencing_group,
-        tool_name='ICA-Python',
-    )
-    job.image(image=get_driver_image())
-    job.spot(is_spot=False)
-    job.memory(memory='8Gi')
-
-    job.call(
-        _run,
-        sequencing_group=sequencing_group,
-        pipeline_id_arguid_path=pipeline_id_arguid_path,
-    )
-    return job
 
 
 def _get_pipeline_details(
@@ -56,7 +31,7 @@ def _get_pipeline_details(
     return pipeline_id, ar_guid
 
 
-def _run(
+def run(
     sequencing_group: SequencingGroup,
     pipeline_id_arguid_path: cpg_utils.Path,
 ) -> None:

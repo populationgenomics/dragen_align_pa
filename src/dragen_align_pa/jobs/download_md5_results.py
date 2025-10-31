@@ -8,40 +8,15 @@ from typing import Literal
 
 import cpg_utils
 import requests
-from cpg_flow.targets import Cohort
-from cpg_utils.config import config_retrieve, get_driver_image
-from hailtop.batch.job import PythonJob
+from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_utils, utils
+from dragen_align_pa import ica_utils
 from dragen_align_pa.constants import BUCKET_NAME
 
 
-def download_md5_results_job(
-    cohort: Cohort,
-    md5_pipeline_file: cpg_utils.Path,
-    md5_outpath: cpg_utils.Path,
-) -> PythonJob:
-    """
-    Creates a PythonJob to download the MD5 results.
-    """
-    job: PythonJob = utils.initialise_python_job(
-        job_name='DownloadMd5Results',
-        target=cohort,
-        tool_name='ICA-Python',
-    )
-    job.image(image=get_driver_image())
-    job.call(
-        _run,
-        cohort_name=cohort.name,
-        md5_pipeline_file=md5_pipeline_file,
-        md5_outpath=md5_outpath,
-    )
-    return job
-
-
-def _run(
+def run(
     cohort_name: str,
     md5_pipeline_file: cpg_utils.Path,
     md5_outpath: cpg_utils.Path,

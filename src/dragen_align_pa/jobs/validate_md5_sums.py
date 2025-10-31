@@ -1,39 +1,12 @@
 import cpg_utils
 import pandas as pd
-from cpg_flow.targets import Cohort
-from cpg_utils.config import config_retrieve, get_driver_image
-from hailtop.batch.job import PythonJob
+from cpg_utils.config import config_retrieve
 from loguru import logger
 
 from dragen_align_pa import utils
 
 
-def validate_md5_sums(
-    ica_md5sum_file_path: cpg_utils.Path,
-    cohort: Cohort,
-    outputs: cpg_utils.Path,
-) -> PythonJob:
-    """
-    Creates a PythonJob to validate MD5 sums from ICA against a manifest.
-    """
-    job: PythonJob = utils.initialise_python_job(
-        job_name='ValidateMd5Sums',
-        target=cohort,
-        tool_name='validate-md5',
-    )
-    job.image(image=get_driver_image())
-
-    job.call(
-        _run,
-        ica_md5sum_file_path=ica_md5sum_file_path,
-        cohort_name=cohort.name,
-        success_output_path=outputs,  # Pass the output path here
-    )
-
-    return job
-
-
-def _run(
+def run(
     ica_md5sum_file_path: cpg_utils.Path,
     cohort_name: str,
     success_output_path: cpg_utils.Path,

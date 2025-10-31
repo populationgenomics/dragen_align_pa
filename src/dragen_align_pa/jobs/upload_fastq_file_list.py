@@ -3,43 +3,15 @@ from typing import Literal
 import cpg_utils
 import requests
 from cpg_flow.targets import Cohort
-from cpg_utils.config import config_retrieve, get_driver_image
-from hailtop.batch.job import PythonJob
+from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_utils, utils
+from dragen_align_pa import ica_utils
 from dragen_align_pa.constants import BUCKET_NAME
 
 
-def upload_fastq_file_list(
-    cohort: Cohort,
-    outputs: cpg_utils.Path,
-    fastq_list_file_path_dict: dict[str, cpg_utils.Path],
-) -> PythonJob:
-    """Upload the fastq file list to ICA and return the job.
-
-    Args:
-        cohort: The cohort to upload the fastq file list for.
-        outputs: A dictionary with the output paths.
-        analysis_output_fids_path: A dictionary with the analysis output fids path.
-    """
-    job: PythonJob = utils.initialise_python_job(
-        job_name='UploadFastqFileList',
-        target=cohort,
-        tool_name='ICA',
-    )
-    job.image(image=get_driver_image())
-    job.call(
-        _run,
-        cohort=cohort,
-        outputs=outputs,
-        fastq_list_file_path_dict=fastq_list_file_path_dict,
-    )
-    return job
-
-
-def _run(
+def run(
     cohort: Cohort,
     outputs: cpg_utils.Path,
     fastq_list_file_path_dict: dict[str, cpg_utils.Path],

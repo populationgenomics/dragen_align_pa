@@ -7,8 +7,7 @@ from typing import Any
 
 import cpg_utils
 from cpg_flow.targets import Cohort
-from cpg_utils.config import config_retrieve, get_driver_image
-from hailtop.batch.job import PythonJob
+from cpg_utils.config import config_retrieve
 from loguru import logger
 
 from dragen_align_pa import ica_utils, utils
@@ -135,29 +134,7 @@ def _submit_mlr_run(
         raise
 
 
-def run_mlr(
-    cohort: Cohort,
-    pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path],
-    outputs: dict[str, cpg_utils.Path],
-) -> PythonJob:
-    job: PythonJob = utils.initialise_python_job(
-        job_name='MlrWithDragen',
-        target=cohort,
-        tool_name='ICA',
-    )
-    job.image(image=get_driver_image())
-
-    job.call(
-        _run,
-        cohort=cohort,
-        pipeline_id_arguid_path_dict=pipeline_id_arguid_path_dict,
-        outputs=outputs,
-    )
-
-    return job
-
-
-def _run(
+def run(
     cohort: Cohort,
     pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path],
     outputs: dict[str, cpg_utils.Path],

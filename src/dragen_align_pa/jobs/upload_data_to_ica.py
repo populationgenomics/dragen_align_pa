@@ -12,40 +12,12 @@ import os
 from typing import Literal
 
 from cpg_flow.targets import SequencingGroup
-from cpg_utils.config import config_retrieve, get_driver_image
-from hailtop.batch.job import PythonJob
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_utils, utils
+from dragen_align_pa import ica_utils
 from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.utils import validate_cli_path_input
-
-
-def upload_data_to_ica(sequencing_group: SequencingGroup, output: str) -> PythonJob:
-    """
-    Creates a PythonJob to upload a CRAM file to ICA.
-    """
-    upload_folder = config_retrieve(['ica', 'data_prep', 'upload_folder'])
-
-    job: PythonJob = utils.initialise_python_job(
-        job_name='UploadDataToIca',
-        target=sequencing_group,
-        tool_name='ICA-Python',
-    )
-    job.image(image=get_driver_image())
-    job.storage(utils.calculate_needed_storage(cram_path=sequencing_group.cram.path))
-    job.memory('8Gi')
-    job.spot(is_spot=False)
-
-    job.call(
-        _run,
-        sequencing_group=sequencing_group,
-        output_path_str=output,
-        upload_folder=upload_folder,
-    )
-
-    return job
 
 
 def _setup_paths(
@@ -83,7 +55,7 @@ def _setup_paths(
     }
 
 
-def _run(
+def run(
     sequencing_group: SequencingGroup,
     output_path_str: str,
     upload_folder: str,

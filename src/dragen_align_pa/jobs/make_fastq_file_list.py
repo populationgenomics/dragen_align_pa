@@ -4,10 +4,7 @@ from typing import Any
 import cpg_utils
 import pandas as pd
 from cpg_flow.targets import Cohort
-from cpg_utils.config import config_retrieve, get_driver_image
-from hailtop.batch.job import PythonJob
-
-from dragen_align_pa import utils
+from cpg_utils.config import config_retrieve
 
 
 def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path], sg_name: str) -> None:
@@ -54,23 +51,7 @@ def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path],
         paired_df.to_csv(fastq_list_fh, sep=',', index=False, header=True)
 
 
-def make_fastq_list_file(
-    outputs: dict[str, cpg_utils.Path],
-    cohort: Cohort,
-) -> PythonJob:
-    job: PythonJob = utils.initialise_python_job(
-        job_name='MakeFastqFileList',
-        target=cohort,
-        tool_name='ICA',
-    )
-
-    job.image(image=get_driver_image())
-    job.call(_run, outputs=outputs, cohort=cohort)
-
-    return job
-
-
-def _run(
+def run(
     outputs: dict[str, cpg_utils.Path],
     cohort: Cohort,
 ) -> None:
