@@ -21,6 +21,8 @@ def _prepare_fastq_inputs(
     fastq_csv_list_file_path: cpg_utils.Path,
     fastq_ids_path: cpg_utils.Path,
     individual_fastq_file_list_paths: cpg_utils.Path,
+    qc_cov_region_1_id: str,
+    qc_cov_region_2_id: str,
 ) -> tuple[list[AnalysisDataInput], list[AnalysisParameterInput]]:
     """
     Reads input files to find ICA FASTQ file IDs and the FASTQ list file ID,
@@ -85,14 +87,18 @@ def _prepare_fastq_inputs(
         raise
 
     # Construct the ICA input objects
-    fastq_data_inputs = [
+    fastq_data_inputs: list[AnalysisDataInput] = [
         AnalysisDataInput(parameterCode='fastqs', dataIds=fastq_ica_ids),
         AnalysisDataInput(
             parameterCode='fastq_list',
             dataIds=[fastq_file_list_id],  # Must be a list containing the ID
         ),
+        AnalysisDataInput(
+            parameterCode='qc_coverage_region_beds',
+            dataIds=[qc_cov_region_1_id, qc_cov_region_2_id],
+        ),
     ]
-    fastq_parameter_inputs = [
+    fastq_parameter_inputs: list[AnalysisParameterInput] = [
         AnalysisParameterInput(
             code='additional_args',
             value=("--qc-coverage-reports-1 cov_report,cov_report --qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "),
@@ -100,6 +106,81 @@ def _prepare_fastq_inputs(
     ]
 
     return fastq_data_inputs, fastq_parameter_inputs
+
+
+def _build_cram_specific_inputs(
+    cram_ica_fids_path: cpg_utils.Path,
+    qc_cov_region_1_id: str,
+    qc_cov_region_2_id: str,
+) -> tuple[list[AnalysisDataInput], list[AnalysisParameterInput]]:
+    """Builds the specific ICA input objects for CRAM mode."""
+    with cram_ica_fids_path.open() as cram_ica_fids_handle:
+        cram_ica_fids: dict[str, str] = json.load(cram_ica_fids_handle)
+        if 'cram_fid' not in cram_ica_fids:
+            raise ValueError(f"Missing 'cram_fid' in {cram_ica_fids_path}")
+
+        cram_reference_id: str = config_retrieve(
+            [
+                'ica',
+                'cram_references',
+                config_retrieve(['ica', 'cram_references', 'old_cram_reference']),
+            ],
+        )
+        specific_data_inputs: list[AnalysisDataInput] = [
+            AnalysisDataInput(
+                parameterCode='crams',
+                dataIds=[cram_ica_fids['cram_fid']],
+            ),
+            AnalysisDataInput(
+                parameterCode='cram_reference',
+                dataIds=[cram_reference_id],
+            ),
+            AnalysisDataInput(
+                parameterCode='qc_coverage_region_1',
+                dataIds=[qc_cov_region_1_id],
+            ),
+            AnalysisDataInput(
+                parameterCode='qc_coverage_region_2',
+                dataIds=[qc_cov_region_2_id],
+            ),
+        ]
+        specific_parameter_inputs: list[AnalysisParameterInput] = [
+            AnalysisParameterInput(
+                code='additional_args',
+                value=(
+                    '--read-trimmers polyg '
+                    '--soft-read-trimmers none '
+                    "--vc-hard-filter 'DRAGENHardQUAL:all:QUAL<5.0;LowDepth:all:DP<=1' "
+                    '--vc-frd-max-effective-depth 40 '
+                    '--vc-enable-joint-detection true '
+                    '--qc-coverage-ignore-overlaps true '
+                    '--qc-coverage-count-soft-clipped-bases true '
+                    '--qc-coverage-reports-1 cov_report,cov_report '
+                    "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
+                ),
+            ),
+        ]
+    return specific_data_inputs, specific_parameter_inputs
+
+
+def _build_common_parameters() -> list[AnalysisParameterInput]:
+    """Builds the common ICA parameter inputs."""
+    return [
+        AnalysisParameterInput(code='enable_map_align', value='true'),
+        AnalysisParameterInput(code='enable_map_align_output', value='true'),
+        AnalysisParameterInput(code='output_format', value='CRAM'),
+        AnalysisParameterInput(code='enable_duplicate_marking', value='true'),
+        AnalysisParameterInput(code='enable_variant_caller', value='true'),
+        AnalysisParameterInput(code='vc_emit_ref_confidence', value='GVCF'),
+        AnalysisParameterInput(code='vc_enable_vcf_output', value='false'),
+        AnalysisParameterInput(code='enable_cnv', value='true'),
+        AnalysisParameterInput(code='cnv_segmentation_mode', value='SLM'),
+        AnalysisParameterInput(code='enable_sv', value='true'),
+        AnalysisParameterInput(code='enable_cyp2d6', value='true'),
+        AnalysisParameterInput(code='repeat_genotype_enable', value='true'),
+        AnalysisParameterInput(code='dragen_reports', value='false'),
+        AnalysisParameterInput(code='vc_gvcf_gq_bands', value='13 20 30 40'),
+    ]
 
 
 def submit_dragen_run(
@@ -129,75 +210,6 @@ def submit_dragen_run(
         f'Loaded Dragen ICA configuration values, user reference: {user_reference}',
     )
 
-    specific_data_inputs: list[AnalysisDataInput] = []
-    specific_parameter_inputs: list[AnalysisParameterInput] = []
-
-    if cram_ica_fids_path:
-        logger.info(f'Using CRAM input for sequencing group {sg_name}')
-        with cram_ica_fids_path.open() as cram_ica_fids_handle:
-            cram_ica_fids: dict[str, str] = json.load(cram_ica_fids_handle)
-            if 'cram_fid' not in cram_ica_fids:
-                raise ValueError(f"Missing 'cram_fid' in {cram_ica_fids_path}")
-
-            cram_reference_id: str = config_retrieve(
-                [
-                    'ica',
-                    'cram_references',
-                    config_retrieve(['ica', 'cram_references', 'old_cram_reference']),
-                ],
-            )
-            specific_data_inputs = [
-                AnalysisDataInput(
-                    parameterCode='crams',
-                    dataIds=[cram_ica_fids['cram_fid']],
-                ),
-                AnalysisDataInput(
-                    parameterCode='cram_reference',
-                    dataIds=[cram_reference_id],
-                ),
-                AnalysisDataInput(
-                    parameterCode='qc_coverage_region_1',
-                    dataIds=[qc_cov_region_1_id],
-                ),
-                AnalysisDataInput(
-                    parameterCode='qc_coverage_region_2',
-                    dataIds=[qc_cov_region_2_id],
-                ),
-            ]
-            specific_parameter_inputs = [
-                AnalysisParameterInput(
-                    code='additional_args',
-                    value=(
-                        '--read-trimmers polyg '
-                        '--soft-read-trimmers none '
-                        "--vc-hard-filter 'DRAGENHardQUAL:all:QUAL<5.0;LowDepth:all:DP<=1' "
-                        '--vc-frd-max-effective-depth 40 '
-                        '--vc-enable-joint-detection true '
-                        '--qc-coverage-ignore-overlaps true '
-                        '--qc-coverage-count-soft-clipped-bases true '
-                        '--qc-coverage-reports-1 cov_report,cov_report '
-                        "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
-                    ),
-                ),
-            ]
-    elif fastq_csv_list_file_path and fastq_ids_path and individual_fastq_file_list_paths:
-        logger.info(f'Using FASTQ input for sequencing group {sg_name}')
-        specific_data_inputs, specific_parameter_inputs = _prepare_fastq_inputs(
-            sg_name=sg_name,
-            fastq_csv_list_file_path=fastq_csv_list_file_path,
-            fastq_ids_path=fastq_ids_path,
-            individual_fastq_file_list_paths=individual_fastq_file_list_paths,
-        )
-        specific_data_inputs.append(
-            AnalysisDataInput(
-                parameterCode='qc_coverage_region_beds',
-                dataIds=[qc_cov_region_1_id, qc_cov_region_2_id],
-            ),
-        )
-    else:
-        raise ValueError('No valid input files provided for either CRAM or FASTQ mode.')
-
-    # Construct the common parts of the analysis body
     common_data_inputs: list[AnalysisDataInput] = [
         AnalysisDataInput(parameterCode='ref_tar', dataIds=[dragen_ht_id]),
         AnalysisDataInput(
@@ -205,23 +217,30 @@ def submit_dragen_run(
             dataIds=[qc_cross_cont_vcf_id],
         ),
     ]
+    common_parameter_inputs: list[AnalysisParameterInput] = _build_common_parameters()
 
-    common_parameter_inputs: list[AnalysisParameterInput] = [
-        AnalysisParameterInput(code='enable_map_align', value='true'),
-        AnalysisParameterInput(code='enable_map_align_output', value='true'),
-        AnalysisParameterInput(code='output_format', value='CRAM'),
-        AnalysisParameterInput(code='enable_duplicate_marking', value='true'),
-        AnalysisParameterInput(code='enable_variant_caller', value='true'),
-        AnalysisParameterInput(code='vc_emit_ref_confidence', value='GVCF'),
-        AnalysisParameterInput(code='vc_enable_vcf_output', value='false'),
-        AnalysisParameterInput(code='enable_cnv', value='true'),
-        AnalysisParameterInput(code='cnv_segmentation_mode', value='SLM'),
-        AnalysisParameterInput(code='enable_sv', value='true'),
-        AnalysisParameterInput(code='enable_cyp2d6', value='true'),
-        AnalysisParameterInput(code='repeat_genotype_enable', value='true'),
-        AnalysisParameterInput(code='dragen_reports', value='false'),
-        AnalysisParameterInput(code='vc_gvcf_gq_bands', value='13 20 30 40'),
-    ]
+    specific_data_inputs: list[AnalysisDataInput]
+    specific_parameter_inputs: list[AnalysisParameterInput]
+
+    if cram_ica_fids_path:
+        logger.info(f'Using CRAM input for sequencing group {sg_name}')
+        specific_data_inputs, specific_parameter_inputs = _build_cram_specific_inputs(
+            cram_ica_fids_path=cram_ica_fids_path,
+            qc_cov_region_1_id=qc_cov_region_1_id,
+            qc_cov_region_2_id=qc_cov_region_2_id,
+        )
+    elif fastq_csv_list_file_path and fastq_ids_path and individual_fastq_file_list_paths:
+        logger.info(f'Using FASTQ input for sequencing group {sg_name}')
+        specific_data_inputs, specific_parameter_inputs = _prepare_fastq_inputs(
+            sg_name=sg_name,
+            fastq_csv_list_file_path=fastq_csv_list_file_path,
+            fastq_ids_path=fastq_ids_path,
+            individual_fastq_file_list_paths=individual_fastq_file_list_paths,
+            qc_cov_region_1_id=qc_cov_region_1_id,
+            qc_cov_region_2_id=qc_cov_region_2_id,
+        )
+    else:
+        raise ValueError('No valid input files provided for either CRAM or FASTQ mode.')
 
     # Combine common and specific inputs/parameters
     all_data_inputs: list[AnalysisDataInput] = common_data_inputs + specific_data_inputs
