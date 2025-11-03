@@ -107,6 +107,10 @@ ignore = [
     "I001", # Import block is un-sorted or un-formatted (to remove soon)
     "S105", # Possible hardcoded secrets
     "S602", # Potential untrusted input in shell=True
+    "S603", # Subprocess call with shell=True
+    "S604", # Subprocess call with shell=True
+    'RUF100', # Unused `noqa` directive
+    'PLR0915', # Too many statements in function (> 50)
 ]
 
 [tool.ruff.lint.isort]
