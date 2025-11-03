@@ -82,7 +82,7 @@ class PrepareIcaForDragenAnalysis(CohortStage):
         job.call(
             prepare_ica_for_analysis.run,
             cohort=cohort,
-            output=outputs,
+            outputs=outputs,
         )
 
         return self.make_outputs(
@@ -135,11 +135,11 @@ class DownloadMd5Results(CohortStage):
     MD5 Checksum pipeline run.
     """
 
-    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
-        return {'ica_md5sum_file': get_prep_path(filename=f'{cohort.name}_ica_md5sum.md5sum')}
+    def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:  # pyright: ignore[reportIncompatibleMethodOverride]
+        return get_prep_path(filename=f'{cohort.name}_ica_md5sum.md5sum')
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
-        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
+        outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
         if READS_TYPE == 'fastq':
             # Get the pipeline run file from the previous stage
@@ -157,7 +157,7 @@ class DownloadMd5Results(CohortStage):
                 download_md5_results.run,
                 cohort_name=cohort.name,
                 md5_pipeline_file=md5_pipeline_file,
-                md5_outpath=outputs['ica_md5sum_file'],
+                md5_outpath=outputs,
             )
 
             return self.make_outputs(target=cohort, data=outputs, jobs=job)  # pyright: ignore[reportArgumentType]

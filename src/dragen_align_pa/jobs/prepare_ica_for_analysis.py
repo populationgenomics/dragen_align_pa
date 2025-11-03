@@ -13,7 +13,7 @@ from dragen_align_pa.constants import BUCKET_NAME
 
 def run(
     cohort: Cohort,
-    output: dict[str, cpg_utils.Path],
+    outputs: dict[str, cpg_utils.Path],
 ) -> None:
     """Prepare ICA pipeline runs by generating a folder ID for the
     outputs of the Dragen pipeline.
@@ -49,5 +49,5 @@ def run(
             logger.info(
                 f'Created folder ID {object_id} for analysis outputs for sequencing group {sg_name}',
             )
-            with output[sg_name].open('w') as opath:
+            with outputs[sg_name].open('w') as opath:
                 opath.write(json.dumps({'analysis_output_fid': object_id}))
