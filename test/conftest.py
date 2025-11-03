@@ -5,8 +5,6 @@ Global pytest configuration and fixtures.
 from functools import reduce
 from unittest import mock
 
-import pytest
-
 # This is a minimal mock config based on dragen_align_pa_defaults.toml.
 # It provides all the keys required by the application at import time,
 # plus the keys needed for our unit tests.
@@ -32,10 +30,38 @@ MOCK_CONFIG = {
 }
 
 
+mock_get_config = mock.patch('cpg_utils.config.get_config')
+mock_get_config_instance = mock_get_config.start()
+mock_get_config_instance.return_value = MOCK_CONFIG
+
+# 2. Mock output_path()
+# This is also called in constants.py at import time.
+mock_path = mock.MagicMock()
+mock_path.__str__ = mock.Mock(return_value='gs://mock-bucket/mock_output_path')
+mock_output_path = mock.patch('cpg_utils.config.output_path', return_value=mock_path)
+mock_output_path.start()
+
+
+def pytest_sessionfinish(session):
+    """
+    A pytest hook that runs at the very end of the test session.
+    We use it to stop the module-level mocks we started.
+    """
+    mock_get_config.stop()
+    mock_output_path.stop()
+
+
+# --- End of Module-Level Patching ---
+
+
 def _mock_config_retrieve(keys, default=None):
     """
     A helper function that simulates the real config_retrieve
     by traversing the MOCK_CONFIG dictionary.
+
+    NOTE: This function is no longer used by the conftest mock (which
+    patches get_config directly), but it is a useful utility that
+    could be imported by individual tests if needed.
     """
     try:
         # This traverses the dict: e.g., MOCK_CONFIG['ica']['mlr']['analysis_instance_tier']
@@ -45,30 +71,3 @@ def _mock_config_retrieve(keys, default=None):
             return default
         # Raise a realistic error to help with debugging tests
         raise KeyError(f'Mock config key not found in MOCK_CONFIG: {keys}')
-
-
-@pytest.fixture(autouse=True)
-def mock_cpg_utils_config():
-    """
-    Mocks cpg_utils.config functions that are called at import time.
-
-    This fixture runs automatically for every test, ensuring that when
-    modules like 'constants.py' are imported, they don't fail by trying
-    to read a real config file.
-    """
-
-    with mock.patch('cpg_utils.config.get_config') as mock_get_config:
-        # Set the return_value to our mock config.
-        # Now, any call to get_config() will just return our dict.
-        mock_get_config.return_value = MOCK_CONFIG
-
-        # We also need to patch output_path, which is used in constants.py
-        # It needs to return a mock object that can be converted to a string.
-        mock_path = mock.MagicMock()
-        # This is the correct way to mock a magic method like __str__
-        # to satisfy Pylance.
-        mock_path.__str__ = mock.Mock(return_value='gs://mock-bucket/mock_output_path')
-
-        with mock.patch('cpg_utils.config.output_path', return_value=mock_path):
-            # 'yield' allows the tests to run with these mocks active
-            yield
