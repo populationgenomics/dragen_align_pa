@@ -15,7 +15,7 @@ from cpg_flow.targets import SequencingGroup
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_utils
+from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
 from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.utils import validate_cli_path_input
 
@@ -71,13 +71,13 @@ def run(
     validate_cli_path_input(paths['ica_folder_path'], 'ica_folder_path')
 
     # 2. --- Authenticate Python SDK ---
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
     path_params: dict[str, str] = {'projectId': project_id}
 
     # 3. --- Check File Existence ---
     cram_status: str | None = None
-    with ica_utils.get_ica_api_client() as api_client:
+    with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
         cram_status = ica_utils.check_file_existence(
             api_instance=api_instance,
@@ -87,7 +87,7 @@ def run(
         )
 
         # 4. --- Perform Upload (if needed) ---
-        ica_utils.perform_upload_if_needed(cram_status, paths)
+        ica_cli_utils.perform_upload_if_needed(cram_status, paths)
 
         # 5. --- Get Final File ID and Write Output ---
         ica_utils.finalize_upload(

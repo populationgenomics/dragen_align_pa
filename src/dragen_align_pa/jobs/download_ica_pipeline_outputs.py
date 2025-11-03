@@ -11,7 +11,7 @@ from google.cloud import storage
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_utils, utils
+from dragen_align_pa import ica_api_utils, ica_utils, utils
 from dragen_align_pa.constants import (
     BUCKET_NAME,
 )
@@ -32,7 +32,7 @@ def run(
     logger.info(f'Downloading bulk ICA data for {sg_name}.')
 
     # --- Get Pipeline ID and AR GUID ---
-    pipeline_id, ar_guid = ica_utils.get_pipeline_details(pipeline_id_arguid_path)
+    pipeline_id, ar_guid = ica_api_utils.get_pipeline_details(pipeline_id_arguid_path)
     base_ica_folder_path = (
         f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
     )
@@ -46,10 +46,10 @@ def run(
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
     # --- Secure ICA Authentication ---
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     path_parameters: dict[str, str] = {'projectId': secrets['projectID']}
 
-    with ica_utils.get_ica_api_client() as api_client:
+    with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
 
         # --- List, filter, and download files ---

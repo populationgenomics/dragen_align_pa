@@ -7,15 +7,3 @@ READS_TYPE: Final = config_retrieve(['workflow', 'reads_type']).lower()
 BUCKET: Final = cpg_utils.to_path(output_path(suffix=''))
 BUCKET_NAME: Final = str(BUCKET).removeprefix('gs://').removesuffix('/')
 DRAGEN_VERSION: Final = config_retrieve(['ica', 'pipelines', 'dragen_version'])
-ICA_REST_ENDPOINT: Final = 'https://ica.illumina.com/ica/rest'
-ICA_CLI_SETUP: Final = """
-mkdir -p $HOME/.icav2
-echo "server-url: ica.illumina.com" > /root/.icav2/config.yaml
-
-set +x
-gcloud secrets versions access latest --secret=illumina_cpg_workbench_api --project=cpg-common | jq -r .apiKey > key
-gcloud secrets versions access latest --secret=illumina_cpg_workbench_api --project=cpg-common | jq -r .projectID > projectID
-echo "x-api-key: $(cat key)" >> $HOME/.icav2/config.yaml
-icav2 projects enter $(cat projectID)
-set -x
-"""  # noqa: E501

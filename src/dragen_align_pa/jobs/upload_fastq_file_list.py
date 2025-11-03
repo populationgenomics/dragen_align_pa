@@ -7,7 +7,7 @@ from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_utils
+from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.constants import BUCKET_NAME
 
 
@@ -16,13 +16,13 @@ def run(
     outputs: cpg_utils.Path,
     fastq_list_file_path_dict: dict[str, cpg_utils.Path],
 ) -> None:
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
 
     path_parameters: dict[str, str] = {'projectId': project_id}
     sg_and_fastq_list: list[str] = []
 
-    with ica_utils.get_ica_api_client() as api_client:
+    with ica_api_utils.get_ica_api_client() as api_client:
         api_instance: project_data_api.ProjectDataApi = project_data_api.ProjectDataApi(  # pyright: ignore[reportUnknownVariableType]
             api_client,
         )

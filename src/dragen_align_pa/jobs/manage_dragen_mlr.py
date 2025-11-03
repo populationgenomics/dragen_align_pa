@@ -10,8 +10,8 @@ from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve
 from loguru import logger
 
-from dragen_align_pa import ica_utils, utils
-from dragen_align_pa.constants import BUCKET_NAME, ICA_CLI_SETUP
+from dragen_align_pa import ica_api_utils, ica_cli_utils, utils
+from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
 
 
@@ -43,17 +43,17 @@ def _submit_mlr_run(
         # --- 1. Authenticate ---
         # shell=True is required for the multi-line ICA_CLI_SETUP script
         utils.run_subprocess_with_log(
-            ICA_CLI_SETUP,
+            ica_cli_utils.ICA_CLI_SETUP,
             'Authenticate ICA CLI',
             shell=True,
         )
 
         # --- 2. Find input file paths ---
-        cram_path: str = ica_utils.find_ica_file_path_by_name(
+        cram_path: str = ica_api_utils.find_ica_file_path_by_name(
             ica_base_folder,
             f'{sg_name}.cram',
         )
-        gvcf_path: str = ica_utils.find_ica_file_path_by_name(
+        gvcf_path: str = ica_api_utils.find_ica_file_path_by_name(
             ica_base_folder,
             f'{sg_name}.hard-filtered.gvcf.gz',
         )

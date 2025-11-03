@@ -9,7 +9,7 @@ from cpg_utils.config import config_retrieve, try_get_ar_guid
 from icasdk.apis.tags import project_analysis_api, project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_utils
+from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.jobs import run_intake_qc_pipeline
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
@@ -126,12 +126,12 @@ def run(
         )
     fastq_filenames: list[str] = supplied_manifest_data['Filenames'].to_list()
 
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
 
     path_parameters: dict[str, str] = {'projectId': project_id}
 
-    with ica_utils.get_ica_api_client() as api_client:
+    with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
 
         # Get all ica file ids for the fastq files

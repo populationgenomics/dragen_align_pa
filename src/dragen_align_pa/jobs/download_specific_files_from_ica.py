@@ -13,7 +13,7 @@ from google.cloud.storage.bucket import Bucket
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_utils, utils
+from dragen_align_pa import ica_api_utils, ica_utils, utils
 from dragen_align_pa.constants import (
     BUCKET_NAME,
 )
@@ -79,19 +79,19 @@ def _orchestrate_download(
     """
     try:
         # --- 1. Find all three file IDs ---
-        main_file_id = ica_utils.find_file_id_by_name(
+        main_file_id = ica_api_utils.find_file_id_by_name(
             api_instance,
             path_parameters,
             base_ica_folder_path,
             main_file_name,
         )
-        index_file_id = ica_utils.find_file_id_by_name(
+        index_file_id = ica_api_utils.find_file_id_by_name(
             api_instance,
             path_parameters,
             base_ica_folder_path,
             index_file_name,
         )
-        md5_file_id = ica_utils.find_file_id_by_name(
+        md5_file_id = ica_api_utils.find_file_id_by_name(
             api_instance,
             path_parameters,
             base_ica_folder_path,
@@ -173,11 +173,11 @@ def run(
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     path_parameters: dict[str, str] = {'projectId': secrets['projectID']}
 
     # --- 5. Run Orchestration ---
-    with ica_utils.get_ica_api_client() as api_client:
+    with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
         _orchestrate_download(
             api_instance=api_instance,

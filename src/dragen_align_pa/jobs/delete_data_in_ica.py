@@ -6,7 +6,7 @@ from icasdk.apis.tags import project_data_api
 from icasdk.exceptions import ApiException, ApiValueError
 from loguru import logger
 
-from dragen_align_pa import ica_utils
+from dragen_align_pa import ica_api_utils
 
 
 def run(
@@ -14,7 +14,7 @@ def run(
     cram_fid_paths_dict: dict[str, cpg_utils.Path] | None,
     fastq_ids_list_path: cpg_utils.Path | None,
 ) -> None:
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils.get_ica_secrets()
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
 
     path_params: dict[str, str] = {'projectId': project_id}
@@ -54,7 +54,7 @@ def run(
 
     # 4. Delete all collected FIDs
     logger.info(f'Attempting to delete {len(fids)} total data objects from ICA...')
-    with ica_utils.get_ica_api_client() as api_client:
+    with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
         for f_id in fids:
             request_path_params = path_params | {'dataId': f_id}
