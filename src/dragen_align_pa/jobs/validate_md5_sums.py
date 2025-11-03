@@ -6,7 +6,7 @@ from loguru import logger
 from dragen_align_pa import utils
 
 
-def run(
+def run(  # noqa: PLR0915
     ica_md5sum_file_path: cpg_utils.Path,
     cohort_name: str,
     success_output_path: cpg_utils.Path,
