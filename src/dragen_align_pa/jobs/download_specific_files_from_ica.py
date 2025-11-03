@@ -123,7 +123,7 @@ def run(
     logger.info(f'Targeting ICA folder: {base_ica_folder_path}')
 
     # --- 3. Setup GCS Client ---
-    gcs_output_path_prefix = str(utils.get_output_path(f'{spec.gcs_prefix}')).removeprefix(f'gs://{BUCKET_NAME}/')
+    gcs_output_path_prefix = str(utils.get_output_path(f'{file_spec.gcs_prefix}')).removeprefix(f'gs://{BUCKET_NAME}/')
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
