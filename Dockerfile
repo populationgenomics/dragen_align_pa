@@ -32,8 +32,7 @@ COPY src src/
 COPY third_party third_party/
 
 
-RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
-    && pip install . \
+RUN pip install . \
     && pip install third_party/popgen_cli-2.1.0-py3-none-any.whl \
     && pip install typing-extensions==4.12.0 \
     && pip install multiqc==1.30
