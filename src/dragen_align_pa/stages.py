@@ -174,9 +174,7 @@ class ValidateMd5Sums(CohortStage):
         outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
         if READS_TYPE == 'fastq':
-            ica_md5sum_file_path: cpg_utils.Path = inputs.as_path(
-                target=cohort, stage=DownloadMd5Results, key='ica_md5sum_file'
-            )
+            ica_md5sum_file_path: cpg_utils.Path = inputs.as_path(target=cohort, stage=DownloadMd5Results)
             job: PythonJob = initialise_python_job(
                 job_name='ValidateMd5Sums',
                 target=cohort,
