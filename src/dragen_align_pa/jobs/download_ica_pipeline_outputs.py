@@ -32,7 +32,7 @@ def run(
     logger.info(f'Downloading bulk ICA data for {sg_name}.')
 
     # --- Get Pipeline ID and AR GUID ---
-    pipeline_id, ar_guid = ica_api_utils.get_pipeline_details(pipeline_id_arguid_path)
+    pipeline_id, ar_guid = ica_utils.get_pipeline_details(pipeline_id_arguid_path)
     base_ica_folder_path = (
         f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
     )

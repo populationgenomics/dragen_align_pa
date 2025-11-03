@@ -2,7 +2,6 @@
 Download specific files (e.g., CRAM, GVCF) from ICA using the Python SDK.
 """
 
-from dataclasses import dataclass
 from typing import Literal
 
 import cpg_utils
@@ -17,49 +16,7 @@ from dragen_align_pa import ica_api_utils, ica_utils, utils
 from dragen_align_pa.constants import (
     BUCKET_NAME,
 )
-
-
-@dataclass
-class FileTypeSpec:
-    """Groups the file suffixes and prefixes for a downloadable file type."""
-
-    gcs_prefix: str  # e.g., 'cram'
-    data_suffix: str  # e.g., 'cram'
-    index_suffix: str  # e.g., 'cram.crai'
-    md5_suffix: str  # e.g., 'md5sum' or 'md5'
-
-
-def _get_file_suffixes(filetype: str) -> FileTypeSpec:
-    """
-    Maps a filetype string to its corresponding GCS prefix and
-    file name suffixes for data, index, and md5.
-    """
-    if filetype == 'cram':
-        return FileTypeSpec(
-            gcs_prefix='cram',
-            data_suffix='cram',
-            index_suffix='cram.crai',
-            md5_suffix='md5sum',
-        )
-
-    if filetype == 'base_gvcf':
-        return FileTypeSpec(
-            gcs_prefix='base_gvcf',
-            data_suffix='hard-filtered.gvcf.gz',
-            index_suffix='hard-filtered.gvcf.gz.tbi',
-            md5_suffix='md5sum',
-        )
-
-    if filetype == 'recal_gvcf':
-        return FileTypeSpec(
-            gcs_prefix='recal_gvcf',
-            data_suffix='hard-filtered.recal.gvcf.gz',
-            index_suffix='hard-filtered.recal.gvcf.gz.tbi',
-            md5_suffix='md5',  # Note: .md5, not .md5sum
-        )
-
-    logger.error(f'Unknown filetype: {filetype}')
-    raise ValueError(f'Unknown filetype: {filetype}')
+from dragen_align_pa.file_types import FileTypeSpec
 
 
 def _orchestrate_download(
@@ -140,7 +97,7 @@ def _orchestrate_download(
 
 def run(
     sequencing_group: SequencingGroup,
-    filetype: str,
+    file_spec: FileTypeSpec,
     pipeline_id_arguid_path: cpg_utils.Path,
 ) -> None:
     """
@@ -151,15 +108,12 @@ def run(
     ica_analysis_output_folder: str = config_retrieve(
         ['ica', 'data_prep', 'output_folder'],
     )
-    logger.info(f'Downloading {filetype} data for {sg_name}.')
+    logger.info(f'Downloading {file_spec.gcs_prefix} data for {sg_name}.')
 
-    # --- 1. Determine file names ---
-    spec: FileTypeSpec = _get_file_suffixes(filetype)
-
-    main_file_name: str = f'{sg_name}.{spec.data_suffix}'
-    index_file_name: str = f'{sg_name}.{spec.index_suffix}'
-    md5_file_name: str = f'{sg_name}.{spec.data_suffix}.{spec.md5_suffix}'
-    md5_gcp_name: str = f'{sg_name}.{spec.data_suffix}.md5sum'  # Always save as .md5sum in GCS
+    main_file_name: str = f'{sg_name}.{file_spec.data_suffix}'
+    index_file_name: str = f'{sg_name}.{file_spec.index_suffix}'
+    md5_file_name: str = f'{sg_name}.{file_spec.data_suffix}.{file_spec.md5_suffix}'
+    md5_gcp_name: str = f'{sg_name}.{file_spec.data_suffix}.md5sum'  # Always save as .md5sum in GCS
 
     # --- 2. Get Pipeline ID and AR GUID ---
     pipeline_id, ar_guid = ica_utils.get_pipeline_details(pipeline_id_arguid_path)

@@ -18,6 +18,7 @@ from loguru import logger
 from dragen_align_pa.constants import (
     READS_TYPE,
 )
+from dragen_align_pa.file_types import FileTypeSpec
 from dragen_align_pa.jobs import (
     delete_data_in_ica,
     download_ica_pipeline_outputs,
@@ -458,10 +459,17 @@ class DownloadCramFromIca(SequencingGroupStage):
         ica_download_job.memory('8Gi')
         ica_download_job.spot(is_spot=False)
 
+        cram_spec: FileTypeSpec = FileTypeSpec(
+            gcs_prefix='cram',
+            data_suffix='cram',
+            index_suffix='cram.crai',
+            md5_suffix='md5sum',
+        )
+
         ica_download_job.call(
             download_specific_files_from_ica.run,
             sequencing_group=sequencing_group,
-            filetype='cram',
+            file_spec=cram_spec,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
         )
 
@@ -511,10 +519,17 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         ica_download_job.memory('8Gi')
         ica_download_job.spot(is_spot=False)
 
+        base_gvcf_spec: FileTypeSpec = FileTypeSpec(
+            gcs_prefix='base_gvcf',
+            data_suffix='hard-filtered.gvcf.gz',
+            index_suffix='hard-filtered.gvcf.gz.tbi',
+            md5_suffix='md5sum',
+        )
+
         ica_download_job.call(
             download_specific_files_from_ica.run,
             sequencing_group=sequencing_group,
-            filetype='base_gvcf',
+            file_spec=base_gvcf_spec,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
         )
 
@@ -564,10 +579,17 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
         ica_download_job.memory('8Gi')
         ica_download_job.spot(is_spot=False)
 
+        recal_gvcf_spec: FileTypeSpec = FileTypeSpec(
+            gcs_prefix='recal_gvcf',
+            data_suffix='hard-filtered.recal.gvcf.gz',
+            index_suffix='hard-filtered.recal.gvcf.gz.tbi',
+            md5_suffix='md5',
+        )
+
         ica_download_job.call(
             download_specific_files_from_ica.run,
             sequencing_group=sequencing_group,
-            filetype='recal_gvcf',
+            file_spec=recal_gvcf_spec,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
         )
 
