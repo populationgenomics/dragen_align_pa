@@ -1,6 +1,4 @@
 [build-system]
-# requires = ["setuptools"]
-# build-backend = "setuptools.build_meta"
 requires = ["hatchling >= 1.26"]
 build-backend = "hatchling.build"
 
@@ -53,6 +51,9 @@ packages = ["src/dragen_align_pa"]
 
 [tool.hatch.build.targets.wheel.sources]
 "src" = ""
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.black]
 line-length = 120
