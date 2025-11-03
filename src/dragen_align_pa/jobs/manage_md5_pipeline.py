@@ -83,7 +83,6 @@ def _create_md5_output_folder(
 def _submit_md5_run(
     cohort_name: str,
     ica_fastq_ids: list[str],
-    api_instance: project_analysis_api.ProjectAnalysisApi,
     project_id: str,
     ar_guid: str,
     md5_outputs_folder_id: str,
@@ -93,14 +92,16 @@ def _submit_md5_run(
     (This is the original submit function from this file)
     """
     logger.info(f'Submitting new MD5 ICA pipeline for {cohort_name}')
-    md5_pipeline_id: str = run_intake_qc_pipeline.run_md5_pipeline(
-        cohort_name=cohort_name,
-        ica_fastq_ids=ica_fastq_ids,
-        api_instance=api_instance,
-        project_id=project_id,
-        ar_guid=ar_guid,
-        md5_outputs_folder_id=md5_outputs_folder_id,
-    )
+    with ica_api_utils.get_ica_api_client() as api_client:
+        api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
+        md5_pipeline_id: str = run_intake_qc_pipeline.run_md5_pipeline(
+            cohort_name=cohort_name,
+            ica_fastq_ids=ica_fastq_ids,
+            api_instance=api_instance,
+            project_id=project_id,
+            ar_guid=ar_guid,
+            md5_outputs_folder_id=md5_outputs_folder_id,
+        )
     return md5_pipeline_id
 
 
@@ -156,11 +157,11 @@ def run(
         )
 
     ar_guid: str = try_get_ar_guid()
+
     submit_callable = partial(
         _submit_md5_run,
         cohort_name=cohort_name,
         ica_fastq_ids=ica_fastq_ids,
-        api_instance=api_instance,
         project_id=project_id,
         ar_guid=ar_guid,
         md5_outputs_folder_id=md5_outputs_folder_id,
