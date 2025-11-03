@@ -50,8 +50,11 @@ reference_tags = ['test_reference_tags']
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]
 dragen_version = 'dragen_3_7_8'
-# F2 instance pipeline
-dragen_3_7_8 = 'cbac3d1f-737f-44f2-9a40-f7f2589b5fad'
+# F2 instance CRAM pipeline
+cram = 'cbac3d1f-737f-44f2-9a40-f7f2589b5fad'
+
+# F2 instance Fastq pipeline
+fastq = '393e2423-3c0d-42f2-aa83-910a48a9c32c'
 # Dragen hash table for 3.7.8
 dragen_ht_id = 'fil.854d49a151a24edae5d708da2935b1b0'
 
@@ -80,6 +83,6 @@ coverage_region_1 = 'fil.ad60897bc97e4646f28c08da33ba0a20'
 coverage_region_2 = 'fil.c4ade57f5ffe4baff28d08da33ba0a20'
 
 [ica.mlr]
-config_json = "fil.28f1c8b9408a47cb595608dd9d8fcae1"
+config_json = "fil.91c3e63114fc43dc31ed08dde927d6b4"
 mlr_hash_table = "ica://ourdna-dragen-mlr-jobs/data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9"
 analysis_instance_tier = "economy"
