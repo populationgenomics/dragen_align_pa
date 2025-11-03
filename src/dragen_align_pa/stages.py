@@ -57,7 +57,7 @@ logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
 class PrepareIcaForDragenAnalysis(CohortStage):
     """Set up ICA for a single realignment run.
 
-    Creates a folder ID for the Dragen output to be written into.
+    Creates a folder ID on the ICA platform for the Dragen output to be written into.
     """
 
     def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
