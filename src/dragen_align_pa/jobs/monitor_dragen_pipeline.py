@@ -8,18 +8,12 @@ from dragen_align_pa import ica_api_utils
 
 
 def run(ica_pipeline_id: str | dict[str, str], is_mlr: bool = False) -> str:
-    """Monitor a pipeline running in ICA
-
+    """Monitor the status of an ICA pipeline run.
     Args:
-        ica_pipeline_id (str): The path to the file holding the pipeline ID
-        api_root (str): The root API endpoint for ICA
-
-    Raises:
-        Exception: An exception if the pipeline is cancelled
-        Exception: Any other exception if the pipeline gets into a FAILED state
-
+        ica_pipeline_id: The ICA pipeline ID or a dict containing it.
+        is_mlr: Whether the pipeline is a Machine Learning Recalibration (MLR) run.
     Returns:
-        str: The pipeline status
+        The status of the ICA pipeline run.
     """
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']

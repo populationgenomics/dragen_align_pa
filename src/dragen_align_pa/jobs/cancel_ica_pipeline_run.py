@@ -9,18 +9,14 @@ from dragen_align_pa import ica_api_utils
 
 
 def run(ica_pipeline_id: str, is_mlr: bool = False) -> dict[str, str]:
-    """Cancel a running ICA pipeline via the API
+    """Cancel an ongoing ICA pipeline run.
 
     Args:
-        ica_pipeline_id_path (str): The path to the JSON file holding the pipeline ID
-        api_root (str): The root for the ICA API
-
-    Raises:
-        icasdk.ApiException: Any API error
+        ica_pipeline_id: The ICA pipeline ID or a dict containing it.
+        is_mlr: Whether the pipeline is a Machine Learning Recalibration (MLR) run.
 
     Returns:
-        dict[str, str]: A cancelled dict to be recorded in GCP noting that the pipeline was cancelled.
-                        Includes a timestamp so that a single cancelled pipeline isn't blocking.
+        A dict indicating the cancelled pipeline ID.
     """
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
