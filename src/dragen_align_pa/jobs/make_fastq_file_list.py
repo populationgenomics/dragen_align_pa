@@ -55,7 +55,7 @@ def run(
     outputs: dict[str, cpg_utils.Path],
     cohort: Cohort,
 ) -> None:
-    # Somtimes the contents of sequiencing_group.assays.meta['reads'] is a nested list
+    # Somtimes the contents of sequencing_group.assays.meta['reads'] is a nested list
     # e.g., [['read1', 'read2']] instead of ['read1', 'read2']
     # This function will recursively flatten them into a single list
     def _flatten_list(nested_list: list[Any]) -> list[Any]:
