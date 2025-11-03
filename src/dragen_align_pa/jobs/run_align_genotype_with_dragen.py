@@ -13,7 +13,7 @@ from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
 from loguru import logger
 
-from dragen_align_pa import ica_utils_deprecated
+from dragen_align_pa import ica_api_utils
 
 
 def _prepare_fastq_inputs(
@@ -298,13 +298,13 @@ def run(
         output_path (str): The path to write the pipeline ID to
     """  # noqa: E501
 
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_utils_deprecated.get_ica_secrets()
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
 
     with analysis_output_fid_path.open() as analysis_outputs_fid_handle:
         analysis_output_fid: dict[str, str] = json.load(analysis_outputs_fid_handle)
 
-    with ica_utils_deprecated.get_ica_api_client() as api_client:
+    with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         path_params: dict[str, str] = {'projectId': project_id}
         analysis_run_id: str = submit_dragen_run(
