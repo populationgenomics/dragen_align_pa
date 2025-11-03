@@ -57,17 +57,16 @@ def mock_cpg_utils_config():
     to read a real config file.
     """
 
-    # We patch 'cpg_utils.config.config_retrieve'
-    # We must patch 'cpg_utils.config' because that's where the function
-    # is defined, not where it's imported (e.g., 'dragen_align_pa.constants')
-    with mock.patch('cpg_utils.config.config_retrieve') as mock_retrieve:
-        # Use .side_effect to call our helper function
-        # This allows tests to get different mock config values
-        mock_retrieve.side_effect = _mock_config_retrieve
+    with mock.patch('cpg_utils.config.get_config') as mock_get_config:
+        # Set the return_value to our mock config.
+        # Now, any call to get_config() will just return our dict.
+        mock_get_config.return_value = MOCK_CONFIG
 
-        # We also need to mock output_path, which is used in constants.py
+        # We also need to patch output_path, which is used in constants.py
         # It needs to return a mock object that can be converted to a string.
         mock_path = mock.MagicMock()
+        # This is the correct way to mock a magic method like __str__
+        # to satisfy Pylance.
         mock_path.__str__ = mock.Mock(return_value='gs://mock-bucket/mock_output_path')
 
         with mock.patch('cpg_utils.config.output_path', return_value=mock_path):
