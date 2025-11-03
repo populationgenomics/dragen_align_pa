@@ -18,9 +18,8 @@ from dragen_align_pa import ica_api_utils
 
 def _prepare_fastq_inputs(
     sg_name: str,
-    fastq_csv_list_file_path: cpg_utils.Path,
     fastq_ids_path: cpg_utils.Path,
-    individual_fastq_file_list_paths: cpg_utils.Path,
+    fastq_list_fid_and_filenames_path: cpg_utils.Path,
     qc_cov_region_1_id: str,
     qc_cov_region_2_id: str,
 ) -> tuple[list[AnalysisDataInput], list[AnalysisParameterInput]]:
@@ -31,29 +30,24 @@ def _prepare_fastq_inputs(
     logger.info(f'Preparing FASTQ inputs for sequencing group {sg_name}')
     fastq_file_list_id: str | None = None
 
-    # Find the FASTQ List CSV file ID for this SG
-    with fastq_csv_list_file_path.open() as fastq_list_file_handle:
-        for line in fastq_list_file_handle:
-            if sg_name in line:
-                try:
-                    fastq_file_list_id = line.split(':')[1].strip()
-                    break  # Found the ID for this SG
-                except IndexError:
-                    logger.warning(f'Malformed line in {fastq_csv_list_file_path}: {line.strip()}')
-                    continue  # Skip malformed lines
+    sg_fastq_names: set[str] = set()
+    try:
+        with fastq_list_fid_and_filenames_path.open() as fid_and_filenames_handle:
+            sg_data = json.load(fid_and_filenames_handle)
+            fastq_file_list_id = sg_data.get('fastq_list_fid')
+            sg_fastq_names = set(sg_data.get('sg_fastq_filenames', []))
+    except OSError as e:
+        logger.error(f'Error reading FASTQ list file for {sg_name}: {e}')
+        raise
 
-    if not fastq_file_list_id:
-        # This was the original error cause
-        raise ValueError(f'Could not find FASTQ List file ID for {sg_name} in {fastq_csv_list_file_path}')
+    if not sg_fastq_names:
+        raise ValueError(
+            f'No FASTQ filenames found for sequencing group {sg_name} in {fastq_list_fid_and_filenames_path}'
+        )
 
     # Find the individual FASTQ file IDs for this SG
     fastq_ica_ids: list[str] = []
     try:
-        with individual_fastq_file_list_paths.open() as individual_fastq_file_list_handle:
-            individual_fastq_csv_df: pd.DataFrame = pd.read_csv(
-                individual_fastq_file_list_handle,
-                sep=',',
-            )
         with fastq_ids_path.open() as fastq_ids_handle:
             fastq_ica_ids_df: pd.DataFrame = pd.read_csv(
                 fastq_ids_handle,
@@ -63,18 +57,15 @@ def _prepare_fastq_inputs(
                 dtype={'ica_id': str, 'fastq_name': str},  # Ensure string type
             )
 
-            # Filter the ICA ID dataframe based on filenames present in the SG's FASTQ list CSV
-            relevant_filenames = set(individual_fastq_csv_df['Read1File'].tolist()) | set(
-                individual_fastq_csv_df['Read2File'].tolist()
+        fastq_ica_ids = fastq_ica_ids_df[fastq_ica_ids_df['fastq_name'].isin(sg_fastq_names)]['ica_id'].tolist()
+
+        if len(fastq_ica_ids) != len(sg_fastq_names):
+            missing_fastqs = sg_fastq_names - set(fastq_ica_ids_df['fastq_name'])
+            raise ValueError(
+                f'Mismatch in FASTQ IDs for sequencing group {sg_name}: '
+                f'expected {len(sg_fastq_names)}, found {len(fastq_ica_ids)}. '
+                f'Missing FASTQs: {missing_fastqs}',
             )
-
-            fastq_ica_ids = fastq_ica_ids_df[fastq_ica_ids_df['fastq_name'].isin(relevant_filenames)]['ica_id'].tolist()
-
-            if not fastq_ica_ids:
-                logger.warning(
-                    f'No matching FASTQ file IDs found for {sg_name} using files in {individual_fastq_file_list_paths}'
-                )
-                # Depending on requirements, you might want to raise an error here instead
 
     except FileNotFoundError as e:
         logger.error(f'Required input file not found: {e}')
@@ -185,9 +176,8 @@ def _build_common_parameters() -> list[AnalysisParameterInput]:
 
 def submit_dragen_run(
     cram_ica_fids_path: cpg_utils.Path | None,
-    fastq_csv_list_file_path: cpg_utils.Path | None,
     fastq_ids_path: cpg_utils.Path | None,
-    individual_fastq_file_list_paths: cpg_utils.Path | None,
+    fastq_list_fid_and_filenames_path: cpg_utils.Path | None,
     project_id: dict[str, str],
     ica_output_folder_id: str,
     api_instance: project_analysis_api.ProjectAnalysisApi,
@@ -229,13 +219,12 @@ def submit_dragen_run(
             qc_cov_region_1_id=qc_cov_region_1_id,
             qc_cov_region_2_id=qc_cov_region_2_id,
         )
-    elif fastq_csv_list_file_path and fastq_ids_path and individual_fastq_file_list_paths:
+    elif fastq_ids_path and fastq_ids_path and fastq_list_fid_and_filenames_path:
         logger.info(f'Using FASTQ input for sequencing group {sg_name}')
         specific_data_inputs, specific_parameter_inputs = _prepare_fastq_inputs(
             sg_name=sg_name,
-            fastq_csv_list_file_path=fastq_csv_list_file_path,
+            fastq_list_fid_and_filenames_path=fastq_list_fid_and_filenames_path,
             fastq_ids_path=fastq_ids_path,
-            individual_fastq_file_list_paths=individual_fastq_file_list_paths,
             qc_cov_region_1_id=qc_cov_region_1_id,
             qc_cov_region_2_id=qc_cov_region_2_id,
         )
@@ -276,9 +265,8 @@ def submit_dragen_run(
 
 def run(
     cram_ica_fids_path: cpg_utils.Path | None,
-    fastq_csv_list_file_path: cpg_utils.Path | None,
+    fastq_list_fid_and_filenames_path: cpg_utils.Path | None,
     fastq_ids_path: cpg_utils.Path | None,
-    individual_fastq_file_list_paths: cpg_utils.Path | None,
     analysis_output_fid_path: cpg_utils.Path,
     sg_name: str,
 ) -> str:
@@ -313,9 +301,8 @@ def run(
         path_params: dict[str, str] = {'projectId': project_id}
         analysis_run_id: str = submit_dragen_run(
             cram_ica_fids_path=cram_ica_fids_path,
-            fastq_csv_list_file_path=fastq_csv_list_file_path,
             fastq_ids_path=fastq_ids_path,
-            individual_fastq_file_list_paths=individual_fastq_file_list_paths,
+            fastq_list_fid_and_filenames_path=fastq_list_fid_and_filenames_path,
             ica_output_folder_id=analysis_output_fid['analysis_output_fid'],
             project_id=path_params,
             api_instance=api_instance,

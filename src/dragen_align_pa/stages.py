@@ -261,12 +261,15 @@ class UploadDataToIca(SequencingGroupStage):
 
 @stage(required_stages=[MakeFastqFileList, PrepareIcaForDragenAnalysis])
 class UploadFastqFileList(CohortStage):
-    def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:  # pyright: ignore[reportIncompatibleMethodOverride]
-        results: cpg_utils.Path = get_prep_path(filename=f'{cohort.name}_fastq_csv_file_list_fid.json')
+    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        results: dict[str, cpg_utils.Path] = {
+            f'{sg_name}': get_prep_path(filename=f'{sg_name}fastq_list_fid.json')
+            for sg_name in cohort.get_sequencing_group_ids()
+        }
         return results
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
-        outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
+        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
         if READS_TYPE == 'fastq':
             fastq_list_file_path_dict: dict[str, cpg_utils.Path] = inputs.as_dict(
                 target=cohort,
@@ -335,17 +338,15 @@ class ManageDragenPipeline(CohortStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
         cram_ica_fids_path: dict[str, cpg_utils.Path] | None = None
-        fastq_csv_list_file_path: cpg_utils.Path | None = None
         fastq_ids_path: cpg_utils.Path | None = None
-        individual_fastq_file_list_paths: dict[str, cpg_utils.Path] | None = None
+        fastq_list_fid_and_filenames_path: dict[str, cpg_utils.Path] | None = None
 
         # Inputs from previous stages
         if READS_TYPE == 'cram':
             cram_ica_fids_path = inputs.as_path_by_target(stage=UploadDataToIca)
         elif READS_TYPE == 'fastq':
-            fastq_csv_list_file_path = inputs.as_path(target=cohort, stage=UploadFastqFileList)
             fastq_ids_path = inputs.as_path(target=cohort, stage=FastqIntakeQc, key='fastq_ids_outpath')
-            individual_fastq_file_list_paths = inputs.as_dict(target=cohort, stage=MakeFastqFileList)
+            fastq_list_fid_and_filenames_path = inputs.as_dict(target=cohort, stage=MakeFastqFileList)
 
         analysis_output_fids_path: dict[str, cpg_utils.Path] = inputs.as_dict(
             target=cohort, stage=PrepareIcaForDragenAnalysis
@@ -363,9 +364,8 @@ class ManageDragenPipeline(CohortStage):
             cohort=cohort,
             outputs=outputs,
             cram_ica_fids_path=cram_ica_fids_path,
-            fastq_csv_list_file_path=fastq_csv_list_file_path,
             fastq_ids_path=fastq_ids_path,
-            individual_fastq_file_list_paths=individual_fastq_file_list_paths,
+            fastq_list_fid_and_filenames_path=fastq_list_fid_and_filenames_path,
             analysis_output_fids_path=analysis_output_fids_path,
         )
 

@@ -1,6 +1,8 @@
+import json
 from typing import Literal
 
 import cpg_utils
+import pandas as pd
 import requests
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve
@@ -13,29 +15,39 @@ from dragen_align_pa.constants import BUCKET_NAME
 
 def run(
     cohort: Cohort,
-    outputs: cpg_utils.Path,
+    outputs: dict[str, cpg_utils.Path],
     fastq_list_file_path_dict: dict[str, cpg_utils.Path],
 ) -> None:
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
 
     path_parameters: dict[str, str] = {'projectId': project_id}
-    sg_and_fastq_list: list[str] = []
 
     with ica_api_utils.get_ica_api_client() as api_client:
         api_instance: project_data_api.ProjectDataApi = project_data_api.ProjectDataApi(  # pyright: ignore[reportUnknownVariableType]
             api_client,
         )
-        for sequencing_group in cohort.get_sequencing_group_ids():
-            fastq_list_file_name: str = fastq_list_file_path_dict[sequencing_group].name
-            folder_path: str = (
-                f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{sequencing_group}'
-            )
+        for sequencing_group in cohort.get_sequencing_groups():
+            sg_name: str = sequencing_group.name
+            fastq_list_file_path = fastq_list_file_path_dict[sg_name]
+            fastq_list_file_name: str = fastq_list_file_path.name
+
+            # Read local csv to get the list of R1/R2 filenames
+            try:
+                with fastq_list_file_path.open('r') as fh:
+                    fastq_filenames_df: pd.DataFrame = pd.read_csv(fh)
+                    sg_fastq_filenames: list[str] = list(fastq_filenames_df['Read1File'] + list(fastq_filenames_df['Read2File']))
+                    logger.info(f'Found {len(sg_fastq_filenames)} FASTQ files for sequencing group {sg_name}.')
+            except OSError as e:
+                logger.error(f'Error reading FASTQ list file for {sg_name}: {e}')
+                raise
+
+            folder_path: str = f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{sg_name}'
 
             file_id, file_status = ica_utils.create_upload_object_id(
                 api_instance=api_instance,
                 path_params=path_parameters,
-                sg_name=sequencing_group,
+                sg_name=sg_name,
                 file_name=fastq_list_file_name,
                 folder_path=folder_path,
                 object_type='FILE',
@@ -52,13 +64,10 @@ def run(
                     path_params=path_parameters | {'dataId': file_id},  # pyright: ignore[reportArgumentType]
                 ).body['url']  # type: ignore[ReportUnknownVariableType]
 
-                with fastq_list_file_path_dict[sequencing_group].open(
-                    'r',
-                ) as fastq_list_fh:
-                    data: str = fastq_list_fh.read()
+                with fastq_list_file_path.open('rb') as fastq_list_fh:
                     response: requests.Response = requests.put(
                         url=upload_url,
-                        data=data,
+                        data=fastq_list_fh,
                         timeout=300,
                     )  # pyright: ignore[reportUnknownVariableType]
                     if isinstance(response, requests.Response):
@@ -71,9 +80,8 @@ def run(
                             'Error: Did not receive a valid response from ICA upload endpoint.',
                         )
 
-            # Always append the correct file ID
-            sg_and_fastq_list.append(f'{sequencing_group}:{file_id}')
+            output_data: dict[str, str | list[str]] = {'fastq_list_fid': file_id, 'sg_fastq_filenames': sg_fastq_filenames}
+            with outputs[sg_name].open('w') as out_fh:
+                json.dump(output_data, out_fh)
 
-    # Write the sequencing group and fastq list ICA file IDs to the outputs path
-    with outputs.open('w') as out_fh:
-        out_fh.write('\n'.join(sg_and_fastq_list))
+    logger.info('Successfully processed and saved FASTQ list FIDs and filenames for all sequencing groups.'))
