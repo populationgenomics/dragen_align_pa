@@ -90,13 +90,10 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
         allow_retry: Whether to retry a failed pipeline once.
         sleep_time_seconds: Time to sleep between polling loops.
     """
-    if targets_to_process:
-        # Explicitly get the first target after checking the sequence is not empty
-        first_target = targets_to_process[0]
-        # Both Cohort and SequencingGroup have a .name attribute
-        cohort_name = first_target.name
-    else:
-        cohort_name = 'unknown'
+    if not targets_to_process:
+        raise ValueError(f'Cannot run {pipeline_name} pipeline management loop with an empty list of targets.')
+    # Both Cohort and SequencingGroup have a .name attribute
+    cohort_name = targets_to_process[0].name
     logger.info(f'Starting {pipeline_name} management job for {cohort_name}')
     logger.add(sink='tmp_errors.log', format='{time} - {level} - {message}', level='ERROR')
     logger.error(
