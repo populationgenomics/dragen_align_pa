@@ -37,6 +37,7 @@ RUN pip install . \
     && pip install typing-extensions==4.12.0 \
     && pip install multiqc==1.30
 
-RUN wget https://github.com/brentp/somalier/releases/download/v${SOMALIER_VERSION}/somalier && \
+RUN pip install git+https://github.com/Illumina/ica-sdk-python.git && \
+    wget https://github.com/brentp/somalier/releases/download/v${SOMALIER_VERSION}/somalier && \
     chmod +x somalier && \
     mv somalier /usr/local/bin/

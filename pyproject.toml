@@ -23,8 +23,7 @@ classifiers=[
 dependencies=[
     'cpg-flow>=v0.3.1',
     'loguru',
-    'ica-sdk-python @ git+https://github.com/Illumina/ica-sdk-python.git',
-    'pandas==1.5.3',
+    'pandas',
 ]
 
 [project.urls]
