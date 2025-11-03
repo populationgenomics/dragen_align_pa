@@ -63,6 +63,20 @@ Your TOML configuration file must specify the following key options:
       * `upload_folder`: The folder name to create in ICA for uploading data (e.g., `"my-cram-uploads"`).
       * `output_folder`: The base folder name to create in ICA for pipeline outputs (e.g., `"my-dragen-results"`).
 
+## FASTQ Manifest File Structure
+
+If you set reads_type = "fastq", the pipeline expects a manifest CSV file with mandatory columns that provide metadata about the FASTQ files. This information is used for both MD5 validation and to construct the DRAGEN-specific RGID (Read Group Identifier).
+
+The required column headers are: Filenames, Checksum, Sample ID, Lane, Machine ID, and Flow cell.
+
+##### An example of the required manifest CSV structure showing only required columns
+| Filenames | Checksum | Sample ID | Lane | Machine ID | Flow cell |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| CPG0001_R1.fastq.gz | d41d8cd98f00b204e9800998ecf8427e | CPG0001 | 1 | M0001 | AABBCC |
+| CPG0001_R2.fastq.gz | 9800998ecf8427e1d8cd98f00b204e98 | CPG0001 | 1 | M0001 | AABBCC |
+| CPG0002_R1.fastq.gz | 1234567890abcdef1234567890abcdef | CPG0002 | 1 | M0001 | AABBCC |
+| CPG0002_R2.fastq.gz | fedcba0987654321fedcba0987654321 | CPG0002 | 1 | M0001 | AABBCC |
+
 ## How to Run the Pipeline
 
 The pipeline is launched using `analysis-runner`.
