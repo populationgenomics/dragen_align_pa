@@ -90,7 +90,7 @@ def run(
                 for line in mismatched_files:
                     error_fh.write(f'- {line}\n')
             logger.info(f'Detailed error report written to {error_log_path}')
-        except Exception as log_e:
+        except Exception as log_e:  # noqa: BLE001
             logger.error(f'Failed to write MD5 error log to {error_log_path}: {log_e}')
 
         # Raise a clear exception

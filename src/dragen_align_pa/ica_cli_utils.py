@@ -88,7 +88,7 @@ def perform_upload_if_needed(cram_status: str | None, paths: dict[str, str]) -> 
     # Authenticate ICA CLI
     logger.info('Authenticating ICA CLI...')
     # This command uses shell=True, but ICA_CLI_SETUP is a trusted constant
-    utils.run_subprocess_with_log(ICA_CLI_SETUP, 'Authenticate ICA CLI', shell=True)
+    utils.run_subprocess_with_log(ICA_CLI_SETUP, 'Authenticate ICA CLI', shell=True)  # noqa: S604
 
     local_dir = os.path.dirname(paths['local_cram_path'])
     if not os.path.exists(local_dir):

@@ -7,18 +7,18 @@ from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve
 
 
-def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path], sg_name: str) -> None:
+def _write_fastq_list_file(fq_df: pd.DataFrame, outputs: dict[str, cpg_utils.Path], sg_name: str) -> None:
     fastq_list_file_path: cpg_utils.Path = outputs[sg_name]
     fastq_list_header: list[str] = ['RGID', 'RGSM', 'RGLB', 'Lane', 'Read1File', 'Read2File']
     adaptors: re.Pattern[str] = re.compile('_([ACGT]+-[ACGT]+)_')
 
-    df['adaptors'] = df['Filenames'].str.extract(adaptors, expand=False)
-    df['Sample_Key'] = df['Filenames'].str.replace(r'_R[12]\.fastq\.gz', '', regex=True)
-    df = df.sort_values('Filenames')
-    column_mapping: dict[str, str] = {col: col.replace(' ', '_') for col in df.columns if ' ' in col}
-    df = df.rename(columns=column_mapping)
+    fq_df['adaptors'] = fq_df['Filenames'].str.extract(adaptors, expand=False)
+    fq_df['Sample_Key'] = fq_df['Filenames'].str.replace(r'_R[12]\.fastq\.gz', '', regex=True)
+    fq_df = fq_df.sort_values('Filenames')
+    column_mapping: dict[str, str] = {col: col.replace(' ', '_') for col in fq_df.columns if ' ' in col}
+    fq_df = fq_df.rename(columns=column_mapping)
     agg_spec: dict[str, tuple[str, str]] = {
-        col: (col, 'first') for col in df.columns if col not in ['Filenames', 'Checksum', 'Sample_Key']
+        col: (col, 'first') for col in fq_df.columns if col not in ['Filenames', 'Checksum', 'Sample_Key']
     }
     agg_spec.update(
         {
@@ -28,7 +28,7 @@ def _write_fastq_list_file(df: pd.DataFrame, outputs: dict[str, cpg_utils.Path],
             'R2_Checksum': ('Checksum', 'last'),
         }
     )
-    paired_df: pd.DataFrame = df.groupby('Sample_Key').agg(**agg_spec).reset_index()
+    paired_df: pd.DataFrame = fq_df.groupby('Sample_Key').agg(**agg_spec).reset_index()
 
     # Drop the temporary Sample_Key column as it's no longer needed.
     paired_df = paired_df.drop(columns=['Sample_Key'])
@@ -67,14 +67,14 @@ def run(
             return []
         filenames: list[str] = []
 
-        items_to_process: list[Any] = nested_list if isinstance(nested_list, list) else [nested_list]
+        items_to_process: list[Any] = nested_list
 
         for item in items_to_process:
             if isinstance(item, list):
                 # If the item is a list, recursively flatten it and extend the main list
-                filenames.extend(_flatten_list(item))
+                filenames.extend(_flatten_list(item))  # pyright: ignore[reportUnknownArgumentType]
             elif isinstance(item, dict) and 'basename' in item:
-                filenames.append(item['basename'])
+                filenames.append(item['basename'])  # pyright: ignore[reportUnknownArgumentType]
         return filenames
 
     manifest_file_path: cpg_utils.Path = config_retrieve(['workflow', 'manifest_gcp_path'])
@@ -83,17 +83,17 @@ def run(
 
     for sequencing_group in cohort.get_sequencing_groups():
         all_reads_for_sg: list[Any] = []
-        for single_assay in sequencing_group.assays if sequencing_group.assays else []:
+        for single_assay in sequencing_group.assays if sequencing_group.assays else []:  # pyright: ignore[reportUnknownVariableType]
             if 'reads' in single_assay.meta:
-                reads_value: list[Any] = single_assay.meta.get('reads', [])
+                reads_value: list[Any] = single_assay.meta.get('reads', [])  # pyright: ignore[reportUnknownVariableType]
                 if isinstance(reads_value, list):
-                    all_reads_for_sg.extend(_flatten_list(reads_value))
+                    all_reads_for_sg.extend(_flatten_list(reads_value))  # pyright: ignore[reportUnknownArgumentType]
         if all_reads_for_sg:
             print(all_reads_for_sg)
             # Filter the manifest DataFrame to include only rows where 'Filenames'
             # match the reads found for the sequencing group.
             print(supplied_manifest_data)
-            df: pd.DataFrame = supplied_manifest_data[supplied_manifest_data['Filenames'].isin(all_reads_for_sg)]
-            if df.empty:
+            fq_df: pd.DataFrame = supplied_manifest_data[supplied_manifest_data['Filenames'].isin(all_reads_for_sg)]
+            if fq_df.empty:
                 raise ValueError(f'No matching reads found in manifest for sequencing group {sequencing_group.id}')
-            _write_fastq_list_file(df=df, outputs=outputs, sg_name=sequencing_group.name)
+            _write_fastq_list_file(fq_df=fq_df, outputs=outputs, sg_name=sequencing_group.name)

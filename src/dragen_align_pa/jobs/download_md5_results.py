@@ -49,7 +49,7 @@ def run(
                 'filenameMatchMode': 'EXACT',
                 'parentFolderPath': f'{folder_path}/{cohort_name}/{cohort_name}_{ar_guid}-{pipeline_id}/',
             },  # pyright: ignore[reportArgumentType]
-        )  # type: ignore
+        )  # type: ignore  # noqa: PGH003
 
         if not api_response.body['items']:  # pyright: ignore[reportUnknownVariableType]
             raise FileNotFoundError(f'Could not find "all_md5.txt" in output folder for pipeline {pipeline_id}')
@@ -60,16 +60,16 @@ def run(
         # Get a pre-signed URL
         url_api_response = api_instance.create_download_url_for_data(  # pyright: ignore[reportUnknownVariableType]
             path_params=path_parameters | {'dataId': md5sum_results_id},  # pyright: ignore[reportArgumentType]
-        )  # type: ignore
+        )  # type: ignore  # noqa: PGH003
 
-        md5_file_contents = requests.get(
-            url=url_api_response.body['url'],
+        md5_file_contents = requests.get(  # pyright: ignore[reportUnknownVariableType]
+            url=url_api_response.body['url'],  # pyright: ignore[reportUnknownArgumentType]
             timeout=60,
         ).text  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
 
         with md5_outpath.open('w') as md5_path_fh:
             md5_path_fh.write(
-                md5_file_contents,
+                md5_file_contents,  # pyright: ignore[reportUnknownArgumentType]
             )  # pyright: ignore[reportUnknownArgumentType]
 
     logger.info(f'Successfully downloaded MD5 results to {md5_outpath}')

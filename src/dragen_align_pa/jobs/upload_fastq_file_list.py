@@ -36,7 +36,9 @@ def run(
             try:
                 with fastq_list_file_path.open('r') as fh:
                     fastq_filenames_df: pd.DataFrame = pd.read_csv(fh)
-                    sg_fastq_filenames: list[str] = list(fastq_filenames_df['Read1File'] + list(fastq_filenames_df['Read2File']))
+                    sg_fastq_filenames: list[str] = list(
+                        fastq_filenames_df['Read1File'] + list(fastq_filenames_df['Read2File'])
+                    )
                     logger.info(f'Found {len(sg_fastq_filenames)} FASTQ files for sequencing group {sg_name}.')
             except OSError as e:
                 logger.error(f'Error reading FASTQ list file for {sg_name}: {e}')
@@ -80,8 +82,11 @@ def run(
                             'Error: Did not receive a valid response from ICA upload endpoint.',
                         )
 
-            output_data: dict[str, str | list[str]] = {'fastq_list_fid': file_id, 'sg_fastq_filenames': sg_fastq_filenames}
+            output_data: dict[str, str | list[str]] = {
+                'fastq_list_fid': file_id,
+                'sg_fastq_filenames': sg_fastq_filenames,
+            }
             with outputs[sg_name].open('w') as out_fh:
                 json.dump(output_data, out_fh)
 
-    logger.info('Successfully processed and saved FASTQ list FIDs and filenames for all sequencing groups.'))
+    logger.info('Successfully processed and saved FASTQ list FIDs and filenames for all sequencing groups.')

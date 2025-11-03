@@ -28,8 +28,8 @@ def validate_cli_path_input(path: str, arg_name: str) -> None:
 
 def delete_pipeline_id_file(pipeline_id_file: str) -> None:
     logger.info(f'Deleting the pipeline run ID file {pipeline_id_file}')
-    subprocess.run(
-        ['gcloud', 'storage', 'rm', pipeline_id_file],
+    subprocess.run(  # noqa: S603
+        ['gcloud', 'storage', 'rm', pipeline_id_file],  # noqa: S607
         check=True,
     )
 
@@ -63,7 +63,7 @@ def run_subprocess_with_log(
     executable = '/bin/bash' if shell else None
     logger.info(f'Running {step_name} command: {cmd_str}')
     try:
-        process: subprocess.CompletedProcess[str] = subprocess.run(
+        process: subprocess.CompletedProcess[str] = subprocess.run(  # noqa: S603
             cmd,
             check=True,
             capture_output=True,

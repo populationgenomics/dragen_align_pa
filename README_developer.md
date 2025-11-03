@@ -41,7 +41,7 @@ This pipeline's logic is heavily abstracted to handle its stateful, external-pla
     <details>
     <summary>Example API response for get_project_data_list</summary>
 
-    ```json 
+    ```json
     {
       "itemCount": 2,
       "items": [

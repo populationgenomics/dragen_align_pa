@@ -1,6 +1,6 @@
 from cpg_flow.stage import StageInput, StageInputNotFoundError
 from cpg_flow.targets import Cohort
-from cpg_utils import Path, to_path
+from cpg_utils import Path, to_path  # pyright: ignore[reportUnknownVariableType]
 from cpg_utils.config import get_driver_image
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import BashJob
@@ -16,7 +16,10 @@ def run_multiqc(
     Creates and calls the Job to run MultiQC.
     Gathers all required QC input paths.
     """
-    from dragen_align_pa.stages import DownloadDataFromIca, SomalierExtract  # noqa: PLC0415
+    from dragen_align_pa.stages import (  # pyright: ignore[reportUnknownVariableType]  # noqa: PLC0415
+        DownloadDataFromIca,  # pyright: ignore[reportUnknownVariableType]
+        SomalierExtract,  # pyright: ignore[reportUnknownVariableType]
+    )
 
     # 1. Get Dragen metric directory prefixes for each SG
     dragen_metric_prefixes: list[Path] = []
@@ -41,7 +44,7 @@ def run_multiqc(
             all_dragen_csv_paths.extend(found_paths)
         except FileNotFoundError:
             logger.warning(f'Directory {prefix} not found when searching for Dragen CSVs.')
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f'Error searching for CSVs in {prefix}: {e}')
 
     # 4. Combine Dragen CSV paths and Somalier paths
@@ -59,7 +62,7 @@ def run_multiqc(
     b = get_batch()
     multiqc_job: BashJob = b.new_job(
         name='MultiQC',
-        attributes=(cohort.get_job_attrs() or {}) | {'tool': 'MultiQC'},
+        attributes=(cohort.get_job_attrs() or {}) | {'tool': 'MultiQC'},  # pyright: ignore[reportUnknownArgumentType]
     )
     multiqc_job.image(image=get_driver_image())
     multiqc_job.storage('10Gi')

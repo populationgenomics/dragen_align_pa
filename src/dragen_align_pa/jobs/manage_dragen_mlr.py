@@ -18,7 +18,7 @@ from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
 def _mlr_authenticate_and_enter_project(mlr_project: str) -> None:
     """Authenticates the ICA CLI and enters the specified MLR project."""
     # shell=True is required for the multi-line ICA_CLI_SETUP script
-    utils.run_subprocess_with_log(
+    utils.run_subprocess_with_log(  # noqa: S604
         ica_cli_utils.ICA_CLI_SETUP,
         'Authenticate ICA CLI',
         shell=True,

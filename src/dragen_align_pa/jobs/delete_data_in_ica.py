@@ -26,7 +26,7 @@ def run(
         try:
             with path.open() as fid_handle:
                 fids.append(json.load(fid_handle)['analysis_output_fid'])
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f'Could not read analysis_output_fid for {sg_name}: {e}')
 
     # 2. Collect source CRAM FIDs if they exist
@@ -36,7 +36,7 @@ def run(
             try:
                 with path.open() as fid_handle:
                     fids.append(json.load(fid_handle)['cram_fid'])
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f'Could not read cram_fid for {sg_name}: {e}')
 
     # 3. Collect source FASTQ FIDs if they exist
@@ -49,7 +49,7 @@ def run(
                         # File format is 'file_id\tfile_name'
                         file_id = line.split()[0]
                         fids.append(file_id)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f'Could not read FASTQ FIDs from {fastq_ids_list_path}: {e}')
 
     # 4. Delete all collected FIDs
@@ -76,7 +76,7 @@ def run(
                 logger.warning(
                     f'API exception for {f_id}. Has it already been deleted? Error: {e}',
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.error(f'Unexpected error deleting {f_id}: {e}')
 
     logger.info('ICA data deletion job complete.')
