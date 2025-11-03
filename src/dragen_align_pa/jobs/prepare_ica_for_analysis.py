@@ -19,9 +19,8 @@ def run(
     outputs of the Dragen pipeline.
 
     Args:
-        api_root (str): The ICA API endpoint
-        sg_name (str): The name of the sequencing group
-        bucket_name (str): The  name of the GCP bucket that the data reside in
+        cohort (Cohort): The Cohort being aligned and genotyped
+        outputs (dict): Dictionary specifying ICA output folder IDs per sequencing group.
 
     Returns:
         dict [str, str] noting the analysis ID.
