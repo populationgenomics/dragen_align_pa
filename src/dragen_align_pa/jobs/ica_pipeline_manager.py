@@ -93,11 +93,11 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
     if not targets_to_process:
         raise ValueError(f'Cannot run {pipeline_name} pipeline management loop with an empty list of targets.')
     # Both Cohort and SequencingGroup have a .name attribute
-    cohort_name = targets_to_process[0].name
-    logger.info(f'Starting {pipeline_name} management job for {cohort_name}')
+    run_context_name = targets_to_process[0].name
+    logger.info(f'Starting {pipeline_name} management job for {run_context_name}')
     logger.add(sink='tmp_errors.log', format='{time} - {level} - {message}', level='ERROR')
     logger.error(
-        f'Error logging for {pipeline_name} {cohort_name} run on {datetime.now()}'  # noqa: DTZ005
+        f'Error logging for {pipeline_name} {run_context_name} run on {datetime.now()}'  # noqa: DTZ005
     )
 
     monitored_targets: list[MonitoredTarget] = [
