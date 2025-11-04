@@ -260,9 +260,9 @@ def submit_dragen_run(
             header_params=header_params,
             body=body,
         )
-        analysis_id: str = response.body['id']
+        analysis_id: str = api_response.body['id']
         analysis_url: str | None = None
-        for link in response.body['links']:
+        for link in api_response.body['links']:
             if link['rel'] == 'self':
                 analysis_url = link['href']
                 break
