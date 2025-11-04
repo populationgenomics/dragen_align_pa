@@ -260,6 +260,16 @@ def submit_dragen_run(
             header_params=header_params,
             body=body,
         )
+        analysis_id: str = response.body['id']
+        analysis_url: str | None = None
+        for link in response.body['links']:
+            if link['rel'] == 'self':
+                analysis_url = link['href']
+                break
+        if not analysis_url:
+            raise ValueError(f'Analysis submission for {sg_name} did not return a canonical self link.')
+        logger.info(f'Analysis id: {analysis_id} submitted successfully. View at: {analysis_url}')
+
         return api_response.body['id']  # type: ignore[ReportUnknownVariableType]
     except icasdk.ApiException as e:
         raise icasdk.ApiException(
