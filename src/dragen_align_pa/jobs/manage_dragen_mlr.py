@@ -143,7 +143,6 @@ def _submit_mlr_run(
         ar_guid = f'_{data["ar_guid"]}_'
 
     batch_tmpdir = os.environ.get('BATCH_TMPDIR', '/io')
-    local_config_path = os.path.join(batch_tmpdir, 'mlr_config.json')
     ica_base_folder = (
         f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
     )
