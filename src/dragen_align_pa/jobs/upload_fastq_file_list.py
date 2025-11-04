@@ -37,7 +37,7 @@ def run(
                 with fastq_list_file_path.open('r') as fh:
                     fastq_filenames_df: pd.DataFrame = pd.read_csv(fh)
                     sg_fastq_filenames: list[str] = list(
-                        fastq_filenames_df['Read1File'] + list(fastq_filenames_df['Read2File'])
+                        list(fastq_filenames_df['Read1File']) + list(fastq_filenames_df['Read2File'])
                     )
                     logger.info(f'Found {len(sg_fastq_filenames)} FASTQ files for sequencing group {sg_name}.')
             except OSError as e:
