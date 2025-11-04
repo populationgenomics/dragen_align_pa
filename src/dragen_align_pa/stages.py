@@ -261,7 +261,7 @@ class UploadDataToIca(SequencingGroupStage):
 class UploadFastqFileList(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
         results: dict[str, cpg_utils.Path] = {
-            f'{sg_name}': get_prep_path(filename=f'{sg_name}fastq_list_fid.json')
+            f'{sg_name}': get_prep_path(filename=f'{sg_name}_fastq_list_fid.json')
             for sg_name in cohort.get_sequencing_group_ids()
         }
         return results
