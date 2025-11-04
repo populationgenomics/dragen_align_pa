@@ -344,7 +344,7 @@ class ManageDragenPipeline(CohortStage):
             cram_ica_fids_path = inputs.as_path_by_target(stage=UploadDataToIca)
         elif READS_TYPE == 'fastq':
             fastq_ids_path = inputs.as_path(target=cohort, stage=FastqIntakeQc, key='fastq_ids_outpath')
-            fastq_list_fid_and_filenames_path = inputs.as_dict(target=cohort, stage=MakeFastqFileList)
+            fastq_list_fid_and_filenames_path = inputs.as_dict(target=cohort, stage=UploadFastqFileList)
 
         analysis_output_fids_path: dict[str, cpg_utils.Path] = inputs.as_dict(
             target=cohort, stage=PrepareIcaForDragenAnalysis
