@@ -37,7 +37,6 @@ def _prepare_fastq_inputs(
             raise ValueError(
                 f'FASTQ list file for sequencing group {sg_name} is empty: {fastq_list_fid_and_filenames_path}'
             )
-        logger.info(file_content)
         sg_data = json.loads(file_content)
         fastq_file_list_id = sg_data.get('fastq_list_fid')
         sg_fastq_names = set(sg_data.get('sg_fastq_filenames', []))
