@@ -14,21 +14,20 @@ def _write_fastq_list_file(fq_df: pd.DataFrame, outputs: dict[str, cpg_utils.Pat
 
     fq_df['adaptors'] = fq_df['Filenames'].str.extract(adaptors, expand=False)
     fq_df['Sample_Key'] = fq_df['Filenames'].str.replace(r'_R[12]\.fastq\.gz', '', regex=True)
-    fq_df = fq_df.sort_values('Filenames')
     column_mapping: dict[str, str] = {col: col.replace(' ', '_') for col in fq_df.columns if ' ' in col}
     fq_df = fq_df.rename(columns=column_mapping)
-    agg_spec: dict[str, tuple[str, str]] = {
-        col: (col, 'first') for col in fq_df.columns if col not in ['Filenames', 'Checksum', 'Sample_Key']
-    }
-    agg_spec.update(
-        {
-            'Read1File': ('Filenames', 'first'),
-            'Read2File': ('Filenames', 'last'),
-            'R1_Checksum': ('Checksum', 'first'),
-            'R2_Checksum': ('Checksum', 'last'),
-        }
+
+    r1_df = fq_df[fq_df['Filenames'].str.contains(r'_R1\.', regex=True)].copy().set_index('Sample_Key')
+    r2_df = fq_df[fq_df['Filenames'].str.contains(r'_R2\.', regex=True)].copy().set_index('Sample_Key')
+
+    paired_df = r1_df.merge(
+        r2_df[['Filenames', 'Checksum']], left_index=True, right_index=True, suffixes=('_R1', '_R2')
     )
-    paired_df: pd.DataFrame = fq_df.groupby('Sample_Key').agg(**agg_spec).reset_index()
+
+    paired_df = paired_df.rename(columns={'Filenames_R1': 'Read1File', 'Filenames_R2': 'Read2File'})
+    paired_df = paired_df.rename(
+        columns={'Checksum_R1': 'R1_Checksum', 'Checksum_R2': 'R2_Checksum'}, errors='ignore'
+    ).reset_index()
 
     # Drop the temporary Sample_Key column as it's no longer needed.
     paired_df = paired_df.drop(columns=['Sample_Key'])
