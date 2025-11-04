@@ -223,7 +223,7 @@ def submit_dragen_run(
             qc_cov_region_1_id=qc_cov_region_1_id,
             qc_cov_region_2_id=qc_cov_region_2_id,
         )
-    elif fastq_ids_path and fastq_ids_path and fastq_list_fid_and_filenames_path:
+    elif fastq_ids_path and fastq_list_fid_and_filenames_path:
         logger.info(f'Using FASTQ input for sequencing group {sg_name}')
         specific_data_inputs, specific_parameter_inputs = _prepare_fastq_inputs(
             sg_name=sg_name,
