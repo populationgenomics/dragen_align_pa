@@ -115,7 +115,7 @@ def check_object_already_exists(
         path_params (dict[str, str]): A dict with the projectId
         file_name (str): The name of the object that you want to check in ICA e.g.
         folder_path (str): The path to the object that you want to create in ICA.
-        object_type (str): The type of hte object to create in ICA. Must be one of ['FILE', 'FOLDER']
+        object_type (str): The type of the object to create in ICA. Must be one of ['FILE', 'FOLDER']
 
     Raises:
         NotImplementedError: Only checks for files with the status 'PARTIAL' or 'AVAILABLE'
