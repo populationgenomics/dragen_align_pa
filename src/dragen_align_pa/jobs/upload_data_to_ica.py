@@ -43,7 +43,7 @@ def _setup_paths(
 
     logger.info(f'Resolved CRAM path to upload: {gcs_cram_path}')
 
-    batch_tmpdir = os.environ.get('BATCH_TMPDIR', '/batch')
+    batch_tmpdir = os.environ.get('BATCH_TMPDIR', '/io')
     local_cram_path = os.path.join(batch_tmpdir, sg_name, cram_name)
 
     return {
