@@ -88,10 +88,6 @@ def run(
                 if isinstance(reads_value, list):
                     all_reads_for_sg.extend(_flatten_list(reads_value))  # pyright: ignore[reportUnknownArgumentType]
         if all_reads_for_sg:
-            print(all_reads_for_sg)
-            # Filter the manifest DataFrame to include only rows where 'Filenames'
-            # match the reads found for the sequencing group.
-            print(supplied_manifest_data)
             fq_df: pd.DataFrame = supplied_manifest_data[supplied_manifest_data['Filenames'].isin(all_reads_for_sg)]
             if fq_df.empty:
                 raise ValueError(f'No matching reads found in manifest for sequencing group {sequencing_group.id}')

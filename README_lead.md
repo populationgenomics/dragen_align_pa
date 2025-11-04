@@ -35,9 +35,9 @@ The pipeline manager detects this flag, reads the job ID from the GCS state file
 5. __Hybrid Tooling__
 The pipeline uses the best tool for each task:
 
-ICA SDK (Python): Used for all API interactions, such as submitting jobs, checking ob status, and getting download links.
+ICA SDK (Python): Used for all API interactions, such as submitting jobs, checking job status, and getting download links.
 
-CLIs (Command Line Tools): Used for heavy-lifting operations. For example, large CRAM iles are uploaded using the icav2 CLI, which is more robust for large files than the ython SDK.
+CLIs (Command Line Tools): Used for heavy-lifting operations. For example, large CRAM files are uploaded using the icav2 CLI, which is more robust for large files than the python SDK.
 
 6. __Key Workflow Features__
 
