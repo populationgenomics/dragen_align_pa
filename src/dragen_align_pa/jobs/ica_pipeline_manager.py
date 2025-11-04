@@ -244,11 +244,11 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
             f'{status_counts[PipelineStatus.SUCCEEDED]} completed, '
             f'{status_counts[PipelineStatus.INPROGRESS]} in progress, '
             f'{status_counts[PipelineStatus.FAILED_FINAL]} failed, '
-            f'{status_counts[PipelineStatus.CANCELLED]} cancelled. '
-            f'Waiting {sleep_time_seconds}s.'
+            f'{status_counts[PipelineStatus.CANCELLED]} cancelled.'
         )
         if all(is_finished(target) for target in monitored_targets):
             break
+        logger.info(f'Waiting {sleep_time_seconds}s.')
         time.sleep(sleep_time_seconds)
 
     try:
