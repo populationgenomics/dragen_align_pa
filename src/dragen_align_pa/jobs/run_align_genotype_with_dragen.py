@@ -32,10 +32,14 @@ def _prepare_fastq_inputs(
 
     sg_fastq_names: set[str] = set()
     try:
-        with fastq_list_fid_and_filenames_path.open() as fid_and_filenames_handle:
-            sg_data = json.load(fid_and_filenames_handle)
-            fastq_file_list_id = sg_data.get('fastq_list_fid')
-            sg_fastq_names = set(sg_data.get('sg_fastq_filenames', []))
+        file_content: str = fastq_list_fid_and_filenames_path.read_text()
+        if not file_content.strip():
+            raise ValueError(
+                f'FASTQ list file for sequencing group {sg_name} is empty: {fastq_list_fid_and_filenames_path}'
+            )
+        sg_data = json.loads(file_content)
+        fastq_file_list_id = sg_data.get('fastq_list_fid')
+        sg_fastq_names = set(sg_data.get('sg_fastq_filenames', []))
     except OSError as e:
         logger.error(f'Error reading FASTQ list file for {sg_name}: {e}')
         raise

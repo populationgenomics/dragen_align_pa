@@ -238,8 +238,6 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                 f'More than 5% of {pipeline_name} pipelines have failed. '
                 f'Failing pipelines: {" ".join(failed_pipelines)}'
             )
-        if all(is_finished(target) for target in monitored_targets):
-            break
         status_counts = Counter(target.status for target in monitored_targets)
         logger.info(
             f'{pipeline_name} pipeline status: '
@@ -249,6 +247,8 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
             f'{status_counts[PipelineStatus.CANCELLED]} cancelled. '
             f'Waiting {sleep_time_seconds}s.'
         )
+        if all(is_finished(target) for target in monitored_targets):
+            break
         time.sleep(sleep_time_seconds)
 
     try:
