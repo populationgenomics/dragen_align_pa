@@ -238,7 +238,9 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                 f'More than 5% of {pipeline_name} pipelines have failed. '
                 f'Failing pipelines: {" ".join(failed_pipelines)}'
             )
-
+        if all(is_finished(target) for target in monitored_targets):
+            break
+        status_counts = Counter(target.status for target in monitored_targets)
         logger.info(
             f'{pipeline_name} pipeline status: '
             f'{status_counts[PipelineStatus.SUCCEEDED]} completed, '
