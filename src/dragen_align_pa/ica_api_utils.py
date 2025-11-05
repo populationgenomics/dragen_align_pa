@@ -14,6 +14,7 @@ from google.cloud import secretmanager
 from icasdk import ApiClient, Configuration
 from icasdk.apis.tags import project_analysis_api, project_data_api
 from icasdk.exceptions import ApiException
+from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -241,3 +242,41 @@ def get_file_details_from_ica(
         logger.error(f'API error checking for file {file_name}: {e}')
         # Don't raise, just return None
     return None
+
+
+def submit_nextflow_analysis(
+    api_instance: project_analysis_api.ProjectAnalysisApi,
+    path_params: dict[str, str],
+    body: CreateNextflowAnalysis,
+    header_params: dict[str, Any] | None = None,
+) -> str:
+    """
+    Submits a Nextflow analysis to ICA and returns the analysis ID.
+    Centralizes the try/except logic for pipeline submission.
+
+    Args:
+        api_instance: An instance of the ProjectAnalysisApi.
+        path_params: Dict with projectId.
+        body: The CreateNextflowAnalysis request body.
+        header_params: Optional header parameters.
+
+    Raises:
+        icasdk.ApiException: If the API call fails.
+
+    Returns:
+        str: The analysis ID of the submitted pipeline.
+    """
+    if header_params is None:
+        header_params = {}
+    try:
+        api_response = api_instance.create_nextflow_analysis(  # type: ignore[ReportUnknownVariableType]
+            path_params=path_params,
+            header_params=header_params,
+            body=body,
+        )
+        analysis_id: str = api_response.body['id']  # type: ignore[ReportUnknownVariableType]
+        return analysis_id
+    except icasdk.ApiException as e:
+        raise icasdk.ApiException(
+            f'Exception when calling ProjectAnalysisApi->create_nextflow_analysis: {e}',
+        ) from e

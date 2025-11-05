@@ -1,12 +1,13 @@
 from typing import Any
 
-import icasdk
 from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_analysis_api
 from icasdk.model.analysis_data_input import AnalysisDataInput
 from icasdk.model.analysis_tag import AnalysisTag
 from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
+
+from dragen_align_pa import ica_api_utils
 
 
 def run_md5_pipeline(
@@ -31,10 +32,9 @@ def run_md5_pipeline(
     )
 
     path_params: dict[str, str] = {'projectId': project_id}
-    try:
-        api_response = api_instance.create_nextflow_analysis(  # pyright: ignore[reportUnknownVariableType]
-            path_params=path_params, header_params=header_params, body=body
-        )
-        return api_response.body['id']  # pyright: ignore[reportUnknownVariableType]
-    except icasdk.ApiException as e:
-        raise icasdk.ApiException(f'Exception when calling ProjectAnalysisApi->create_nextflow_analysis: {e}') from e
+    return ica_api_utils.submit_nextflow_analysis(
+        api_instance=api_instance,
+        path_params=path_params,
+        body=body,
+        header_params=header_params,
+    )

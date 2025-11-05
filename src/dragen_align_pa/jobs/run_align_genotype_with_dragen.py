@@ -2,7 +2,6 @@ import json
 from typing import Any, Literal
 
 import cpg_utils
-import icasdk
 import pandas as pd
 from cpg_utils.config import config_retrieve, try_get_ar_guid
 from icasdk.apis.tags import project_analysis_api
@@ -254,17 +253,12 @@ def submit_dragen_run(
         ),
     )
     header_params: dict[Any, Any] = {}
-    try:
-        api_response = api_instance.create_nextflow_analysis(  # type: ignore[ReportUnknownVariableType]
-            path_params=project_id,
-            header_params=header_params,
-            body=body,
-        )
-        return api_response.body['id']  # type: ignore[ReportUnknownVariableType]
-    except icasdk.ApiException as e:
-        raise icasdk.ApiException(
-            f'Exception when calling ProjectAnalysisApi->create_nextflow_analysis: {e}',
-        ) from e
+    return ica_api_utils.submit_nextflow_analysis(
+        api_instance=api_instance,
+        path_params=project_id,
+        body=body,
+        header_params=header_params,
+    )
 
 
 def run(
