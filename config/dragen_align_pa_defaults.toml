@@ -10,8 +10,6 @@ skip_stages = ['DeleteDataInIca']
 # Can be fastq or CRAM, depending on the source of the reads for alignment
 reads_type = "fastq"
 
-manifest_gcp_path = ""
-
 # used to make sure we don't repeat previously completed stages
 check_expected_outputs = true
 

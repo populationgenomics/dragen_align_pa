@@ -1,7 +1,7 @@
 import re
 import subprocess
 from math import ceil
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import cpg_utils
 from cpg_flow.targets import Cohort, SequencingGroup
@@ -9,8 +9,12 @@ from cpg_utils.config import get_driver_image, output_path
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
+from metamist.graphql import gql, query
 
 from dragen_align_pa.constants import DRAGEN_VERSION
+
+if TYPE_CHECKING:
+    from graphql import DocumentNode
 
 
 def validate_cli_path_input(path: str, arg_name: str) -> None:
@@ -120,3 +124,83 @@ def get_output_path(filename: str, category: str | None = None) -> cpg_utils.Pat
 def get_qc_path(filename: str, category: str | None = None) -> cpg_utils.Path:
     """Gets a path in the 'qc' directory."""
     return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/qc/{filename}', category=category))
+
+
+def get_manifest_path_for_cohort(cohort: Cohort) -> cpg_utils.Path:
+    """
+    Queries Metamist for the 'manifest' analysis for a given cohort
+    and returns the GCS path to the manifest file.
+
+    It specifically looks for a manifest that has 'production_manifest'
+    in its filename and 'production_manifests' in its directory path.
+    """
+    logger.info(f'Querying Metamist for manifest path for cohort {cohort.id}')
+
+    manifest_query: DocumentNode = gql(
+        request_string="""
+        query GetCohortManifest($cohortId: String!) {
+          cohorts(id: {eq: $cohortId}) {
+            id
+            name
+            analyses {
+              id
+              type
+              outputs
+            }
+          }
+        }
+    """
+    )
+
+    try:
+        result = query(manifest_query, variables={'cohortId': cohort.id})
+
+        if not result.get('cohorts'):
+            raise ValueError(f'No cohort found in Metamist with ID {cohort.id}')
+
+        analyses = result['cohorts'][0].get('analyses', [])
+        if not analyses:
+            raise ValueError(f'No analyses found for cohort {cohort.id}')
+
+        # 1. Filter all analyses based on all criteria
+        matching_manifests = []
+        for a in analyses:
+            outputs = a.get('outputs')
+            if (
+                a.get('type') == 'manifest'
+                and outputs
+                and 'production_manifest' in outputs.get('basename', '')
+                and 'production_manifests' in outputs.get('dirname', '')
+            ):
+                matching_manifests.append(a)
+
+        # 2. Check the number of matches
+        if not matching_manifests:
+            raise ValueError(
+                f"No 'manifest' analysis found for cohort {cohort.id} "
+                f"with 'production_manifest' in its filename and 'production_manifests' in its directory."
+            )
+
+        if len(matching_manifests) > 1:
+            all_ids = [m.get('id') for m in matching_manifests]
+            logger.warning(
+                f"Found {len(matching_manifests)} matching 'production_manifest' analyses for "
+                f'cohort {cohort.id} (IDs: {all_ids}). '
+                f'Using the first one found (ID: {matching_manifests[0].get("id")}).'
+            )
+
+        manifest_entry = matching_manifests[0]
+        manifest_path = manifest_entry.get('outputs', {}).get('path')
+
+        if not manifest_path:
+            raise ValueError(
+                f'Production manifest analysis (ID: {manifest_entry.get("id")}) found for {cohort.id},'
+                f" but 'outputs.path' is missing or null."
+            )
+
+        logger.info(f'Found manifest path: {manifest_path} (Analysis ID: {manifest_entry.get("id")})')
+        return cpg_utils.to_path(manifest_path)
+
+    except Exception as e:
+        logger.error(f'Failed to query/parse manifest path for cohort {cohort.id}: {e}')
+        raise

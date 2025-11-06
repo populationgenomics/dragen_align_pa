@@ -108,6 +108,7 @@ def _submit_md5_run(
 def run(
     cohort: Cohort,
     outputs: dict[str, cpg_utils.Path],
+    manifest_file_path: cpg_utils.Path,
 ) -> None:
     """
     This function runs inside the PythonJob.
@@ -117,9 +118,6 @@ def run(
     """
 
     cohort_name: str = cohort.name
-    manifest_file_path: cpg_utils.Path = config_retrieve(
-        ['workflow', 'manifest_gcp_path'],
-    )
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
         supplied_manifest_data: pd.DataFrame = pd.read_csv(
             manifest_fh,

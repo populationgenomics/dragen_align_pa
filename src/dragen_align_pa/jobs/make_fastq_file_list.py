@@ -4,7 +4,6 @@ from typing import Any
 import cpg_utils
 import pandas as pd
 from cpg_flow.targets import Cohort
-from cpg_utils.config import config_retrieve
 
 
 def _write_fastq_list_file(fq_df: pd.DataFrame, outputs: dict[str, cpg_utils.Path], sg_name: str) -> None:
@@ -50,10 +49,7 @@ def _write_fastq_list_file(fq_df: pd.DataFrame, outputs: dict[str, cpg_utils.Pat
         paired_df.to_csv(fastq_list_fh, sep=',', index=False, header=True)
 
 
-def run(
-    outputs: dict[str, cpg_utils.Path],
-    cohort: Cohort,
-) -> None:
+def run(outputs: dict[str, cpg_utils.Path], cohort: Cohort, manifest_file_path: cpg_utils.Path) -> None:
     # Sometimes the contents of sequencing_group.assays.meta['reads'] is a nested list
     # e.g., [['read1', 'read2']] instead of ['read1', 'read2']
     # This function will recursively flatten them into a single list
@@ -76,7 +72,6 @@ def run(
                 filenames.append(item['basename'])  # pyright: ignore[reportUnknownArgumentType]
         return filenames
 
-    manifest_file_path: cpg_utils.Path = config_retrieve(['workflow', 'manifest_gcp_path'])
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
         supplied_manifest_data: pd.DataFrame = pd.read_csv(manifest_fh)
 

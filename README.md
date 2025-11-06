@@ -19,7 +19,7 @@ The workflow performs the following main steps:
 2.  **Input Data Handling (Conditional):**
       * **If `reads_type = "fastq"`:**
         1.  Submits a separate pipeline in ICA to calculate MD5 checksums for all FASTQ files.
-        2.  Downloads the results and validates them against a provided manifest file.
+        2.  Downloads the results and validates them against the manifest file.
         3.  Generates a `fastq_list.csv` file for DRAGEN and uploads it to ICA.
       * **If `reads_type = "cram"`:**
         1.  Uploads the CRAM file from GCS to ICA.
@@ -48,12 +48,7 @@ Your TOML configuration file must specify the following key options:
       * `last_stages`: A list of the final stages to run. To run the full pipeline including QC, use `['RunMultiQc']`. To also delete data from ICA after, use `['DeleteDataInIca']`.
       * `skip_stages`: (Optional) A list of stages to skip, e.g., `['DeleteDataInIca']`.
 
-  * **If `reads_type = "fastq"`:**
-
-      * `[workflow]`:
-          * `manifest_gcp_path`: Must be set to the GCS path of your manifest file. This file is used to validate MD5 checksums.
-
-  * **If `reads_type = "cram"`:**
+   * **If `reads_type = "cram"`:**
 
       * `[ica.cram_references]`:
           * `old_cram_reference`: Must be set to match one of the keys in this section (e.g., `"dragmap"`). This tells the pipeline which reference genome file (already in ICA) was used to generate the *original* CRAM file.
@@ -65,7 +60,7 @@ Your TOML configuration file must specify the following key options:
 
 ## FASTQ Manifest File Structure
 
-If you set reads_type = "fastq", the pipeline expects a manifest CSV file with mandatory columns that provide metadata about the FASTQ files. This information is used for both MD5 validation and to construct the DRAGEN-specific RGID (Read Group Identifier).
+If you set reads_type = "fastq", the pipeline queries Metamist for an analysis of type `manifest` that has been registerd against the cohort during ingestion of the fastq data. It will check for `production_manifest` in the file name, in case the control manifest is also registered. The manifest file provides metadata about the FASTQ files. This information is used for both MD5 validation and to construct the DRAGEN-specific RGID (Read Group Identifier).
 
 The required column headers are: Filenames, Checksum, Sample ID, Lane, Machine ID, and Flow cell.
 

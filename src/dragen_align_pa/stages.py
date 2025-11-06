@@ -37,6 +37,7 @@ from dragen_align_pa.jobs import (
 )
 from dragen_align_pa.utils import (
     calculate_needed_storage,
+    get_manifest_path_for_cohort,
     get_output_path,
     get_pipeline_path,
     get_prep_path,
@@ -111,6 +112,7 @@ class FastqIntakeQc(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         if READS_TYPE == 'fastq':
             outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
+            manifest_file_path: cpg_utils.Path = get_manifest_path_for_cohort(cohort=cohort)
             job: PythonJob = initialise_python_job(
                 job_name='ManageMd5Pipeline',
                 target=cohort,
@@ -121,6 +123,7 @@ class FastqIntakeQc(CohortStage):
                 manage_md5_pipeline.run,
                 cohort=cohort,
                 outputs=outputs,
+                manifest_file_path=manifest_file_path,
             )
 
             return self.make_outputs(target=cohort, data=outputs, jobs=job)  # pyright: ignore[reportArgumentType]
@@ -175,6 +178,7 @@ class ValidateMd5Sums(CohortStage):
 
         if READS_TYPE == 'fastq':
             ica_md5sum_file_path: cpg_utils.Path = inputs.as_path(target=cohort, stage=DownloadMd5Results)
+            manifest_file_path: cpg_utils.Path = get_manifest_path_for_cohort(cohort=cohort)
             job: PythonJob = initialise_python_job(
                 job_name='ValidateMd5Sums',
                 target=cohort,
@@ -186,7 +190,8 @@ class ValidateMd5Sums(CohortStage):
                 validate_md5_sums.run,
                 ica_md5sum_file_path=ica_md5sum_file_path,
                 cohort_name=cohort.name,
-                success_output_path=outputs,  # Pass the output path here
+                success_output_path=outputs,
+                manifest_file_path=manifest_file_path,
             )
 
             return self.make_outputs(target=cohort, data=outputs, jobs=job)
@@ -208,6 +213,7 @@ class MakeFastqFileList(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         if READS_TYPE == 'fastq':
             outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
+            manifest_file_path: cpg_utils.Path = get_manifest_path_for_cohort(cohort=cohort)
 
             job: PythonJob = initialise_python_job(
                 job_name='MakeFastqFileList',
@@ -216,7 +222,7 @@ class MakeFastqFileList(CohortStage):
             )
 
             job.image(image=get_driver_image())
-            job.call(make_fastq_file_list.run, outputs=outputs, cohort=cohort)
+            job.call(make_fastq_file_list.run, outputs=outputs, cohort=cohort, manifest_file_path=manifest_file_path)
 
             return self.make_outputs(target=cohort, data=outputs, jobs=job)  # pyright: ignore[reportArgumentType]
         return None

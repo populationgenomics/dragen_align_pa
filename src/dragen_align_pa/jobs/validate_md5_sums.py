@@ -1,6 +1,5 @@
 import cpg_utils
 import pandas as pd
-from cpg_utils.config import config_retrieve
 from loguru import logger
 
 from dragen_align_pa import utils
@@ -10,13 +9,13 @@ def run(  # noqa: PLR0915
     ica_md5sum_file_path: cpg_utils.Path,
     cohort_name: str,
     success_output_path: cpg_utils.Path,
+    manifest_file_path: cpg_utils.Path,
 ) -> None:
     """
     Compares MD5 sums from ICA pipeline output with the manifest.
     Writes an error log if mismatches are found and raises an Exception.
     Writes a success file if all checksums match.
     """
-    manifest_file_path: cpg_utils.Path = config_retrieve(['workflow', 'manifest_gcp_path'])
     mismatched_files: list[str] = []
     error_log_path: cpg_utils.Path = utils.get_prep_path(filename=f'{cohort_name}_md5_errors.log')
 

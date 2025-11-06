@@ -133,7 +133,7 @@ This path is for MD5 validation and preparation of FASTQ inputs.
 1.  **PrepareIcaForDragenAnalysis**: Creates analysis output folders in ICA.
 2.  **FastqIntakeQc**: Manages the "MD5 Checksum" external pipeline using the `ica_pipeline_manager`.
 3.  **DownloadMd5Results**: Downloads the `all_md5.txt` from the completed MD5 job.
-4.  **ValidateMd5Sums**: Compares the ICA-generated checksums against the manifest file specified in the config (`workflow.manifest_gcp_path`). Fails if a mismatch is found.
+4.  **ValidateMd5Sums**: Compares the ICA-generated checksums against the manifest file registered in Metamist. Fails if a mismatch is found.
 5.  **MakeFastqFileList**: Generates the DRAGEN-required `fastq_list.csv` from assay metadata.
 6.  **UploadFastqFileList**: Uploads the generated `fastq_list.csv` to ICA.
 
@@ -186,7 +186,6 @@ All configurable parameters are defined in `config/dragen_align_pa_defaults.toml
       * `input_cohorts`: List of Metamist cohort IDs.
       * `last_stages`: Defines the terminal stage(s) for the `cpg-flow` runner (e.g., `['RunMultiQc']`).
       * `reads_type`: Critical. Must be `"fastq"` or `"cram"`.
-      * `manifest_gcp_path`: Required if `reads_type = "fastq"`. Points to the manifest CSV containing checksums.
   * `[ica.projects]`: Defines the ICA project IDs for alignment and MLR.
   * `[ica.management]`:
       * `cancel_cohort_run`: `true`/`false`. This is the state toggle for initiating a cancellation on the next run.
