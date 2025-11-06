@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 import cpg_utils
 from cpg_flow.targets import Cohort, SequencingGroup
-from cpg_utils.config import get_driver_image, output_path
+from cpg_utils.config import get_access_level, get_driver_image, output_path
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
@@ -131,10 +131,23 @@ def get_manifest_path_for_cohort(cohort: Cohort) -> cpg_utils.Path:
     Queries Metamist for the 'manifest' analysis for a given cohort
     and returns the GCS path to the manifest file.
 
-    It specifically looks for a manifest that has 'production_manifest'
-    in its filename and 'production_manifests' in its directory path.
+    If access_level is 'test', it fetches the 'control' manifest.
+    Otherwise, it fetches the 'production' manifest.
     """
     logger.info(f'Querying Metamist for manifest path for cohort {cohort.id}')
+    access_level: str = get_access_level()
+    logger.info(f'Using access level: {access_level}')
+
+    if access_level == 'test':
+        manifest_type: str = 'control'
+        required_basename_str: str = 'control_manifest'
+        required_dirname_str: str = 'control_manifests'
+    else:
+        manifest_type: str = 'production'
+        required_basename_str: str = 'production_manifest'
+        required_dirname_str: str = 'production_manifests'
+
+    logger.info(f'Searching for {manifest_type} manifest analysis in Metamist')
 
     manifest_query: DocumentNode = gql(
         request_string="""
@@ -169,8 +182,8 @@ def get_manifest_path_for_cohort(cohort: Cohort) -> cpg_utils.Path:
             if (
                 a.get('type') == 'manifest'
                 and outputs
-                and 'production_manifest' in outputs.get('basename', '')
-                and 'production_manifests' in outputs.get('dirname', '')
+                and required_basename_str in outputs.get('basename', '')
+                and required_dirname_str in outputs.get('dirname', '')
             ):
                 matching_manifests.append(a)
 
@@ -178,13 +191,13 @@ def get_manifest_path_for_cohort(cohort: Cohort) -> cpg_utils.Path:
         if not matching_manifests:
             raise ValueError(
                 f"No 'manifest' analysis found for cohort {cohort.id} "
-                f"with 'production_manifest' in its filename and 'production_manifests' in its directory."
+                f"matching type '{manifest_type}' (basename: '{required_basename_str}', dirname: '{required_dirname_str}')."
             )
 
         if len(matching_manifests) > 1:
             all_ids = [m.get('id') for m in matching_manifests]
             logger.warning(
-                f"Found {len(matching_manifests)} matching 'production_manifest' analyses for "
+                f"Found {len(matching_manifests)} matching '{manifest_type}' analyses for "
                 f'cohort {cohort.id} (IDs: {all_ids}). '
                 f'Using the first one found (ID: {matching_manifests[0].get("id")}).'
             )
@@ -194,11 +207,12 @@ def get_manifest_path_for_cohort(cohort: Cohort) -> cpg_utils.Path:
 
         if not manifest_path:
             raise ValueError(
-                f'Production manifest analysis (ID: {manifest_entry.get("id")}) found for {cohort.id},'
-                f" but 'outputs.path' is missing or null."
+                f"Matching '{manifest_type}' analysis (ID: {manifest_entry.get('id')}) found for {cohort.id}, "
+                f"but 'outputs.path' is missing or null."
+                f'{manifest_entry}'
             )
 
-        logger.info(f'Found manifest path: {manifest_path} (Analysis ID: {manifest_entry.get("id")})')
+        logger.info(f"Found '{manifest_type}' manifest path: {manifest_path} (Analysis ID: {manifest_entry.get('id')})")
         return cpg_utils.to_path(manifest_path)
 
     except Exception as e:
