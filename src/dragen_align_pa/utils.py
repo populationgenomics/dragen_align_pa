@@ -143,9 +143,9 @@ def get_manifest_path_for_cohort(cohort: Cohort) -> cpg_utils.Path:
         required_basename_str: str = 'control_manifest'
         required_dirname_str: str = 'control_manifests'
     else:
-        manifest_type: str = 'production'
-        required_basename_str: str = 'production_manifest'
-        required_dirname_str: str = 'production_manifests'
+        manifest_type = 'production'
+        required_basename_str = 'production_manifest'
+        required_dirname_str = 'production_manifests'
 
     logger.info(f'Searching for {manifest_type} manifest analysis in Metamist')
 
@@ -191,7 +191,8 @@ def get_manifest_path_for_cohort(cohort: Cohort) -> cpg_utils.Path:
         if not matching_manifests:
             raise ValueError(
                 f"No 'manifest' analysis found for cohort {cohort.id} "
-                f"matching type '{manifest_type}' (basename: '{required_basename_str}', dirname: '{required_dirname_str}')."
+                f"matching type '{manifest_type}' "
+                f"(basename: '{required_basename_str}', dirname: '{required_dirname_str}')."
             )
 
         if len(matching_manifests) > 1:
