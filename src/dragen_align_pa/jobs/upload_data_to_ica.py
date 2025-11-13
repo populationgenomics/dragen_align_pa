@@ -1,85 +1,98 @@
+"""
+Uploads large CRAM files from GCS to ICA.
+
+Uses a hybrid PythonJob approach:
+- icasdk (Python) is used for API calls (checking existence, getting IDs).
+- gcloud CLI (subprocess) is used to download the large file from GCS.
+- icav2 CLI (subprocess) is used to upload the large local file to ICA,
+  bypassing the Python SDK's 10MB file size limit.
+"""
+
+import os
+from typing import Literal
+
 from cpg_flow.targets import SequencingGroup
-from cpg_utils.cloud import get_path_components_from_gcp_path
-from cpg_utils.config import config_retrieve, get_driver_image
-from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command, get_batch
-from hailtop.batch.job import BashJob
+from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa.utils import calculate_needed_storage
+from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
+from dragen_align_pa.constants import BUCKET_NAME
+from dragen_align_pa.utils import validate_cli_path_input
 
 
-def _initalise_upload_job(sequencing_group: SequencingGroup) -> BashJob:
-    upload_job: BashJob = get_batch().new_bash_job(
-        name='UploadDataToIca',
-        attributes=sequencing_group.get_job_attrs() or {} | {'tool': 'ICA'},  # type: ignore[ReportUnknownVariableType]
-    )
+def _setup_paths(
+    sequencing_group: SequencingGroup,
+    upload_folder: str,
+) -> dict[str, str]:
+    """
+    Resolves and returns all necessary paths and names for the job.
+    """
+    sg_name: str = sequencing_group.name
+    cram_name = f'{sg_name}.cram'
 
-    upload_job.image(image=get_driver_image())
-    upload_job.storage(calculate_needed_storage(cram=str(sequencing_group.cram)))
-    upload_job.spot(is_spot=False)
+    # Ensure we get the .cram path, not .crai
+    gcs_base_path = str(sequencing_group.cram)
+    if gcs_base_path.endswith('.cram.crai'):
+        gcs_cram_path = gcs_base_path.removesuffix('.crai')
+    elif not gcs_base_path.endswith('.cram'):
+        raise ValueError(
+            f'Unexpected path for sequencing_group.cram: {gcs_base_path}',
+        )
+    else:
+        gcs_cram_path = gcs_base_path
 
-    return upload_job
+    logger.info(f'Resolved CRAM path to upload: {gcs_cram_path}')
+
+    batch_tmpdir = os.environ.get('BATCH_TMPDIR', '/io')
+    local_cram_path = os.path.join(batch_tmpdir, sg_name, cram_name)
+
+    return {
+        'sg_name': sg_name,
+        'cram_name': cram_name,
+        'gcs_cram_path': gcs_cram_path,
+        'local_cram_path': local_cram_path,
+        'ica_folder_path': f'/{BUCKET_NAME}/{upload_folder}/{sg_name}/',
+    }
 
 
-def upload_data_to_ica(sequencing_group: SequencingGroup, ica_cli_setup: str, output: str) -> BashJob:
-    upload_folder = config_retrieve(['ica', 'data_prep', 'upload_folder'])
-    bucket: str = get_path_components_from_gcp_path(str(sequencing_group.cram))['bucket']
+def run(
+    sequencing_group: SequencingGroup,
+    output_path_str: str,
+    upload_folder: str,
+) -> None:
+    """
+    Main function for the PythonJob.
+    Orchestrates SDK checks and CLI uploads for the CRAM file.
+    """
 
-    job: BashJob = _initalise_upload_job(sequencing_group=sequencing_group)
+    # 1. --- Setup Names and Paths ---
+    paths = _setup_paths(sequencing_group, upload_folder)
+    validate_cli_path_input(paths['gcs_cram_path'], 'gcs_cram_path')
+    validate_cli_path_input(paths['ica_folder_path'], 'ica_folder_path')
 
-    authenticate_cloud_credentials_in_job(job)
-    logger.info(f'Uploading CRAM and CRAI for {sequencing_group.name}')
+    # 2. --- Authenticate Python SDK ---
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
+    project_id: str = secrets['projectID']
+    path_params: dict[str, str] = {'projectId': project_id}
 
-    # Check if the CRAM and CRAI already exists in ICA before uploading. If they exist, just return the ID for the CRAM and CRAI  # noqa: E501
-    # The internal `command` method is a wrapper from cpg_utils.hail_batch that extends the normal hail batch command
-    job.command(
-        command(
-            f"""
-            function copy_from_gcp {{
-                mkdir -p $BATCH_TMPDIR/{sequencing_group.name}
-                gcloud storage cp {sequencing_group.cram} $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.cram
-                gcloud storage cp {sequencing_group.cram}.crai $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.cram.crai
-            }}
-            function upload_cram {{
-                icav2 projectdata upload $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.cram /{bucket}/{upload_folder}/{sequencing_group.name}/
-            }}
-            function upload_crai {{
-                icav2 projectdata upload $BATCH_TMPDIR/{sequencing_group.name}/{sequencing_group.name}.cram.crai /{bucket}/{upload_folder}/{sequencing_group.name}/
-            }}
+    # 3. --- Check File Existence ---
+    cram_status: str | None = None
+    with ica_api_utils.get_ica_api_client() as api_client:
+        api_instance = project_data_api.ProjectDataApi(api_client)
+        cram_status = ica_utils.check_file_existence(
+            api_instance=api_instance,
+            path_params=path_params,
+            ica_folder_path=paths['ica_folder_path'],
+            cram_name=paths['cram_name'],
+        )
 
-            function get_fids {{
-                # Add a random delay before calling the ICA API to hopefully stop empty JSON files from being written to GCP
-                sleep $(shuf -i 1-30 -n 1)
-                icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram --match-mode EXACT -o json | jq -r '.items[].id' > cram_id
-                icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram.crai --match-mode EXACT -o json | jq -r '.items[].id' > crai_id
+        # 4. --- Perform Upload (if needed) ---
+        ica_cli_utils.perform_upload_if_needed(cram_status, paths)
 
-                jq -n --arg cram_id $(cat cram_id) --arg crai_id $(cat crai_id) '{{cram_fid: $cram_id, crai_fid: $crai_id}}' > {job.ofile}
-            }}
-
-            {ica_cli_setup}
-            cram_status=$(icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram --match-mode EXACT -o json | jq -r '.items[].details.status')
-            crai_status=$(icav2 projectdata list --parent-folder /{bucket}/{upload_folder}/{sequencing_group.name}/ --data-type FILE --file-name {sequencing_group.name}.cram.crai --match-mode EXACT -o json | jq -r '.items[].details.status')
-
-            if [[ $cram_status != "AVAILABLE" ]] || [[ $crai_status != "AVAILABLE" ]]
-            then
-                retry copy_from_gcp
-            fi
-
-            if [[ $cram_status != "AVAILABLE" ]]
-            then
-                retry upload_cram
-            fi
-
-            if [[ $crai_status != "AVAILABLE" ]]
-            then
-                retry upload_crai
-            fi
-
-            get_fids
-            """,  # noqa: E501
-            define_retry_function=True,
-        ),
-    )
-    get_batch().write_output(job.ofile, output)
-
-    return job
+        # 5. --- Get Final File ID and Write Output ---
+        ica_utils.finalize_upload(
+            api_instance=api_instance,
+            path_params=path_params,
+            paths=paths,
+            output_path_str=output_path_str,
+        )

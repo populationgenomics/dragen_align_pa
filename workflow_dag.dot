@@ -1,0 +1,76 @@
+digraph DragenAlignPAWorkflow {
+    label="Dragen Alignment";
+    labelloc=top;
+    fontsize=24;
+    rankdir=LR;
+    splines=ortho;
+    ordering=out;
+    bgcolor="#f9f9f9";
+    node [shape=box, style=filled, fontname="Helvetica", fontsize=12, color="#444444", width=2.2, height=0.7];
+    edge [color="#888888", penwidth=2, arrowsize=0.8];
+
+    // ColorBrewer Set2 palette (colorblind friendly)
+    // CRAM: #66c2a5 (green)
+    // FASTQ: #fc8d62 (orange)
+    // Other: #8da0cb (blue)
+
+    // CRAM-related stages (SG, pre-pipeline)
+    UploadDataToIca        [fillcolor="#66c2a5", label="UploadDataToIca\n(CRAM, SG)"];
+
+    // FASTQ-related stages (C, pre-pipeline)
+    FastqIntakeQc          [fillcolor="#fc8d62", label="FastqIntakeQc\n(FASTQ, C)"];
+    DownloadMd5Results     [fillcolor="#fc8d62", label="DownloadMd5Results\n(FASTQ, C)"];
+    ValidateMd5Sums        [fillcolor="#fc8d62", label="ValidateMd5Sums\n(FASTQ, C)"];
+    MakeFastqFileList      [fillcolor="#fc8d62", label="MakeFastqFileList\n(FASTQ, C)"];
+    UploadFastqFileList    [fillcolor="#8da0cb", label="UploadFastqFileList\n(C)"];
+
+    // Other stages (post-pipeline, no CRAM/FASTQ label)
+    DownloadMlrGvcfFromIca [fillcolor="#8da0cb", label="DownloadMlrGvcfFromIca\n(SG)"];
+    PrepareIcaForDragenAnalysis [fillcolor="#ffffb3", style="filled,bold", penwidth=3, label="PrepareIcaForDragenAnalysis\n(C)\nSTART"];
+    ManageDragenPipeline        [fillcolor="#b3e2cd", label="ManageDragenPipeline\n(C)\n[ICA monitor]"];
+    ManageDragenMlr             [fillcolor="#b3e2cd", label="ManageDragenMlr\n(C)\n[ICA monitor]"];
+    DownloadCramFromIca         [fillcolor="#b3e2cd", label="DownloadCramFromIca\n(SG)\n[ICA monitor]"];
+    DownloadGvcfFromIca         [fillcolor="#b3e2cd", label="DownloadGvcfFromIca\n(SG)\n[ICA monitor]"];
+    DownloadDataFromIca         [fillcolor="#b3e2cd", label="DownloadDataFromIca\n(SG)\n[ICA monitor]"];
+    SomalierExtract             [fillcolor="#8da0cb", label="SomalierExtract\n(SG)"];
+    RunMultiQc                  [fillcolor="#8da0cb", label="RunMultiQc\n(C)"];
+    DeleteDataInIca             [fillcolor="#fbb4ae", style="filled,bold", penwidth=3, label="DeleteDataInIca\n(C)\nEND"];
+
+    // Strict left-to-right ordering for minimal edge crossing
+    {rank=same; PrepareIcaForDragenAnalysis;}
+    {rank=same; FastqIntakeQc; UploadDataToIca;}
+    {rank=same; DownloadMd5Results;}
+    {rank=same; ValidateMd5Sums;}
+    {rank=same; DownloadCramFromIca; DownloadGvcfFromIca; ManageDragenMlr}
+    {rank=same; MakeFastqFileList; DownloadMlrGvcfFromIca;}
+    {rank=same; UploadFastqFileList;}
+    {rank=same; ManageDragenPipeline;}
+    {rank=same; DownloadDataFromIca;}
+    {rank=same; SomalierExtract;}
+    {rank=same; RunMultiQc;}
+    {rank=same; DeleteDataInIca;}
+
+    // Edges (dependencies)
+    PrepareIcaForDragenAnalysis -> FastqIntakeQc;
+    PrepareIcaForDragenAnalysis -> UploadDataToIca;
+    FastqIntakeQc -> DownloadMd5Results;
+    DownloadMd5Results -> ValidateMd5Sums;
+    ValidateMd5Sums -> MakeFastqFileList;
+    MakeFastqFileList -> UploadFastqFileList;
+    PrepareIcaForDragenAnalysis -> ManageDragenPipeline;
+    UploadDataToIca -> ManageDragenPipeline;
+    UploadFastqFileList -> ManageDragenPipeline;
+    ManageDragenPipeline -> ManageDragenMlr;
+    ManageDragenPipeline -> DownloadCramFromIca;
+    ManageDragenPipeline -> DownloadGvcfFromIca;
+    DownloadGvcfFromIca -> DownloadMlrGvcfFromIca;
+    ManageDragenMlr -> DownloadMlrGvcfFromIca;
+    ManageDragenPipeline -> DownloadDataFromIca;
+    DownloadCramFromIca -> DownloadDataFromIca;
+    DownloadGvcfFromIca -> DownloadDataFromIca;
+    DownloadMlrGvcfFromIca -> DownloadDataFromIca;
+    DownloadCramFromIca -> SomalierExtract;
+    DownloadDataFromIca -> RunMultiQc;
+    SomalierExtract -> RunMultiQc;
+    RunMultiQc -> DeleteDataInIca;
+}

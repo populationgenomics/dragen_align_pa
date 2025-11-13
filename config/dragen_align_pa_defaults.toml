@@ -1,11 +1,14 @@
 # This is an example config file detailing all the optioons used for running the realignment pipeline
 [workflow]
 name = 'dragen_align_pa'
-output_prefix = "ica"
+output_prefix = ""
 sequencing_type = "genome"
 input_cohorts = [ "COH0000",]
 last_stages = ['DownloadDataFromIca']
 skip_stages = ['DeleteDataInIca']
+
+# Can be fastq or CRAM, depending on the source of the reads for alignment
+reads_type = "fastq"
 
 # used to make sure we don't repeat previously completed stages
 check_expected_outputs = true
@@ -45,12 +48,16 @@ reference_tags = ['test_reference_tags']
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]
 dragen_version = 'dragen_3_7_8'
-# F1 instance pipeline
-# dragen_3_7_8 = 'cd8e4fde-e410-4ae5-b8c0-dac0aea9d74a'
-# F2 instance pipeline
-dragen_3_7_8 = 'cbac3d1f-737f-44f2-9a40-f7f2589b5fad'
+# F2 instance CRAM pipeline
+cram = 'cbac3d1f-737f-44f2-9a40-f7f2589b5fad'
+
+# F2 instance Fastq pipeline
+fastq = '393e2423-3c0d-42f2-aa83-910a48a9c32c'
 # Dragen hash table for 3.7.8
 dragen_ht_id = 'fil.854d49a151a24edae5d708da2935b1b0'
+
+#md5sum pipeline
+md5_pipeline_id = "cbc8cf45-851f-49a8-bd50-3c66d205ab97"
 
 # IDs for all CRAM references that were previously used to generate the CRAM files that are to be realigned
 [ica.cram_references]
@@ -74,6 +81,6 @@ coverage_region_1 = 'fil.ad60897bc97e4646f28c08da33ba0a20'
 coverage_region_2 = 'fil.c4ade57f5ffe4baff28d08da33ba0a20'
 
 [ica.mlr]
-config_json = "fil.28f1c8b9408a47cb595608dd9d8fcae1"
+config_json = "fil.91c3e63114fc43dc31ed08dde927d6b4"
 mlr_hash_table = "ica://ourdna-dragen-mlr-jobs/data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9"
 analysis_instance_tier = "economy"

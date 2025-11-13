@@ -1,69 +1,74 @@
-"""Download all the non CRAM / GVCF outputs from ICA"""
+"""
+Download all non CRAM / GVCF outputs from ICA using the Python SDK.
+"""
+
+from typing import Literal
 
 import cpg_utils
 from cpg_flow.targets import SequencingGroup
-from cpg_utils.cloud import get_path_components_from_gcp_path
-from cpg_utils.config import config_retrieve, get_driver_image
-from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command, get_batch
-from hailtop.batch.job import BashJob
+from cpg_utils.config import config_retrieve
+from google.cloud import storage
+from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-
-def _initalise_bulk_download_job(sequencing_group: SequencingGroup) -> BashJob:
-    bulk_download_job = get_batch().new_bash_job(
-        name='DownloadDataFromIca',
-        attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'ICA'},  # type: ignore[ReportUnknownVariableType]
-    )
-    bulk_download_job.image(image=get_driver_image())
-    bulk_download_job.spot(is_spot=False)
-    return bulk_download_job
+from dragen_align_pa import ica_api_utils, ica_utils, utils
+from dragen_align_pa.constants import (
+    BUCKET_NAME,
+)
 
 
-def download_bulk_data_from_ica(
+def run(
     sequencing_group: SequencingGroup,
-    gcp_folder_for_ica_download: str,
     pipeline_id_arguid_path: cpg_utils.Path,
-    ica_cli_setup: str,
-) -> BashJob:
-    job: BashJob = _initalise_bulk_download_job(sequencing_group=sequencing_group)
-    authenticate_cloud_credentials_in_job(job=job)
-
-    ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
-    bucket: str = get_path_components_from_gcp_path(path=str(object=sequencing_group.cram))['bucket']
-    logger.info(f'Downloading bulk ICA data for {sequencing_group.name}.')
-    is_bioheart: bool = 'bioheart' in sequencing_group.dataset.name
-
-    job.command(
-        command(
-            rf"""
-            function download_extra_data {{
-            files_and_ids=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sequencing_group.name}/{sequencing_group.name}${{ar_guid}}-${{pipeline_id}}/{sequencing_group.name}/ -o json | jq -r '.items[] | select(.details.name | test(".cram|.gvcf") | not) | "\(.details.name) \(.id)"')
-            while IFS= read -r line; do
-                name=$(echo "$line" | awk '{{print $1}}')
-                id=$(echo "$line" | awk '{{print $2}}')
-                echo "Downloading $name with ID $id"
-                icav2 projectdata download $id $BATCH_TMPDIR/{sequencing_group.name}/$name --exclude-source-path
-            done <<< "$files_and_ids"
-            gcloud storage cp --recursive $BATCH_TMPDIR/{sequencing_group.name}/* gs://{bucket}/{gcp_folder_for_ica_download}/dragen_metrics/{sequencing_group.name}/
-            }}
-
-            {ica_cli_setup}
-            # List all files in the folder except crams and gvcf and download them
-            mkdir -p $BATCH_TMPDIR/{sequencing_group.name}
-            pipeline_id_arguid_filename=$(basename {pipeline_id_arguid_path})
-                gcloud storage cp {pipeline_id_arguid_path} .
-                pipeline_id=$(cat $pipeline_id_arguid_filename | jq -r .pipeline_id)
-                echo "Pipeline ID: $pipeline_id"
-                if {is_bioheart}
-                then
-                    ar_guid=''
-                else
-                    ar_guid=_$(cat $pipeline_id_arguid_filename | jq -r .ar_guid)_
-                fi
-
-            retry download_extra_data
-            """,  # noqa: E501
-            define_retry_function=True,
-        ),
+) -> None:
+    """
+    The main Python function for the download job.
+    Coordinates helper functions to list, filter, and stream files.
+    """
+    sg_name: str = sequencing_group.name
+    ica_analysis_output_folder: str = config_retrieve(
+        ['ica', 'data_prep', 'output_folder'],
     )
-    return job
+    logger.info(f'Downloading bulk ICA data for {sg_name}.')
+
+    # --- Get Pipeline ID and AR GUID ---
+    pipeline_id, ar_guid = ica_utils.get_pipeline_details(pipeline_id_arguid_path)
+    base_ica_folder_path = (
+        f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
+    )
+    logger.info(f'Targeting ICA folder: {base_ica_folder_path}')
+
+    # --- Setup GCS Client ---
+    gcs_output_path_prefix = str(utils.get_output_path(filename=f'dragen_metrics/{sg_name}')).removeprefix(
+        f'gs://{BUCKET_NAME}/'
+    )
+    storage_client = storage.Client()
+    gcs_bucket = storage_client.bucket(BUCKET_NAME)
+
+    # --- Secure ICA Authentication ---
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
+    path_parameters: dict[str, str] = {'projectId': secrets['projectID']}
+
+    with ica_api_utils.get_ica_api_client() as api_client:
+        api_instance = project_data_api.ProjectDataApi(api_client)
+
+        # --- List, filter, and download files ---
+        files_to_download = ica_utils.list_and_filter_ica_files(
+            api_instance=api_instance,
+            path_parameters=path_parameters,
+            base_ica_folder_path=base_ica_folder_path,
+        )
+
+        for file_name, file_id in files_to_download:
+            logger.info(f'Preparing to download file: {file_name} (ID: {file_id})')
+            ica_utils.stream_ica_file_to_gcs(
+                api_instance=api_instance,
+                path_parameters=path_parameters,
+                file_id=file_id,
+                file_name=file_name,
+                gcs_bucket=gcs_bucket,
+                gcs_prefix=gcs_output_path_prefix,
+                expected_md5_hash=None,
+            )
+
+    logger.info('All files streamed to GCS successfully.')

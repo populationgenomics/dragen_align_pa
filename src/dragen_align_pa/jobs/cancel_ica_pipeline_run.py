@@ -5,44 +5,42 @@ from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_analysis_api
 from loguru import logger
 
-from dragen_align_pa import utils
+from dragen_align_pa import ica_api_utils
 
 
-def run(ica_pipeline_id: str, api_root: str, is_mlr: bool = False) -> dict[str, str]:
-    """Cancel a running ICA pipeline via the API
+def run(ica_pipeline_id: str, is_mlr: bool = False) -> dict[str, str]:
+    """Cancel an ongoing ICA pipeline run.
 
     Args:
-        ica_pipeline_id_path (str): The path to the JSON file holding the pipeline ID
-        api_root (str): The root for the ICA API
-
-    Raises:
-        icasdk.ApiException: Any API error
+        ica_pipeline_id: The ICA pipeline ID or a dict containing it.
+        is_mlr: Whether the pipeline is a Machine Learning Recalibration (MLR) run.
 
     Returns:
-        dict[str, str]: A cancelled dict to be recorded in GCP noting that the pipeline was cancelled.
-                        Includes a timestamp so that a single cancelled pipeline isn't blocking.
+        A dict indicating the cancelled pipeline ID.
     """
-    secrets: dict[Literal['projectID', 'apiKey'], str] = utils.get_ica_secrets()
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
-    api_key: str = secrets['apiKey']
-
-    configuration = icasdk.Configuration(host=api_root)
-    configuration.api_key['ApiKeyAuth'] = api_key
 
     if not is_mlr:
         path_parameters: dict[str, str] = {'projectId': project_id}
     else:
-        path_parameters = {'projectId': config_retrieve(['ica', 'projects', 'dragen_mlr_project_id'])}
+        path_parameters = {
+            'projectId': config_retrieve(['ica', 'projects', 'dragen_mlr_project_id']),
+        }
     path_parameters = path_parameters | {'analysisId': ica_pipeline_id}
 
-    with icasdk.ApiClient(configuration=configuration) as api_client:
+    with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         try:
             api_instance.abort_analysis(
                 path_params=path_parameters,  # type: ignore[ReportUnknownVariableType]
                 skip_deserialization=True,
             )  # type: ignore[ReportUnknownVariableType]
-            logger.info(f'Sent cancellation request for ICA analysis: {ica_pipeline_id}')
+            logger.info(
+                f'Sent cancellation request for ICA analysis: {ica_pipeline_id}',
+            )
             return {'cancelled': ica_pipeline_id}
         except icasdk.ApiException as e:
-            raise icasdk.ApiException(f'Exception when calling ProjectAnalysisApi->abort_analysis: {e}') from e
+            raise icasdk.ApiException(
+                f'Exception when calling ProjectAnalysisApi->abort_analysis: {e}',
+            ) from e

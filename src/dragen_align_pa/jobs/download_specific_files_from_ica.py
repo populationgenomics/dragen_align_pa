@@ -1,108 +1,148 @@
+"""
+Download specific files (e.g., CRAM, GVCF) from ICA using the Python SDK.
+"""
+
 from typing import Literal
 
 import cpg_utils
 from cpg_flow.targets import SequencingGroup
-from cpg_utils.config import config_retrieve, get_driver_image
-from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, command, get_batch
-from hailtop.batch.job import BashJob
+from cpg_utils.config import config_retrieve
+from google.cloud import storage
+from google.cloud.storage.bucket import Bucket
+from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa.utils import calculate_needed_storage
+from dragen_align_pa import ica_api_utils, ica_utils, utils
+from dragen_align_pa.constants import (
+    BUCKET_NAME,
+)
+from dragen_align_pa.file_types import FileTypeSpec
 
 
-def _initalise_download_job(sequencing_group: SequencingGroup, job_name: str) -> BashJob:
-    download_job: BashJob = get_batch().new_bash_job(
-        name=job_name,
-        attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'ICA'},  # type: ignore[ReportUnknownVariableType]
-    )
-
-    download_job.image(image=get_driver_image())
-    download_job.storage(calculate_needed_storage(cram=str(sequencing_group.cram)))
-    download_job.memory('8Gi')
-    download_job.spot(is_spot=False)
-
-    return download_job
-
-
-def download_data_from_ica(
-    job_name: str,
-    sequencing_group: SequencingGroup,
-    filetype: str,
-    bucket: str,
-    ica_cli_setup: str,
-    gcp_folder_for_ica_download: str,
-    pipeline_id_arguid_path: cpg_utils.Path,
-) -> BashJob:
-    sg_name: str = sequencing_group.name
-    # Bash hackiness
-    is_bioheart: str = f'{"bioheart" in sequencing_group.dataset.name}'.lower()
-    logger.info(f'Downloading {filetype} and {filetype} index for {sg_name}')
-
-    job: BashJob = _initalise_download_job(sequencing_group=sequencing_group, job_name=job_name)
-    authenticate_cloud_credentials_in_job(job=job)
-
-    ica_analysis_output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
-    index: Literal['crai', 'tbi'] = 'crai' if filetype == 'cram' else 'tbi'
-    md5: str = 'md5sum'
-    if filetype == 'cram':
-        gcp_prefix = 'cram'
-        data = 'cram'
-    elif filetype == 'base_gvcf':
-        gcp_prefix = 'base_gvcf'
-        data = 'hard-filtered.gvcf.gz'
-    else:
-        gcp_prefix = 'recal_gvcf'
-        data = 'hard-filtered.recal.gvcf.gz'
-        md5 = 'md5'
-
-    job.command(
-        command(
-            f"""
-                function download_individual_files {{
-                main_data=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}${{ar_guid}}-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.{data} --match-mode EXACT -o json | jq -r '.items[].id')
-                index=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}${{ar_guid}}-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.{data}.{index} --match-mode EXACT -o json | jq -r '.items[].id')
-                md5=$(icav2 projectdata list --parent-folder /{bucket}/{ica_analysis_output_folder}/{sg_name}/{sg_name}${{ar_guid}}-${{pipeline_id}}/{sg_name}/ --data-type FILE --file-name {sg_name}.{data}.{md5} --match-mode EXACT -o json | jq -r '.items[].id')
-                icav2 projectdata download $main_data $BATCH_TMPDIR/{sg_name}/{sg_name}.{data} --exclude-source-path
-                icav2 projectdata download $index $BATCH_TMPDIR/{sg_name}/{sg_name}.{data}.{index} --exclude-source-path
-                icav2 projectdata download $md5 $BATCH_TMPDIR/{sg_name}/{sg_name}.{data}.md5sum --exclude-source-path
-
-                # Get md5sum of the downloaded data file and compare it with the ICA md5sum
-                # Checking here because using icav2 package to download which doesn't automatically perform checksum matching
-                ica_md5_hash=$(cat $BATCH_TMPDIR/{sg_name}/{sg_name}.{data}.md5sum | awk '{{print $1}}')
-                self_md5=$(cat $BATCH_TMPDIR/{sg_name}/{sg_name}.{data} | md5sum | cut -d " " -f1)
-                if [ "$self_md5" != "$ica_md5_hash" ]; then
-                    echo "Error: MD5 checksums do not match!"
-                    echo "ICA MD5: $ica_md5_hash"
-                    echo "Self MD5: $cram_md5"
-                    exit 1
-                else
-                    echo "MD5 checksums match."
-                fi
-
-                # Copy the data and index files to the bucket
-                # Checksums are already checked by `gcloud storage cp`
-                gcloud storage cp $BATCH_TMPDIR/{sg_name}/{sg_name}.{data} gs://{bucket}/{gcp_folder_for_ica_download}/{gcp_prefix}/
-                gcloud storage cp $BATCH_TMPDIR/{sg_name}/{sg_name}.{data}.{index} gs://{bucket}/{gcp_folder_for_ica_download}/{gcp_prefix}/
-                gcloud storage cp $BATCH_TMPDIR/{sg_name}/{sg_name}.{data}.md5sum gs://{bucket}/{gcp_folder_for_ica_download}/{gcp_prefix}/
-                }}
-
-                {ica_cli_setup}
-                mkdir -p $BATCH_TMPDIR/{sg_name}
-                pipeline_id_arguid_filename=$(basename {pipeline_id_arguid_path})
-                gcloud storage cp {pipeline_id_arguid_path} .
-                echo "Pipeline ID: $pipeline_id"
-                if {is_bioheart}
-                then
-                    pipeline_id=$(cat $pipeline_id_arguid_filename)
-                    ar_guid=''
-                else
-                    pipeline_id=$(cat $pipeline_id_arguid_filename | jq -r .pipeline_id)
-                    ar_guid=_$(cat $pipeline_id_arguid_filename | jq -r .ar_guid)_
-                fi
-
-                retry download_individual_files
-                """,  # noqa: E501
-            define_retry_function=True,
+def _orchestrate_download(
+    api_instance: project_data_api.ProjectDataApi,
+    path_parameters: dict[str, str],
+    base_ica_folder_path: str,
+    gcs_bucket: Bucket,
+    gcs_output_path_prefix: str,
+    main_file_name: str,
+    index_file_name: str,
+    md5_file_name: str,
+    md5_gcp_name: str,
+) -> None:
+    """
+    Finds, downloads, verifies, and uploads the set of files.
+    This function contains the core operational logic.
+    """
+    try:
+        # --- 1. Find all three file IDs ---
+        main_file_id = ica_api_utils.find_file_id_by_name(
+            api_instance,
+            path_parameters,
+            base_ica_folder_path,
+            main_file_name,
         )
+        index_file_id = ica_api_utils.find_file_id_by_name(
+            api_instance,
+            path_parameters,
+            base_ica_folder_path,
+            index_file_name,
+        )
+        md5_file_id = ica_api_utils.find_file_id_by_name(
+            api_instance,
+            path_parameters,
+            base_ica_folder_path,
+            md5_file_name,
+        )
+
+        # --- 2. Get expected MD5 hash ---
+        expected_hash, md5_content = ica_utils.get_md5_from_ica(
+            api_instance,
+            path_parameters,
+            md5_file_id,
+        )
+        logger.info(f'Expected MD5 for {main_file_name} is {expected_hash}')
+
+        # --- 3. Stream main file, verifying MD5 ---
+        ica_utils.stream_ica_file_to_gcs(
+            api_instance=api_instance,
+            path_parameters=path_parameters,
+            file_id=main_file_id,
+            file_name=main_file_name,
+            gcs_bucket=gcs_bucket,
+            gcs_prefix=gcs_output_path_prefix,
+            expected_md5_hash=expected_hash,
+        )
+
+        # --- 4. Stream index file (no verification) ---
+        ica_utils.stream_ica_file_to_gcs(
+            api_instance=api_instance,
+            path_parameters=path_parameters,
+            file_id=index_file_id,
+            file_name=index_file_name,
+            gcs_bucket=gcs_bucket,
+            gcs_prefix=gcs_output_path_prefix,
+            expected_md5_hash=None,
+        )
+
+        # --- 5. Upload the MD5 file itself ---
+        logger.info(f'Uploading MD5 file to {gcs_output_path_prefix}/{md5_gcp_name}')
+        md5_blob = gcs_bucket.blob(f'{gcs_output_path_prefix}/{md5_gcp_name}')
+        md5_blob.upload_from_string(md5_content)
+
+    except Exception as e:
+        logger.error(f'Failed to process files: {e}')
+        raise  # Re-raise to fail the job
+
+
+def run(
+    sequencing_group: SequencingGroup,
+    file_spec: FileTypeSpec,
+    pipeline_id_arguid_path: cpg_utils.Path,
+) -> None:
+    """
+    The main Python function for the download job.
+    Coordinates helper functions to list, filter, and stream files.
+    """
+    sg_name: str = sequencing_group.name
+    ica_analysis_output_folder: str = config_retrieve(
+        ['ica', 'data_prep', 'output_folder'],
     )
-    return job
+    logger.info(f'Downloading {file_spec.gcs_prefix} data for {sg_name}.')
+
+    main_file_name: str = f'{sg_name}.{file_spec.data_suffix}'
+    index_file_name: str = f'{sg_name}.{file_spec.index_suffix}'
+    md5_file_name: str = f'{sg_name}.{file_spec.data_suffix}.{file_spec.md5_suffix}'
+    md5_gcp_name: str = f'{sg_name}.{file_spec.data_suffix}.md5sum'  # Always save as .md5sum in GCS
+
+    # --- 2. Get Pipeline ID and AR GUID ---
+    pipeline_id, ar_guid = ica_utils.get_pipeline_details(pipeline_id_arguid_path)
+    base_ica_folder_path = (
+        f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
+    )
+    logger.info(f'Targeting ICA folder: {base_ica_folder_path}')
+
+    # --- 3. Setup GCS Client ---
+    gcs_output_path_prefix = str(utils.get_output_path(f'{file_spec.gcs_prefix}')).removeprefix(f'gs://{BUCKET_NAME}/')
+    storage_client = storage.Client()
+    gcs_bucket = storage_client.bucket(BUCKET_NAME)
+
+    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
+    path_parameters: dict[str, str] = {'projectId': secrets['projectID']}
+
+    # --- 5. Run Orchestration ---
+    with ica_api_utils.get_ica_api_client() as api_client:
+        api_instance = project_data_api.ProjectDataApi(api_client)
+        _orchestrate_download(
+            api_instance=api_instance,
+            path_parameters=path_parameters,
+            base_ica_folder_path=base_ica_folder_path,
+            gcs_bucket=gcs_bucket,
+            gcs_output_path_prefix=gcs_output_path_prefix,
+            main_file_name=main_file_name,
+            index_file_name=index_file_name,
+            md5_file_name=md5_file_name,
+            md5_gcp_name=md5_gcp_name,
+        )
+
+    logger.info(f'Successfully downloaded and verified all files for {sg_name}.')

@@ -1,113 +1,136 @@
-# Dragen Align PA
-Realign CRAM files using Dragen 3.7.8 via ICA.
+# Dragen Align PA Pipeline
 
 ## Purpose
 
-This workflow performs a realignment of CRAM files to Dragen 3.7.8. This is to be compatible with other large biobanks that are used for population analysis.
+This pipeline aligns or realigns genomic sequencing data (from FASTQ or CRAM files) using the DRAGEN pipeline on the Illumina Connected Analytics (ICA) platform.
 
-## Running the workflow
-- Create a custom cohort in Metamist that contains the samples that you wish to realign.
-    - Every sample in the cohort must have been aligned with the same initial reference genome. Do not mix samples with different initial reference genomes into the same cohort, as this will cause Dragen to fail. See [Upload a reference to ICA](#upload-a-reference-to-ica) if you need a new reference genome for realignment.
-- Create a config file to run the steps you want. See [Setting up a config file](#setting-up-a-config-file) for more information.
-- Run the workflow via [analysis runner](#example-analysis_runner-command)
+It manages data upload to ICA, submission and monitoring of the DRAGEN pipeline, and download of results (CRAMs, gVCFs, QC metrics) back to Google Cloud Storage (GCS). It also performs subsequent QC steps, including Somalier fingerprinting and MultiQC report generation.
 
-## Cancelling a running pipeline
-Due to the disconnect between Hail Batch and ICA, cancelling a running workflow is a little more involved.
-1. Cancel the pipeline run in Hail Batch. Note that this _by itself_ will not cancel any running jobs in ICA.
-2. Change the value of `cancel_cohort_run` in your config file from `false` to `true`.
-3. Submit a new pipeline run with `analysis-runner` with your updated config. This will cancel any in-progress and pending runs in ICA.
 
-## Reconnecting to an ongoing run in ICA
-If the main pipeline in Hail Batch fails, this doesn't cause the pipelines in ICA to fail. You can reconnect to these ongoing runs by making the following edits to your config file.
-1. Make sure that `cancel_cohort_run` is set to `false`
-2. Change the value of `monitor_previous` to `true`
-3. Submit a new pipeline run with `analysis-runner`
+## Pipeline Overview
 
-### Setting up a config file
-The config file [dragen_align_pa_defaults.toml](config/dragen_align_pa_defaults.toml) lists all the options that are used for running the realignment workflow.
-NOTE: This default config is _not used by default_ and is only provided as a reference for you to write a config file for the cohort that you wish to run.
+<div align="center">
+    <img src="workflow_dag.svg" alt="Dragen Alignment Workflow DAG" width="80%"/>
+</div>
 
-The following is a list of config values that you might wish to change for your own pipeline run:
-- workflow
-    - `input_cohorts`: change to your cohort IDs
-    - `last_stages`: the default `DownloadDataFromIca` will run the pipeline end-to-end. You can choose any stage from the stages list `[PrepareIcaForDragenAnalysis, UploadDataToIca, ManageDragenPipeline, DownloadCramFromIca, DownloadGvcfFromIca, DownloadDatoFromIca]`
-- images
-    - ica: set the image tag to the tag you wish to use for the pipeline run. Each image tag should correspond to a code tag in github.
-- ica
-    - management
-        - `cancel_cohort_run`: usually, but not always `false`
-        - `monitor_previous`: defaults to `false` but can be set to `true` on new runs, as the behaviour is to start a new run for a sample if an ongoing run is not found
-    - data_prep
-        - `upload_folder`: where you want to upload data for your cohort (will be created by the pipeline in ICA)
-        - `output_folder`: where ICA Dragen pipeline outputs will be written IN ICA (not GCP). Will be created by the pipeline
-    - tags
-        - `technical_tags`: a list of any technical tags you want to add to the sample (ICA only)
-        - `user_tags`: a list of user tags you want to add to the sample (ICA only)
-        - `reference_tags`: a list of reference tags you want to add to the sample (ICA only)
+The workflow performs the following main steps:
 
-### Example analysis_runner command
-The pipeline code is installed into the Docker image, and an entrypoint is defined as `dragen_align_pa`. Therefore, the pipeline can be invoked as follows
-```commandline
+1.  **Prepare ICA:** Creates analysis folders within the ICA project.
+2.  **Input Data Handling (Conditional):**
+      * **If `reads_type = "fastq"`:**
+        1.  Submits a separate pipeline in ICA to calculate MD5 checksums for all FASTQ files.
+        2.  Downloads the results and validates them against the manifest file.
+        3.  Generates a `fastq_list.csv` file for DRAGEN and uploads it to ICA.
+      * **If `reads_type = "cram"`:**
+        1.  Uploads the CRAM file from GCS to ICA.
+3.  **Run DRAGEN:** Submits the main DRAGEN alignment pipeline to ICA and monitors its progress until completion, failure, or cancellation.
+4.  **Run MLR:** Submits and monitors the DRAGEN MLR (Machine Learning Recalibration) pipeline.
+5.  **Download Results:** Downloads the key outputs (CRAMs, gVCFs, and QC metrics) from ICA back to GCS.
+6.  **Post-Processing QC:**
+      * Runs `somalier extract` on the newly generated CRAM file to create a genomic fingerprint.
+      * Aggregates all QC metrics (from DRAGEN and Somalier) into a single MultiQC report.
+7.  **Cleanup (Optional, after checking all outputs are correct):** Deletes the data from the ICA platform to reduce storage costs.
+
+## Prerequisites
+
+1.  **Metamist Cohort:** You must have a cohort created in Metamist containing the sequencing groups you wish to process.
+2.  **Configuration File:** You must create a TOML configuration file. A reference can be found at `config/dragen_align_pa_defaults.toml`.
+
+## Configuration
+
+Your TOML configuration file must specify the following key options:
+
+  * `[workflow]`:
+
+      * `input_cohorts`: A list of Metamist cohort IDs to process (e.g., `['COH0001']`).
+      * `sequencing_type`: Must be set (e.g., `"genome"`).
+      * `reads_type`: Critical. Must be set to either `"fastq"` or `"cram"`.
+      * `last_stages`: A list of the final stages to run. To run the full pipeline including QC, use `['RunMultiQc']`. To also delete data from ICA after, use `['DeleteDataInIca']`.
+      * `skip_stages`: (Optional) A list of stages to skip, e.g., `['DeleteDataInIca']`.
+
+   * **If `reads_type = "cram"`:**
+
+      * `[ica.cram_references]`:
+          * `old_cram_reference`: Must be set to match one of the keys in this section (e.g., `"dragmap"`). This tells the pipeline which reference genome file (already in ICA) was used to generate the *original* CRAM file.
+
+  * `[ica.data_prep]`:
+
+      * `upload_folder`: The folder name to create in ICA for uploading data (e.g., `"my-cram-uploads"`).
+      * `output_folder`: The base folder name to create in ICA for pipeline outputs (e.g., `"my-dragen-results"`).
+
+## FASTQ Manifest File Structure
+
+If you set reads_type = "fastq", the pipeline queries Metamist for an analysis of type `manifest` that has been registerd against the cohort during ingestion of the fastq data. It will check for `production_manifest` in the file name, in case the control manifest is also registered. The manifest file provides metadata about the FASTQ files. This information is used for both MD5 validation and to construct the DRAGEN-specific RGID (Read Group Identifier).
+
+The required column headers are: Filenames, Checksum, Sample ID, Lane, Machine ID, and Flow cell.
+
+##### An example of the required manifest CSV structure showing only required columns
+| Filenames | Checksum | Sample ID | Lane | Machine ID | Flow cell |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| CPG0001_R1.fastq.gz | d41d8cd98f00b204e9800998ecf8427e | CPG0001 | 1 | M0001 | AABBCC |
+| CPG0001_R2.fastq.gz | 9800998ecf8427e1d8cd98f00b204e98 | CPG0001 | 1 | M0001 | AABBCC |
+| CPG0002_R1.fastq.gz | 1234567890abcdef1234567890abcdef | CPG0002 | 1 | M0001 | AABBCC |
+| CPG0002_R2.fastq.gz | fedcba0987654321fedcba0987654321 | CPG0002 | 1 | M0001 | AABBCC |
+
+## How to Run the Pipeline
+
+The pipeline is launched using `analysis-runner`.
+
+**Example Invocation:**
+
+```bash
 analysis-runner \
---dataset <dataset> \
+--dataset <your-dataset> \
 --access test \
---config config.toml \
---output-dir ica-test \
---description "Description for analysis-runner" \
---image "australia-southeast1-docker.pkg.dev/cpg-common/images-dev/dragen_align_pa:2.1.0-1" \
+--config <path/to/your-config.toml> \
+--output-dir '' \
+--description "DRAGEN alignment for <your-cohort>" \
+--image "australia-southeast1-docker.pkg.dev/cpg-common/images-dev/dragen_align_pa:<image-tag>" \
 dragen_align_pa
 ```
-Note that the `--output-dir` flag is required by `analysis-runner`, but is not used in this workflow. No outputs are written to the location, so any placeholder value can be entered here.
 
-### Upload a reference to ICA
-The current references in ICA are:
-- `Homo_sapiens_assembly38_masked`
-- `Homo_sapiens_assembly38`
+  * `--dataset`: The Metamist dataset associated with your cohort.
+  * `--config`: The path to your local TOML configuration file.
+  * `--output-dir`: This is required by `analysis-runner` but is not used by this pipeline. You can leave it as `''`.
+  * `--image`: The full path to the pipeline's Docker image. The example uses a `-dev` image, but production runs will use a production (i.e. no `-dev` image)
 
-To upload a new reference from your computer the following steps need to be taken:
-- Compress the reference with `bgzip`, ensuring that the file suffix is `.gz`
-- Index the reference with `samtools faidx`
-- Create a new folder in ICA and upload the reference + index into the folder.
-- Use the folder ID as the reference value in your config file (this can be found by navigating into the folder in ICA and clicking `Folder details` on the right of the window, above any data entries).
+## Pipeline Management (Important)
 
-## Development
-Developing the `dragen_align_pa` pipeline differs from the old process in `production_pipelines` and follows a number of new suggested best practices.
+The `ManageDragenPipeline` stage submits a job to the separate ICA platform. The `analysis-runner` job will then wait and poll ICA for the status.
 
-### The workflow runner file
-[run_workflow.py](src/dragen_align_pa/run_workflow.py) is a much simpler re-implementation of the old production-pipelines `main.py`. It defines only a single pipeline (here `dragen_align_pa`), lists all end stages, and calls the `run_workflow` method.
+### Resuming a Monitored Run
 
-### The stages file
-The stages file [stages.py](src/dragen_align_pa/stages.py) defines all the separate stages that the workflow will run as python classes, with a `@stage` decorator in order to define stage dependencies and what is recorded in Metamist.
+If your `analysis-runner` job is interrupted (e.g., it fails or is stopped) while the DRAGEN pipeline is still running in ICA, you can resume monitoring.
 
-Each stage should define two methods: `expected_outputs` and `queue_jobs`. `queue_jobs` must call a single method that returns one of `BashJob, PythonJob` that is used for `self.make_outputs`.
+The pipeline writes a `{sequencing_group}_pipeline_id_and_arguid.json` file to GCS upon submission.
 
-There should be no logic contained within the stage, this should all be handed off to the individual job files.
+**To resume monitoring:** Simply re-launch the pipeline with the *exact same* `analysis-runner` command. The `ManageDragenPipeline` stage will detect the existing `.json` file, read the pipeline ID from it, and begin monitoring that job instead of submitting a new one.
 
-### Job files
-Each job file should implement at minimum tow methods. One should be a private method that is used to initalise a new job for the stage, and the other should be the public method that is called from `stages.py`. This public method must return the created job. PythonJobs should also define a private `_run` method that is called from the public method in the jobs file.
-See [upload_data_to_ica.py](src/dragen_align_pa/jobs/upload_data_to_ica.py) for a simple example of a `BashJob` and [prepare_ica_for_analysis](src/dragen_align_pa/jobs/prepare_ica_for_analysis.py) for a simple example of a `PythonJob`.
+### Cancelling a Running ICA Pipeline
 
-### Repository Structure
+If you need to cancel a pipeline that is running in ICA:
 
-```commandline
-src
-├── dragen_align_pa
-│   ├── __init__.py
-│   |── config
-│   │   └── dragen_align_pa_defaults.toml
-│   ├── jobs
-│   │   ├── cancel_ica_pipeline_run.py
-│   │   ├── download_ica_pipeline_outputs.py
-│   │   ├── download_specific_files_from_ica.py
-│   │   ├── manage_dragen_mlr.py
-│   │   ├── manage_dragen_pipeline.py
-│   │   ├── monitor_dragen_pipeline.py
-│   │   ├── prepare_ica_for_analysis.py
-│   │   ├── run_align_genotype_with_dragen.py
-│   │   └── upload_data_to_ica.py
-│   ├── run_workflow.py
-│   ├── stages.py
-│   └── utils.py
-├── test
-└── Dockerfile
-```
+1.  Stop the `analysis-runner` job in Hail Batch.
+2.  In your TOML configuration file, set `ica.management.cancel_cohort_run = true`.
+3.  Re-launch the pipeline using the same `analysis-runner` command.
+4.  The `ManageDragenPipeline` stage will detect the `cancel_cohort_run` flag, read the pipeline ID from the `.json` file, and send an "abort" request to the ICA API.
+
+## Pipeline Outputs
+
+When successful, the pipeline downloads all results to your dataset's GCS bucket. Key outputs are organized as follows:
+
+  * **Realigned CRAMs:**
+      * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/cram/`
+  * **gVCFs:**
+      * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/base_gvcf/` (from base DRAGEN run)
+      * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/recal_gvcf/` (from MLR run)
+  * **Raw QC Metrics and all Other Files:**
+      * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/dragen_metrics/`
+  * **Somalier Fingerprints:**
+      * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/somalier/`
+  * **Aggregated QC Report:**
+      * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/qc/{cohort_name}_multiqc_report.html`
+
+---
+
+<sub><sup>This README was generated in part by Gemini 2.5 Pro.</sup></sub>

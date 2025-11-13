@@ -1,6 +1,4 @@
 [build-system]
-# requires = ["setuptools"]
-# build-backend = "setuptools.build_meta"
 requires = ["hatchling >= 1.26"]
 build-backend = "hatchling.build"
 
@@ -24,8 +22,8 @@ classifiers=[
 
 dependencies=[
     'cpg-flow>=v0.3.1',
-    'loguru>=0.7.3',
-    'multiqc'
+    'loguru',
+    'pandas',
 ]
 
 [project.urls]
@@ -52,6 +50,9 @@ packages = ["src/dragen_align_pa"]
 
 [tool.hatch.build.targets.wheel.sources]
 "src" = ""
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.black]
 line-length = 120
@@ -106,6 +107,10 @@ ignore = [
     "I001", # Import block is un-sorted or un-formatted (to remove soon)
     "S105", # Possible hardcoded secrets
     "S602", # Potential untrusted input in shell=True
+    "S603", # Subprocess call with shell=True
+    "S604", # Subprocess call with shell=True
+    'RUF100', # Unused `noqa` directive
+    'PLR0915', # Too many statements in function (> 50)
 ]
 
 [tool.ruff.lint.isort]
