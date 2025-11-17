@@ -667,7 +667,7 @@ class SomalierExtract(SequencingGroupStage):
         Expected Somalier fingerprint output file.
         Uses SG ID for filename.
         """
-        return get_output_path(filename=f'{sequencing_group.id}.somalier')
+        return get_output_path(filename=f'/somalier/{sequencing_group.id}.somalier')
 
     def queue_jobs(
         self,
