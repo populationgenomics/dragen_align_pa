@@ -4,6 +4,7 @@ from math import ceil
 from typing import TYPE_CHECKING, Any
 
 import cpg_utils
+from cloudpathlib.exceptions import NoStatError
 from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import get_access_level, get_driver_image, output_path
 from cpg_utils.hail_batch import get_batch
@@ -42,14 +43,17 @@ def calculate_needed_storage(
     cram_path: cpg_utils.Path,
 ) -> str:
     logger.info(f'Checking blob size for {cram_path}')
-
-    storage_size: int = cram_path.stat().st_size
-    # Added a buffer (3GB) and increased multiplier slightly (1.2 -> 1.3)
-    # Ceil ensures we get whole GiB, adding buffer helps avoid edge cases
-    calculated_gb = ceil((storage_size / (1024**3)) + 3) * 1.3
-    # Ensure a minimum storage request (e.g., 10GiB)
-    final_storage_gb = max(10, ceil(calculated_gb))
-    logger.info(f'Calculated storage need: {final_storage_gb}GiB for {cram_path}')
+    try:
+        storage_size: int = cram_path.stat().st_size
+        # Added a buffer (3GB) and increased multiplier slightly (1.2 -> 1.3)
+        # Ceil ensures we get whole GiB, adding buffer helps avoid edge cases
+        calculated_gb = ceil((storage_size / (1024**3)) + 3) * 1.3
+        # Ensure a minimum storage request (e.g., 10GiB)
+        final_storage_gb: int = max(10, ceil(calculated_gb))
+        logger.info(f'Calculated storage need: {final_storage_gb}GiB for {cram_path}')
+    except NoStatError as e:
+        logger.error(f'Failed to get size for {cram_path}: {e}')
+        final_storage_gb = 50
     return f'{final_storage_gb}Gi'
 
 
