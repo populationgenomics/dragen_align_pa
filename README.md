@@ -7,7 +7,7 @@ This pipeline aligns or realigns genomic sequencing data (from FASTQ or CRAM fil
 It manages data upload to ICA, submission and monitoring of the DRAGEN pipeline, and download of results (CRAMs, gVCFs, QC metrics) back to Google Cloud Storage (GCS). It also performs subsequent QC steps, including Somalier fingerprinting and MultiQC report generation.
 
 
-## Pipeline Overview v3.0.0
+## Pipeline Overview v3.0.1
 
 <div align="center">
     <img src="workflow_dag.svg" alt="Dragen Alignment Workflow DAG" width="80%"/>
