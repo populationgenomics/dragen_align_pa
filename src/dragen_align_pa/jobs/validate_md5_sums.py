@@ -1,5 +1,6 @@
 import cpg_utils
 import pandas as pd
+from cpg_utils.config import config_retrieve
 from loguru import logger
 
 from dragen_align_pa import utils
@@ -24,9 +25,12 @@ def run(  # noqa: PLR0915
         with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
             supplied_manifest_data: pd.DataFrame = pd.read_csv(
                 manifest_fh,
-                usecols=['Filenames', 'Checksum'],
-                dtype={'Filenames': str, 'Checksum': str},  # Use str dtype
-            ).set_index('Filenames')  # Use filename as index for easier lookup
+                usecols=[config_retrieve(['manifest', 'filenames']), config_retrieve(['manifest', 'checksum'])],
+                dtype={
+                    config_retrieve(['manifest', 'filenames']): str,
+                    config_retrieve(['manifest', 'checksum']): str,
+                },  # Use str dtype
+            ).set_index(config_retrieve(['manifest', 'filenames']))  # Use filename as index for easier lookup
 
         # Load ICA MD5 data
         with ica_md5sum_file_path.open('r') as ica_md5_fh:
@@ -50,7 +54,7 @@ def run(  # noqa: PLR0915
 
         # Iterate and check for mismatches or missing files
         for filename, row in merged_checksum_data.iterrows():
-            manifest_checksum = row['Checksum']
+            manifest_checksum = row[config_retrieve(['manifest', 'checksum'])]
             ica_checksum = row['IcaChecksum']
 
             if pd.isna(manifest_checksum):

@@ -16,6 +16,10 @@ check_expected_outputs = true
 # the method to register outputs, can be missing - will not generate metamist analysis entries
 status_reporter = 'metamist'
 
+[manifest]
+filenames = 'filenames'
+checksum = 'checksum'
+
 [images]
 # This image contains the entire pipeline code. The version is automatically bumped by bump-my-version (or other version
 # incrememt tools), but you may need to change the final -1 suffix to the correct suffix.

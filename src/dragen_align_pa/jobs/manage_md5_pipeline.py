@@ -121,9 +121,9 @@ def run(
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
         supplied_manifest_data: pd.DataFrame = pd.read_csv(
             manifest_fh,
-            usecols=['Filenames'],
+            usecols=[config_retrieve(['manifest', 'filenames'])],
         )
-    fastq_filenames: list[str] = supplied_manifest_data['Filenames'].to_list()
+    fastq_filenames: list[str] = supplied_manifest_data[config_retrieve(['manifest', 'filenames'])].to_list()
 
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']

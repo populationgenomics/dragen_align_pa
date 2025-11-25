@@ -4,6 +4,7 @@ from typing import Any
 import cpg_utils
 import pandas as pd
 from cpg_flow.targets import Cohort
+from cpg_utils.config import config_retrieve
 
 
 def _write_fastq_list_file(fq_df: pd.DataFrame, outputs: dict[str, cpg_utils.Path], sg_name: str) -> None:
@@ -83,7 +84,9 @@ def run(outputs: dict[str, cpg_utils.Path], cohort: Cohort, manifest_file_path: 
                 if isinstance(reads_value, list):
                     all_reads_for_sg.extend(_flatten_list(reads_value))  # pyright: ignore[reportUnknownArgumentType]
         if all_reads_for_sg:
-            fq_df: pd.DataFrame = supplied_manifest_data[supplied_manifest_data['Filenames'].isin(all_reads_for_sg)]
+            fq_df: pd.DataFrame = supplied_manifest_data[
+                supplied_manifest_data[config_retrieve(['manifest', 'filenames'])].isin(all_reads_for_sg)
+            ]
             if fq_df.empty:
                 raise ValueError(f'No matching reads found in manifest for sequencing group {sequencing_group.id}')
             _write_fastq_list_file(fq_df=fq_df, outputs=outputs, sg_name=sequencing_group.name)
