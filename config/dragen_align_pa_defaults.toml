@@ -51,6 +51,7 @@ reference_tags = ['test_reference_tags']
 
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]
+analysis_storage_id = "3fab13dd-46e7-4b54-bb34-b80a01a99379"
 dragen_version = 'dragen_3_7_8'
 # F2 instance CRAM pipeline
 cram = 'cbac3d1f-737f-44f2-9a40-f7f2589b5fad'
