@@ -28,7 +28,7 @@ def _get_fastq_ica_id_list(
     fastq_ids_and_filenames: list[str] = []
 
     # Handle potentially large lists by batching API calls
-    batch_size = 10
+    batch_size = config_retrieve(['ica', 'api', 'batch_size'], default=50)
     for i in range(0, len(fastq_filenames), batch_size):
         batch_filenames = fastq_filenames[i : i + batch_size]
         logger.info(
