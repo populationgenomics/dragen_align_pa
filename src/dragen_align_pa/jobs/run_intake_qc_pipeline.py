@@ -29,6 +29,7 @@ def run_md5_pipeline(
         ),
         outputParentFolderId=md5_outputs_folder_id,
         analysisInput=NextflowAnalysisInput(inputs=[AnalysisDataInput(parameterCode='in', dataIds=ica_fastq_ids)]),
+        analysisStorageId=config_retrieve(['ica', 'pipelines', 'analysis_storage_id']),
     )
 
     path_params: dict[str, str] = {'projectId': project_id}
