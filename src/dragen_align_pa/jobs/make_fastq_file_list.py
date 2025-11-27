@@ -74,6 +74,7 @@ def _write_fastq_list_file(fq_df: pd.DataFrame, outputs: dict[str, cpg_utils.Pat
     paired_df['RGLB'] = paired_df[config_retrieve(['manifest', 'sample_id'])]
 
     paired_df = paired_df[fastq_list_header]
+    paired_df = paired_df.rename(columns={config_retrieve(['manifest', 'lane']): 'Lane'})
     with cpg_utils.to_path(fastq_list_file_path).open('w') as fastq_list_fh:
         paired_df.to_csv(fastq_list_fh, sep=',', index=False, header=True)
 
