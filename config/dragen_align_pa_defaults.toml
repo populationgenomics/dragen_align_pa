@@ -19,7 +19,7 @@ status_reporter = 'metamist'
 [manifest]
 filenames = 'filenames'
 checksum = 'checksum'
-cpg_id = 'cog_sequencing_group_id'
+cpg_id = 'cpg_sequencing_group_id'
 lane = 'lane'
 machine_id = 'machine_id'
 flowcell = 'flowcell'

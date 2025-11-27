@@ -43,9 +43,18 @@ def _write_fastq_list_file(fq_df: pd.DataFrame, outputs: dict[str, cpg_utils.Pat
         suffixes=('_R1', '_R2'),
     )
 
-    paired_df = paired_df.rename(columns={'Filenames_R1': 'Read1File', 'Filenames_R2': 'Read2File'})
     paired_df = paired_df.rename(
-        columns={'Checksum_R1': 'R1_Checksum', 'Checksum_R2': 'R2_Checksum'}, errors='ignore'
+        columns={
+            config_retrieve(['manifest', 'filenames']) + '_R1': 'Read1File',
+            config_retrieve(['manifest', 'filenames']) + '_R2': 'Read2File',
+        }
+    )
+    paired_df = paired_df.rename(
+        columns={
+            config_retrieve(['manifest', 'checksum']) + '_R1': 'R1_Checksum',
+            config_retrieve(['manifest', 'checksum']) + '_R2': 'R2_Checksum',
+        },
+        errors='ignore',
     ).reset_index()
 
     # Drop the temporary Sample_Key column as it's no longer needed.
