@@ -58,11 +58,11 @@ def _write_fastq_list_file(fq_df: pd.DataFrame, outputs: dict[str, cpg_utils.Pat
         + '_'
         + paired_df[config_retrieve(['manifest', 'lane'])]
         + '_'
-        + paired_df['Machine_ID']
+        + paired_df[config_retrieve(['manifest', 'machine_id'])]
         + '_'
-        + paired_df['Flow_cell']
+        + paired_df[config_retrieve(['manifest', 'flowcell'])]
     )
-    paired_df['RGLB'] = paired_df['Sample_ID']
+    paired_df['RGLB'] = paired_df[config_retrieve(['manifest', 'sample_id'])]
 
     paired_df = paired_df[fastq_list_header]
     with cpg_utils.to_path(fastq_list_file_path).open('w') as fastq_list_fh:
