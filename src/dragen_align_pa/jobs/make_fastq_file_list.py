@@ -10,15 +10,20 @@ from loguru import logger
 def _write_fastq_list_file(fq_df: pd.DataFrame, outputs: dict[str, cpg_utils.Path], sg_name: str) -> None:
     fastq_list_file_path: cpg_utils.Path = outputs[sg_name]
     logger.info(f'Writing FASTQ list file for sequencing group {sg_name} to {fastq_list_file_path}')
-    fastq_list_header: list[str] = ['RGID', 'RGSM', 'RGLB', 'Lane', 'Read1File', 'Read2File']
+    fastq_list_header: list[str] = [
+        'RGID',
+        'RGSM',
+        'RGLB',
+        config_retrieve(['manifest', 'lane']),
+        'Read1File',
+        'Read2File',
+    ]
     adaptors: re.Pattern[str] = re.compile('_([ACGT]+-[ACGT]+)_')
 
     fq_df['adaptors'] = fq_df[config_retrieve(['manifest', 'filenames'])].str.extract(adaptors, expand=False)
     fq_df['Sample_Key'] = fq_df[config_retrieve(['manifest', 'filenames'])].str.replace(
         r'_R[12]\.fastq\.gz', '', regex=True
     )
-    column_mapping: dict[str, str] = {col: col.replace(' ', '_') for col in fq_df.columns if ' ' in col}
-    fq_df = fq_df.rename(columns=column_mapping)
 
     r1_df = (
         fq_df[fq_df[config_retrieve(['manifest', 'filenames'])].str.contains(r'_R1\.', regex=True)]
@@ -51,7 +56,7 @@ def _write_fastq_list_file(fq_df: pd.DataFrame, outputs: dict[str, cpg_utils.Pat
         + '_'
         + paired_df['adaptors']
         + '_'
-        + paired_df['Lane']
+        + paired_df[config_retrieve(['manifest', 'lane'])]
         + '_'
         + paired_df['Machine_ID']
         + '_'
