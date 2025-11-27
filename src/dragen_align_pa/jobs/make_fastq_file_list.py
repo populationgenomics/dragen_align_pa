@@ -4,10 +4,12 @@ import cpg_utils
 import pandas as pd
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve
+from loguru import logger
 
 
 def _write_fastq_list_file(fq_df: pd.DataFrame, outputs: dict[str, cpg_utils.Path], sg_name: str) -> None:
     fastq_list_file_path: cpg_utils.Path = outputs[sg_name]
+    logger.info(f'Writing FASTQ list file for sequencing group {sg_name} to {fastq_list_file_path}')
     fastq_list_header: list[str] = ['RGID', 'RGSM', 'RGLB', 'Lane', 'Read1File', 'Read2File']
     adaptors: re.Pattern[str] = re.compile('_([ACGT]+-[ACGT]+)_')
 
