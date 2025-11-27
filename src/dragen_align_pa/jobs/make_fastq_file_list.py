@@ -13,16 +13,29 @@ def _write_fastq_list_file(fq_df: pd.DataFrame, outputs: dict[str, cpg_utils.Pat
     fastq_list_header: list[str] = ['RGID', 'RGSM', 'RGLB', 'Lane', 'Read1File', 'Read2File']
     adaptors: re.Pattern[str] = re.compile('_([ACGT]+-[ACGT]+)_')
 
-    fq_df['adaptors'] = fq_df['Filenames'].str.extract(adaptors, expand=False)
-    fq_df['Sample_Key'] = fq_df['Filenames'].str.replace(r'_R[12]\.fastq\.gz', '', regex=True)
+    fq_df['adaptors'] = fq_df[config_retrieve(['manifest', 'filenames'])].str.extract(adaptors, expand=False)
+    fq_df['Sample_Key'] = fq_df[config_retrieve(['manifest', 'filenames'])].str.replace(
+        r'_R[12]\.fastq\.gz', '', regex=True
+    )
     column_mapping: dict[str, str] = {col: col.replace(' ', '_') for col in fq_df.columns if ' ' in col}
     fq_df = fq_df.rename(columns=column_mapping)
 
-    r1_df = fq_df[fq_df['Filenames'].str.contains(r'_R1\.', regex=True)].copy().set_index('Sample_Key')
-    r2_df = fq_df[fq_df['Filenames'].str.contains(r'_R2\.', regex=True)].copy().set_index('Sample_Key')
+    r1_df = (
+        fq_df[fq_df[config_retrieve(['manifest', 'filenames'])].str.contains(r'_R1\.', regex=True)]
+        .copy()
+        .set_index('Sample_Key')
+    )
+    r2_df = (
+        fq_df[fq_df[config_retrieve(['manifest', 'filenames'])].str.contains(r'_R2\.', regex=True)]
+        .copy()
+        .set_index('Sample_Key')
+    )
 
     paired_df = r1_df.merge(
-        r2_df[['Filenames', 'Checksum']], left_index=True, right_index=True, suffixes=('_R1', '_R2')
+        r2_df[[config_retrieve(['manifest', 'filenames']), config_retrieve(['manifest', 'checksum'])]],
+        left_index=True,
+        right_index=True,
+        suffixes=('_R1', '_R2'),
     )
 
     paired_df = paired_df.rename(columns={'Filenames_R1': 'Read1File', 'Filenames_R2': 'Read2File'})
