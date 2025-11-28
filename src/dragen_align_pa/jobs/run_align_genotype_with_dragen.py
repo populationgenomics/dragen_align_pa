@@ -95,7 +95,11 @@ def _prepare_fastq_inputs(
     fastq_parameter_inputs: list[AnalysisParameterInput] = [
         AnalysisParameterInput(
             code='additional_args',
-            value=("--qc-coverage-reports-1 cov_report,cov_report --qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "),
+            value=(
+                '--qc-coverage-reports-1 cov_report,cov_report '
+                "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
+                "'--vc_gvcf_gq_bands 13 20 30 40 '"
+            ),
         ),
     ]
 
@@ -151,6 +155,7 @@ def _build_cram_specific_inputs(
                     '--qc-coverage-count-soft-clipped-bases true '
                     '--qc-coverage-reports-1 cov_report,cov_report '
                     "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
+                    '--vc_gvcf_gq_bands 13 20 30 40 '
                 ),
             ),
         ]
@@ -173,7 +178,6 @@ def _build_common_parameters() -> list[AnalysisParameterInput]:
         AnalysisParameterInput(code='enable_cyp2d6', value='true'),
         AnalysisParameterInput(code='repeat_genotype_enable', value='true'),
         AnalysisParameterInput(code='dragen_reports', value='false'),
-        AnalysisParameterInput(code='vc_gvcf_gq_bands', value='13 20 30 40'),
     ]
 
 
