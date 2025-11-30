@@ -148,11 +148,11 @@ def _submit_mlr_run(
     )
 
     try:
-        # --- 1. Authenticate ---
-        _mlr_authenticate_and_enter_project(mlr_project)
-
-        # --- 2. Find input file paths ---
+        # --- 1. Find input file paths ---
         cram_url, gvcf_url = _mlr_find_input_urls(ica_base_folder, sg_name)
+
+        # --- 2. Authenticate ---
+        _mlr_authenticate_and_enter_project(mlr_project)
 
         # --- 3. Download MLR config JSON ---
         local_config_path = _mlr_download_config(mlr_config_json, batch_tmpdir)
