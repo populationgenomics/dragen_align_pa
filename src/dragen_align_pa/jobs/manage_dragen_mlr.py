@@ -15,14 +15,18 @@ from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
 
 
-def _mlr_authenticate_and_enter_project(mlr_project: str) -> None:
-    """Authenticates the ICA CLI and enters the specified MLR project."""
+def _authenticate() -> None:
+    """Authenticates the ICA CLI."""
     # shell=True is required for the multi-line ICA_CLI_SETUP script
     utils.run_subprocess_with_log(  # noqa: S604
         ica_cli_utils.ICA_CLI_SETUP,
         'Authenticate ICA CLI',
         shell=True,
     )
+
+
+def _mlr_enter_project(mlr_project: str) -> None:
+    """Enters the specified MLR project."""
     # Set ICA project context
     utils.run_subprocess_with_log(
         ['icav2', 'projects', 'enter', mlr_project],
@@ -148,12 +152,14 @@ def _submit_mlr_run(
     )
 
     try:
+        # --- 0. Authenticate ---
+        _authenticate()
+
         # --- 1. Find input file paths ---
         cram_url, gvcf_url = _mlr_find_input_urls(ica_base_folder, sg_name)
 
         # --- 2. Authenticate ---
-        _mlr_authenticate_and_enter_project(mlr_project)
-
+        _mlr_enter_project(mlr_project)
         # --- 3. Download MLR config JSON ---
         local_config_path = _mlr_download_config(mlr_config_json, batch_tmpdir)
 
