@@ -1,3 +1,5 @@
+import os
+
 from cpg_flow.stage import StageInput, StageInputNotFoundError
 from cpg_flow.targets import Cohort
 from cpg_utils import Path, to_path  # pyright: ignore[reportUnknownVariableType]
@@ -75,7 +77,7 @@ def run_multiqc(
     qc_files_path.write_text('\n'.join(str(p) for p in all_qc_paths))
 
     b_input_dir_resource = b.read_input(qc_files_path)
-    local_metrics_dir = multiqc_job.outdir / 'metrics_input'
+    local_metrics_dir = os.path.join(str(multiqc_job.outdir), 'metrics_input')
 
     report_name = f'{cohort.name}_multiqc_report'
     multiqc_job.declare_resource_group(
