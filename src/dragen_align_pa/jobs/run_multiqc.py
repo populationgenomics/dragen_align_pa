@@ -92,7 +92,7 @@ def run_multiqc(
         f"""
         mkdir -p {local_metrics_dir}
 
-        cat {b_input_dir_resource} | gcloud storage cp --destination={local_metrics_dir} --recursive -
+        cat {b_input_dir_resource} | gcloud storage cp - I {local_metrics_dir}
 
         multiqc \\
         {local_metrics_dir} \\
