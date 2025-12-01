@@ -1,5 +1,3 @@
-import tempfile
-
 from cpg_flow.stage import StageInput, StageInputNotFoundError
 from cpg_flow.targets import Cohort
 from cpg_utils import Path, to_path  # pyright: ignore[reportUnknownVariableType]
@@ -7,6 +5,8 @@ from cpg_utils.config import get_driver_image
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import BashJob
 from loguru import logger
+
+from dragen_align_pa.utils import get_qc_path
 
 
 def run_multiqc(
@@ -69,11 +69,12 @@ def run_multiqc(
     multiqc_job.image(image=get_driver_image())
     multiqc_job.storage('10Gi')
 
-    with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp_input_file:
-        manifest_local_path = temp_input_file.name
-        temp_input_file.write('\n'.join(str(p) for p in all_qc_paths))
+    # Write the list of QC file paths to a temporary input file
+    qc_files_path: Path = get_qc_path(f'{cohort.name}_multiqc_input.txt', category='tmp')
 
-    b_input_dir_resource = b.read_input(manifest_local_path)
+    qc_files_path.write_text('\n'.join(str(p) for p in all_qc_paths))
+
+    b_input_dir_resource = b.read_input(qc_files_path)
     local_metrics_dir = multiqc_job.outdir / 'metrics_input'
 
     report_name = f'{cohort.name}_multiqc_report'
