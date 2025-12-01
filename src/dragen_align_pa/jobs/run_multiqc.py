@@ -1,3 +1,5 @@
+import tempfile
+
 from cpg_flow.stage import StageInput, StageInputNotFoundError
 from cpg_flow.targets import Cohort
 from cpg_utils import Path, to_path  # pyright: ignore[reportUnknownVariableType]
@@ -67,9 +69,12 @@ def run_multiqc(
     multiqc_job.image(image=get_driver_image())
     multiqc_job.storage('10Gi')
 
-    # Read all QC files into the job's input directory
-    input_file_dict: dict[str, str] = {f'file_{i}': str(p) for i, p in enumerate(all_qc_paths)}
-    b_input_dir_resource = b.read_input_group(**input_file_dict)
+    with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp_input_file:
+        manifest_local_path = temp_input_file.name
+        temp_input_file.write('\n'.join(str(p) for p in all_qc_paths))
+
+    b_input_dir_resource = b.read_input(manifest_local_path)
+    local_metrics_dir = multiqc_job.outdir / 'metrics_input'
 
     report_name = f'{cohort.name}_multiqc_report'
     multiqc_job.declare_resource_group(
@@ -82,8 +87,12 @@ def run_multiqc(
     # Define the command
     multiqc_job.command(
         f"""
+        mkdir -p {local_metrics_dir}
+
+        cat {b_input_dir_resource} | gcloud storage cp --destination={local_metrics_dir} --recursive -
+
         multiqc \\
-        {b_input_dir_resource} \\
+        {local_metrics_dir} \\
         -o {multiqc_job.outdir} \\
         --title 'MultiQC Report for {cohort.name}' \\
         --filename '{report_name}.html' \\
