@@ -32,6 +32,33 @@ set -x
 # --- CLI Wrappers ---
 
 
+def authenticate_ica_cli() -> None:
+    """
+    Authenticates the icav2 CLI.
+    """
+    logger.info('Authenticating ICA CLI...')
+    # This command uses shell=True, but ICA_CLI_SETUP is a trusted constant
+    utils.run_subprocess_with_log(ICA_CLI_SETUP, 'Authenticate ICA CLI', shell=True)  # noqa: S604
+
+
+def upload_local_file(local_file_path: str, ica_folder_path: str) -> None:
+    """
+    Uploads a local file to ICA using the icav2 CLI.
+    Assumes the CLI is already authenticated.
+    """
+    logger.info(f'Uploading {local_file_path} to ICA folder {ica_folder_path}...')
+    utils.run_subprocess_with_log(
+        [
+            'icav2',
+            'projectdata',
+            'upload',
+            local_file_path,
+            ica_folder_path,
+        ],
+        f'Upload {os.path.basename(local_file_path)} to ICA',
+    )
+
+
 def find_ica_file_path_by_name(parent_folder: str, file_name: str) -> str:
     """
     Finds a file in ICA using the CLI and returns its full `details.path`.
@@ -86,9 +113,7 @@ def perform_upload_if_needed(cram_status: str | None, paths: dict[str, str]) -> 
         return
 
     # Authenticate ICA CLI
-    logger.info('Authenticating ICA CLI...')
-    # This command uses shell=True, but ICA_CLI_SETUP is a trusted constant
-    utils.run_subprocess_with_log(ICA_CLI_SETUP, 'Authenticate ICA CLI', shell=True)  # noqa: S604
+    authenticate_ica_cli()
 
     local_dir = os.path.dirname(paths['local_cram_path'])
     if not os.path.exists(local_dir):
@@ -104,19 +129,7 @@ def perform_upload_if_needed(cram_status: str | None, paths: dict[str, str]) -> 
         f'Download {paths["cram_name"]}',
     )
 
-    logger.info(
-        f'Uploading {paths["local_cram_path"]} to ICA (using CLI for large file)...',
-    )
-    utils.run_subprocess_with_log(
-        [
-            'icav2',
-            'projectdata',
-            'upload',
-            paths['local_cram_path'],
-            paths['ica_folder_path'],
-        ],
-        f'Upload {paths["cram_name"]}',
-    )
+    upload_local_file(paths['local_cram_path'], paths['ica_folder_path'])
 
     # Clean up the large local file
     try:
