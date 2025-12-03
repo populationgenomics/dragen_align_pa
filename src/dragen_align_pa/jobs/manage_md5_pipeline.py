@@ -1,4 +1,5 @@
 import os
+import time
 from collections.abc import Callable
 from functools import partial
 from typing import Literal
@@ -167,15 +168,33 @@ def run(
             ica_folder_path=fastq_list_folder,
         )
 
-        # Find the uploaded file to get its ID
-        fastq_list_file_details = ica_api_utils.get_file_details_from_ica(
-            api_instance=api_instance,
-            path_params=path_parameters,
-            ica_folder_path=fastq_list_folder,
-            file_name=fastq_list_filename,
-        )
+        # Find the uploaded file to get its ID, with retries for eventual consistency
+        fastq_list_file_details = None
+        max_retries = 5
+        retry_delay_seconds = 15
+        for attempt in range(max_retries):
+            logger.info(f"Attempt {attempt + 1}/{max_retries} to find uploaded file '{fastq_list_filename}'...")
+            fastq_list_file_details = ica_api_utils.get_file_details_from_ica(
+                api_instance=api_instance,
+                path_params=path_parameters,
+                ica_folder_path=fastq_list_folder,
+                file_name=fastq_list_filename,
+            )
+            if fastq_list_file_details:
+                status = fastq_list_file_details.get('details', {}).get('status')
+                if status == 'AVAILABLE':
+                    logger.info('File found and is AVAILABLE.')
+                    break
+                logger.warning(f"File found, but status is '{status}'. Retrying...")
+
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay_seconds)
+
         if not fastq_list_file_details:
-            raise FileNotFoundError(f'Could not find uploaded fastq list file in ICA: {fastq_list_folder}')
+            raise FileNotFoundError(
+                f'Could not find uploaded fastq list file in ICA after {max_retries} attempts: '
+                f'{fastq_list_folder}{fastq_list_filename}',
+            )
         fastq_list_file_id = fastq_list_file_details['id']
 
         # Create output folder
