@@ -70,7 +70,7 @@ fastq = '393e2423-3c0d-42f2-aa83-910a48a9c32c'
 dragen_ht_id = 'fil.854d49a151a24edae5d708da2935b1b0'
 
 #md5sum pipeline
-md5_pipeline_id = "cbc8cf45-851f-49a8-bd50-3c66d205ab97"
+md5_pipeline_id = "e767f290-bc60-4281-b11d-6a65c9791253"
 
 # Chunk size for the new streaming MD5 pipeline
 [ica.pipelines.md5]
