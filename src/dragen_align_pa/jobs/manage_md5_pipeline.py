@@ -157,7 +157,7 @@ def run(
 
         # Upload the FASTQ ID list to ICA
         fastq_list_folder = (
-            f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{cohort_name}/fastq_lists'
+            f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{cohort_name}/fastq_lists/'
         )
         fastq_list_filename = f'{cohort_name}_{ar_guid}_fastq_ids.txt'
 
