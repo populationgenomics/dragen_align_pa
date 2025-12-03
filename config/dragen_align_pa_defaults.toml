@@ -40,6 +40,8 @@ dragen_mlr_project_id = "mlr_project_id"
 [ica.management]
 cancel_cohort_run = false
 monitor_previous = false
+# For testing purposes, set to true to force a new pipeline submission even if a previous run succeeded.
+force_resubmit = false
 
 # The base folders in ICA where data are uploaded, and Dragen results are written.
 # This is automatically prefixed by the dataset and access level, so these values would result in
