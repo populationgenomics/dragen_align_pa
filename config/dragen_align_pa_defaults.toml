@@ -72,6 +72,10 @@ dragen_ht_id = 'fil.854d49a151a24edae5d708da2935b1b0'
 #md5sum pipeline
 md5_pipeline_id = "cbc8cf45-851f-49a8-bd50-3c66d205ab97"
 
+# Chunk size for the new streaming MD5 pipeline
+[ica.pipelines.md5]
+chunk_size = "100"
+
 # IDs for all CRAM references that were previously used to generate the CRAM files that are to be realigned
 [ica.cram_references]
 
