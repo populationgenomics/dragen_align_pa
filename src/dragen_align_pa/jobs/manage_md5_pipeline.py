@@ -1,3 +1,4 @@
+import os
 from collections.abc import Callable
 from functools import partial
 from typing import Literal
@@ -9,7 +10,7 @@ from cpg_utils.config import config_retrieve, try_get_ar_guid
 from icasdk.apis.tags import project_analysis_api, project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
+from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils, utils
 from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.jobs import run_intake_qc_pipeline
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
@@ -143,6 +144,17 @@ def run(
             logger.error('No FASTQ file IDs found in ICA. Cannot start MD5 pipeline.')
             raise ValueError('No FASTQ file IDs found in ICA.')
 
+        # Define local path for the FASTQ ID list
+        batch_tmpdir = os.environ.get('BATCH_TMPDIR', '/io')
+        local_fastq_list_path = os.path.join(batch_tmpdir, f'{cohort_name}_{ar_guid}_fastq_ids.txt')
+
+        # Download the file from GCS to the local path
+        gcs_fastq_list_path = str(outputs['fastq_ids_outpath'])
+        utils.run_subprocess_with_log(
+            ['gcloud', 'storage', 'cp', gcs_fastq_list_path, local_fastq_list_path],
+            f'Download {os.path.basename(gcs_fastq_list_path)} from GCS',
+        )
+
         # Upload the FASTQ ID list to ICA
         fastq_list_folder = (
             f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{cohort_name}/fastq_lists'
@@ -151,7 +163,7 @@ def run(
 
         ica_cli_utils.authenticate_ica_cli()
         ica_cli_utils.upload_local_file(
-            local_file_path=str(outputs['fastq_ids_outpath']),
+            local_file_path=local_fastq_list_path,
             ica_folder_path=fastq_list_folder,
         )
 
