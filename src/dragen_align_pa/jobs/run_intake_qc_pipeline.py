@@ -19,7 +19,7 @@ def run_md5_pipeline(
     md5_outputs_folder_id: str,
 ) -> str:
     header_params: dict[Any, Any] = {}
-    chunk_size = config_retrieve(['ica', 'pipelines', 'md5', 'chunk_size'], default='100')
+    chunk_size = str(config_retrieve(['ica', 'pipelines', 'md5', 'chunk_size'], default='100'))
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
     api_key: str = secrets['apiKey']
@@ -38,9 +38,9 @@ def run_md5_pipeline(
                 AnalysisDataInput(parameterCode='in', dataIds=[fastq_list_file_id]),
             ],
             parameters=[
-                AnalysisParameterInput(parameterCode='ica_project_id', values=[project_id]),
-                AnalysisParameterInput(parameterCode='ica_api_key', values=[api_key]),
-                AnalysisParameterInput(parameterCode='chunk_size', values=[chunk_size]),
+                AnalysisParameterInput(parameterCode='ica_project_id', values=project_id),
+                AnalysisParameterInput(parameterCode='ica_api_key', values=api_key),
+                AnalysisParameterInput(parameterCode='chunk_size', values=chunk_size),
             ],
         ),
         analysisStorageId=config_retrieve(['ica', 'pipelines', 'analysis_storage_id']),

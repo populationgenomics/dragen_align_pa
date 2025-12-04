@@ -134,11 +134,13 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                             if 'ar_guid' in data:
                                 preserved_ar_guid_for_target = data['ar_guid']
                                 logger.info(
-                                    f"Preserved AR GUID '{preserved_ar_guid_for_target}' from existing file for {target.name}."
+                                    f"Preserved AR GUID '{preserved_ar_guid_for_target}' from existing file "
+                                    f'for {target.name}.'
                                 )
                     except (json.JSONDecodeError, KeyError) as e:
                         logger.warning(
-                            f"Could not read AR GUID from {pipeline_id_arguid_file}: {e}. Will use current session's AR GUID."
+                            f'Could not read AR GUID from {pipeline_id_arguid_file}: {e}. Will use current '
+                            f"session's AR GUID."
                         )
 
                     pipeline_id_arguid_file.unlink()
