@@ -37,9 +37,9 @@ def run_md5_pipeline(
                 AnalysisDataInput(parameterCode='in', dataIds=[fastq_list_file_id]),
             ],
             parameters=[
-                {'parameterCode': 'ica_project_id', 'values': project_id},
-                {'parameterCode': 'ica_api_key', 'values': api_key},
-                {'parameterCode': 'chunk_size', 'values': chunk_size},
+                {'parameterCode': 'ica_project_id', 'values': [project_id]},
+                {'parameterCode': 'ica_api_key', 'values': [api_key]},
+                {'parameterCode': 'chunk_size', 'values': [chunk_size]},
             ],
         ),
         analysisStorageId=config_retrieve(['ica', 'pipelines', 'analysis_storage_id']),
