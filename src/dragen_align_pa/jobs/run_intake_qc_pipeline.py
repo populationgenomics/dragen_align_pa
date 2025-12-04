@@ -3,7 +3,6 @@ from typing import Any, Literal
 from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_analysis_api
 from icasdk.model.analysis_data_input import AnalysisDataInput
-from icasdk.model.analysis_parameter_input import AnalysisParameterInput
 from icasdk.model.analysis_tag import AnalysisTag
 from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
@@ -38,9 +37,9 @@ def run_md5_pipeline(
                 AnalysisDataInput(parameterCode='in', dataIds=[fastq_list_file_id]),
             ],
             parameters=[
-                AnalysisParameterInput(parameterCode='ica_project_id', values=project_id),
-                AnalysisParameterInput(parameterCode='ica_api_key', values=api_key),
-                AnalysisParameterInput(parameterCode='chunk_size', values=chunk_size),
+                {'parameterCode': 'ica_project_id', 'values': project_id},
+                {'parameterCode': 'ica_api_key', 'values': api_key},
+                {'parameterCode': 'chunk_size', 'values': chunk_size},
             ],
         ),
         analysisStorageId=config_retrieve(['ica', 'pipelines', 'analysis_storage_id']),
