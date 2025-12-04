@@ -36,6 +36,8 @@ def run_md5_pipeline(
         analysisInput=NextflowAnalysisInput(
             inputs=[
                 AnalysisDataInput(parameterCode='in', dataIds=[fastq_list_file_id]),
+            ],
+            parameters=[
                 AnalysisParameterInput(parameterCode='ica_project_id', values=[project_id]),
                 AnalysisParameterInput(parameterCode='ica_api_key', values=[api_key]),
                 AnalysisParameterInput(parameterCode='chunk_size', values=[chunk_size]),
