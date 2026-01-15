@@ -35,6 +35,7 @@ ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:3.2
 dragen_align = "main_dragen_project"
 dragen_mlr = "mlr_job_project"
 dragen_mlr_project_id = "mlr_project_id"
+data_deletion_project = "data_upload_project"
 
 # Flags to manage existing pipeline runs: set the appropriate flag to true and resubmit the job to cancel or resume monitoring.
 [ica.management]

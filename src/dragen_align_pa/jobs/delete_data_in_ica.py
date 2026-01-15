@@ -1,8 +1,8 @@
 import json
 import pathlib
-from typing import Literal
 
 import cpg_utils
+from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
@@ -10,7 +10,6 @@ from dragen_align_pa import ica_api_utils, ica_utils
 
 FidList = list[str]
 PathDict = dict[str, cpg_utils.Path]
-ProjectId = str
 
 
 def _collect_fids_from_json(
@@ -87,8 +86,7 @@ def run(
     deletes the folders. This avoids leaving behind orphaned files or
     empty folder structures.
     """
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    project_id: ProjectId = secrets['projectID']
+    project_id: str = config_retrieve(['ica', 'projects', 'data_deletion_project'])
 
     fids = _collect_fids(
         analysis_output_fids_paths,
