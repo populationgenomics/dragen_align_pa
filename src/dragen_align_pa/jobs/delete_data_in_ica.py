@@ -1,82 +1,145 @@
 import json
+import pathlib
 from typing import Literal
 
 import cpg_utils
 from icasdk.apis.tags import project_data_api
-from icasdk.exceptions import ApiException, ApiValueError
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils
+from dragen_align_pa import ica_api_utils, ica_utils
+
+FidList = list[str]
+PathDict = dict[str, cpg_utils.Path]
+ProjectId = str
+
+
+def _collect_fids_from_json(
+    path_dict: PathDict,
+    json_key: str,
+    description: str,
+) -> FidList:
+    """Helper to collect FIDs from a dictionary of JSON file paths."""
+    fids: FidList = []
+    logger.info(f'Collecting {len(path_dict)} {description} FIDs...')
+    for sg_name, path in path_dict.items():
+        try:
+            with path.open() as fid_handle:
+                fids.append(json.load(fid_handle)[json_key])
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f'Could not read {json_key} for {sg_name}: {e}')
+    return fids
+
+
+def _collect_fids_from_txt(txt_path: cpg_utils.Path) -> FidList:
+    """Helper to collect FIDs from a text file (one FID per line)."""
+    fids: FidList = []
+    logger.info(f'Collecting source FASTQ FIDs from {txt_path}...')
+    try:
+        with txt_path.open() as fastq_handle:
+            for line in fastq_handle:
+                if line.strip():
+                    fids.append(line.split()[0])
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f'Could not read FASTQ FIDs from {txt_path}: {e}')
+    return fids
+
+
+def _collect_fids(
+    analysis_output_fids_paths: PathDict | None,
+    cram_fid_paths_dict: PathDict | None,
+    fastq_ids_list_path: cpg_utils.Path | None,
+) -> FidList:
+    """Collect all file and folder IDs from various sources."""
+    all_fids: FidList = []
+    logger.info('--- Step 1: Collecting all file IDs for deletion ---')
+
+    if analysis_output_fids_paths:
+        all_fids.extend(
+            _collect_fids_from_json(
+                analysis_output_fids_paths,
+                'analysis_output_fid',
+                'analysis output folder',
+            ),
+        )
+
+    if cram_fid_paths_dict:
+        all_fids.extend(
+            _collect_fids_from_json(cram_fid_paths_dict, 'cram_fid', 'source CRAM'),
+        )
+
+    if fastq_ids_list_path:
+        all_fids.extend(_collect_fids_from_txt(fastq_ids_list_path))
+
+    logger.info(f'Collected a total of {len(all_fids)} file and folder IDs.')
+    return all_fids
+
+
+# --- Main Orchestrator ---
 
 
 def run(
-    analysis_output_fids_paths: dict[str, cpg_utils.Path],
-    cram_fid_paths_dict: dict[str, cpg_utils.Path] | None,
+    analysis_output_fids_paths: PathDict | None,
+    cram_fid_paths_dict: PathDict | None,
     fastq_ids_list_path: cpg_utils.Path | None,
 ) -> None:
+    """
+    Identifies all unique parent folders for a list of ICA file IDs and
+    deletes the folders. This avoids leaving behind orphaned files or
+    empty folder structures.
+    """
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    project_id: str = secrets['projectID']
+    project_id: ProjectId = secrets['projectID']
 
-    path_params: dict[str, str] = {'projectId': project_id}
-    fids: list[str] = []
+    fids = _collect_fids(
+        analysis_output_fids_paths,
+        cram_fid_paths_dict,
+        fastq_ids_list_path,
+    )
+    if not fids:
+        logger.warning('No file IDs were collected for deletion. Exiting.')
+        return
 
-    # 1. Collect all generated data FIDs (analysis output folders)
-    logger.info(f'Collecting {len(analysis_output_fids_paths)} analysis output folder FIDs...')
-    for sg_name, path in analysis_output_fids_paths.items():
-        try:
-            with path.open() as fid_handle:
-                fids.append(json.load(fid_handle)['analysis_output_fid'])
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f'Could not read analysis_output_fid for {sg_name}: {e}')
-
-    # 2. Collect source CRAM FIDs if they exist
-    if cram_fid_paths_dict:
-        logger.info(f'Collecting {len(cram_fid_paths_dict)} source CRAM FIDs...')
-        for sg_name, path in cram_fid_paths_dict.items():
-            try:
-                with path.open() as fid_handle:
-                    fids.append(json.load(fid_handle)['cram_fid'])
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f'Could not read cram_fid for {sg_name}: {e}')
-
-    # 3. Collect source FASTQ FIDs if they exist
-    if fastq_ids_list_path:
-        logger.info(f'Collecting source FASTQ FIDs from {fastq_ids_list_path}...')
-        try:
-            with fastq_ids_list_path.open() as fastq_handle:
-                for line in fastq_handle:
-                    if line.strip():
-                        # File format is 'file_id\tfile_name'
-                        file_id = line.split()[0]
-                        fids.append(file_id)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f'Could not read FASTQ FIDs from {fastq_ids_list_path}: {e}')
-
-    # 4. Delete all collected FIDs
-    logger.info(f'Attempting to delete {len(fids)} total data objects from ICA...')
     with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
-        for f_id in fids:
-            request_path_params = path_params | {'dataId': f_id}
-            try:
-                # The API returns None (invalid as defined by the sdk) but deletes
-                # the data anyway.
-                # We replace contextlib.suppress with an explicit try/except
-                # to log the suppressed error.
-                logger.info(f'Requesting deletion of ICA FID: {f_id}')
-                api_instance.delete_data(  # type: ignore[ReportUnknownVariableType]
-                    path_params=request_path_params,  # type: ignore[ReportUnknownVariableType]
-                )
-            except ApiValueError as e:
-                logger.warning(
-                    f'Suppressed spurious ApiValueError for f_id {f_id}. '
-                    f'Deletion is expected to have proceeded. Error: {e}',
-                )
-            except ApiException as e:
-                logger.warning(
-                    f'API exception for {f_id}. Has it already been deleted? Error: {e}',
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.error(f'Unexpected error deleting {f_id}: {e}')
+
+        # 1. Get details for all data objects
+        data_details_list = ica_utils.get_data_details_from_fids(
+            fids,
+            api_instance,
+            project_id,
+        )
+
+        # 2. Process details to find parent folder paths and direct folder IDs
+        logger.info('--- Step 2: Finding unique parent folder paths ---')
+        parent_paths = set()
+        direct_folder_fids = set()
+        for details_body in data_details_list:
+            details = details_body.get('details', {})
+            file_path = details.get('path')
+            data_id = details_body.get('id')
+
+            if not file_path or not data_id:
+                logger.warning(f'Skipping item with missing path or id: {details_body}')
+                continue
+
+            if details.get('dataType') == 'FOLDER':
+                logger.info(f'ID {data_id} is a folder. Adding to deletion list.')
+                direct_folder_fids.add(data_id)
+            else:
+                parent_path = str(pathlib.Path(file_path).parent)
+                if parent_path and parent_path != '/':
+                    parent_paths.add(parent_path)
+        logger.info(f'Found {len(parent_paths)} unique parent folder paths from files.')
+
+        # 3. Get folder IDs from the paths
+        parent_folder_fids = ica_utils.get_folder_ids_from_paths(
+            parent_paths,
+            api_instance,
+            project_id,
+        )
+
+        # 4. Combine all folder IDs and delete them
+        all_folder_fids = direct_folder_fids.union(parent_folder_fids)
+        ica_utils.delete_data_by_ids(all_folder_fids, api_instance, project_id)
 
     logger.info('ICA data deletion job complete.')

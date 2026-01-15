@@ -6,12 +6,13 @@ and ica_cli modules.
 
 import hashlib
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Final
 
 import cpg_utils
 import icasdk
 import requests
 from google.cloud import exceptions as gcs_exceptions
+from icasdk.exceptions import ApiException, ApiValueError
 from icasdk.model.create_data import CreateData
 from loguru import logger
 
@@ -20,6 +21,12 @@ from dragen_align_pa import ica_api_utils
 if TYPE_CHECKING:
     from google.cloud.storage.bucket import Bucket
     from icasdk.apis.tags import project_data_api
+
+FidList = list[str]
+FidSet = set[str]
+PathSet = set[str]
+ProjectId = str
+ApiInstance = 'project_data_api.ProjectDataApi'
 
 
 def create_upload_object_id(
@@ -337,3 +344,88 @@ def get_pipeline_details(
         pipeline_id = data['pipeline_id']
         ar_guid = f'_{data["ar_guid"]}_'
     return pipeline_id, ar_guid
+
+
+# --- New Generic Data Deletion Helpers ---
+
+
+def get_data_details_from_fids(
+    fids: FidList,
+    api_instance: ApiInstance,
+    project_id: ProjectId,
+) -> list[dict[str, Any]]:
+    """
+    From a list of data FIDs, returns a list of data detail dictionaries.
+    """
+    data_details_list: list[dict[str, Any]] = []
+    logger.info(f'Getting details for {len(fids)} data objects...')
+    for f_id in fids:
+        try:
+            logger.debug(f'Getting details for data ID: {f_id}')
+            data_details = api_instance.get_data(
+                path_params={'projectId': project_id, 'dataId': f_id},
+            )
+            data_details_list.append(data_details.body)
+        except ApiException as e:
+            logger.warning(
+                f'API exception getting details for {f_id}. Has it already been deleted? Error: {e}',
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error(f'Unexpected error getting details for {f_id}: {e}')
+    return data_details_list
+
+
+def get_folder_ids_from_paths(
+    folder_paths: PathSet,
+    api_instance: ApiInstance,
+    project_id: ProjectId,
+) -> FidSet:
+    """From a set of folder paths, query the API to get their folder IDs."""
+    folder_fids: FidSet = set()
+    path_params: Final = {'projectId': project_id}
+
+    logger.info(f'Getting IDs for {len(folder_paths)} folder paths...')
+    for folder_path in folder_paths:
+        try:
+            logger.info(f"Getting ID for folder path: '{folder_path}'")
+            response = api_instance.get_project_data_list(
+                path_params=path_params,
+                query_params={'filePath': [folder_path], 'type': 'FOLDER'},
+            )
+            if response.body['items']:
+                folder_id = response.body['items'][0]['data']['id']
+                logger.info(f"Found ID '{folder_id}' for path '{folder_path}'")
+                folder_fids.add(folder_id)
+            else:
+                logger.warning(f'Could not find folder ID for path: {folder_path}')
+        except ApiException as e:
+            logger.error(f"API error finding folder '{folder_path}': {e}")
+        except (KeyError, IndexError) as e:
+            logger.error(f"Error parsing response for folder '{folder_path}': {e}")
+    return folder_fids
+
+
+def delete_data_by_ids(
+    data_fids: FidSet,
+    api_instance: ApiInstance,
+    project_id: ProjectId,
+) -> None:
+    """Deletes a list of data objects (files or folders) by their IDs."""
+    logger.info(f'Attempting to delete {len(data_fids)} total data objects...')
+    for f_id in data_fids:
+        try:
+            logger.info(f'Requesting deletion of ICA Data ID: {f_id}')
+            api_instance.delete_data(
+                path_params={'projectId': project_id, 'dataId': f_id},
+            )
+        except ApiValueError as e:
+            logger.warning(
+                f'Suppressed spurious ApiValueError for data ID {f_id}. '
+                f'Deletion is expected to have proceeded. Error: {e}',
+            )
+        except ApiException as e:
+            logger.warning(
+                f'API exception for data ID {f_id}. Has it already been deleted? Error: {e}',
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error(f'Unexpected error deleting data ID {f_id}: {e}')
