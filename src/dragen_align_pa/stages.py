@@ -782,6 +782,7 @@ class DeleteDataInIca(CohortStage):
 
         ica_delete_job.call(
             delete_data_in_ica.run,
+            cohort=cohort,
             analysis_output_fids_paths=analysis_output_fids_paths,
             cram_fid_paths_dict=cram_fid_paths_dict,
             fastq_ids_list_path=fastq_ids_list_path,

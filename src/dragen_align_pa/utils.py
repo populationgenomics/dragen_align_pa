@@ -25,7 +25,7 @@ def validate_cli_path_input(path: str, arg_name: str) -> None:
     """
     # Regex for common shell metacharacters and whitespace,
     # excluding GCS 'gs://' prefix, path slashes '/', and underscores '_'
-    if re.search(r'[;&|$`(){}[\]<>*?!#\s]', path):
+    if re.search(r'[;&|$`(){}[\\]<>*?!#\s]', path):
         logger.error(f'Invalid characters found in {arg_name}: {path}')
         raise ValueError(f'Potential unsafe characters in {arg_name}')
     logger.info(f'Path validation passed for {arg_name}.')
