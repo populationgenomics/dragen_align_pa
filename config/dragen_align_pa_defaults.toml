@@ -93,6 +93,10 @@ dragmap = 'fol.df2129db2c88419cbe0408dd600dce1f'
 # GATK reference FASTA
 gatk = ''
 
+[ica.reference_data]
+# Union of the two probesets for testing
+exome_bed = 'fil.56427f11f4964bf4193008de8a9fc7b1'
+
 [ica.qc]
 cross_cont_vcf = 'fil.1a7a2d0442854127e5d608da2935b1b0'
 coverage_region_1 = 'fil.ad60897bc97e4646f28c08da33ba0a20'

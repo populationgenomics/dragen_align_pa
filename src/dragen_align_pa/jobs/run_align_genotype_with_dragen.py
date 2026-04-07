@@ -87,18 +87,22 @@ def _prepare_fastq_inputs(
             parameterCode='fastq_list',
             dataIds=[fastq_file_list_id],  # Must be a list containing the ID
         ),
-        AnalysisDataInput(
-            parameterCode='qc_coverage_region_beds',
-            dataIds=[qc_cov_region_1_id, qc_cov_region_2_id],
-        ),
     ]
+    if config_retrieve(['workflow', 'sequencing_type']) == 'genome':
+        fastq_data_inputs.append(
+            AnalysisDataInput(
+                parameterCode='qc_coverage_region_beds',
+                dataIds=[qc_cov_region_1_id, qc_cov_region_2_id],
+            )
+        )
     fastq_parameter_inputs: list[AnalysisParameterInput] = [
         AnalysisParameterInput(
             code='additional_args',
-            value=(
+            value=("--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' --vc-gvcf-gq-bands 13 20 30 40 ")
+            + (
                 '--qc-coverage-reports-1 cov_report,cov_report '
-                "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
-                "'--vc-gvcf-gq-bands 13 20 30 40 '"
+                if config_retrieve(['workflow', 'sequencing_type']) == 'genome'
+                else ''
             ),
         ),
     ]
@@ -133,15 +137,20 @@ def _build_cram_specific_inputs(
                 parameterCode='cram_reference',
                 dataIds=[cram_reference_id],
             ),
-            AnalysisDataInput(
-                parameterCode='qc_coverage_region_1',
-                dataIds=[qc_cov_region_1_id],
-            ),
-            AnalysisDataInput(
-                parameterCode='qc_coverage_region_2',
-                dataIds=[qc_cov_region_2_id],
-            ),
         ]
+        if config_retrieve(['workflow', 'sequencing_type']) == 'genome':
+            specific_data_inputs.extend(
+                [
+                    AnalysisDataInput(
+                        parameterCode='qc_coverage_region_1',
+                        dataIds=[qc_cov_region_1_id],
+                    ),
+                    AnalysisDataInput(
+                        parameterCode='qc_coverage_region_2',
+                        dataIds=[qc_cov_region_2_id],
+                    ),
+                ]
+            )
         specific_parameter_inputs: list[AnalysisParameterInput] = [
             AnalysisParameterInput(
                 code='additional_args',
@@ -153,9 +162,13 @@ def _build_cram_specific_inputs(
                     '--vc-enable-joint-detection true '
                     '--qc-coverage-ignore-overlaps true '
                     '--qc-coverage-count-soft-clipped-bases true '
-                    '--qc-coverage-reports-1 cov_report,cov_report '
                     "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
                     '--vc-gvcf-gq-bands 13 20 30 40 '
+                )
+                + (
+                    '--qc-coverage-reports-1 cov_report,cov_report '
+                    if config_retrieve(['workflow', 'sequencing_type']) == 'genome'
+                    else ''
                 ),
             ),
         ]
@@ -173,7 +186,6 @@ def _build_common_parameters() -> list[AnalysisParameterInput]:
         AnalysisParameterInput(code='vc_emit_ref_confidence', value='GVCF'),
         AnalysisParameterInput(code='vc_enable_vcf_output', value='false'),
         AnalysisParameterInput(code='enable_cnv', value='true'),
-        AnalysisParameterInput(code='cnv_segmentation_mode', value='SLM'),
         AnalysisParameterInput(code='enable_sv', value='true'),
         AnalysisParameterInput(code='enable_cyp2d6', value='true'),
         AnalysisParameterInput(code='repeat_genotype_enable', value='true'),
@@ -214,7 +226,36 @@ def submit_dragen_run(
             dataIds=[qc_cross_cont_vcf_id],
         ),
     ]
+    if config_retrieve(['workflow', 'sequencing_type']) == 'exome':
+        exome_bed_id: str = config_retrieve(['ica', 'reference_data', 'exome_bed'])
+        common_data_inputs.extend(
+            [
+                AnalysisDataInput(
+                    parameterCode='vc_target',
+                    dataIds=[exome_bed_id],
+                ),
+                AnalysisDataInput(
+                    parameterCode='cnv_target',
+                    dataIds=[exome_bed_id],
+                ),
+                AnalysisDataInput(
+                    parameterCode='sv_call_regions',
+                    dataIds=[exome_bed_id],
+                ),
+            ]
+        )
     common_parameter_inputs: list[AnalysisParameterInput] = _build_common_parameters()
+    if config_retrieve(['workflow', 'sequencing_type']) == 'genome':
+        common_parameter_inputs.append(AnalysisParameterInput(code='cnv_segmentation_mode', value='SLM'))
+    else:
+        common_parameter_inputs.extend(
+            [
+                AnalysisParameterInput(code='cnv_segmentation_mode', value='HSLM'),
+                AnalysisParameterInput(code='cnv_interval_width', value='500'),
+                AnalysisParameterInput(code='cnv_merge_threshold', value='0.4'),
+                AnalysisParameterInput(code='sv_exome', value='true'),
+            ]
+        )
 
     specific_data_inputs: list[AnalysisDataInput]
     specific_parameter_inputs: list[AnalysisParameterInput]
