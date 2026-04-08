@@ -137,20 +137,15 @@ def _build_cram_specific_inputs(
                 parameterCode='cram_reference',
                 dataIds=[cram_reference_id],
             ),
+            AnalysisDataInput(
+                parameterCode='qc_coverage_region_1',
+                dataIds=[qc_cov_region_1_id],
+            ),
+            AnalysisDataInput(
+                parameterCode='qc_coverage_region_2',
+                dataIds=[qc_cov_region_2_id],
+            ),
         ]
-        if config_retrieve(['workflow', 'sequencing_type']) == 'genome':
-            specific_data_inputs.extend(
-                [
-                    AnalysisDataInput(
-                        parameterCode='qc_coverage_region_1',
-                        dataIds=[qc_cov_region_1_id],
-                    ),
-                    AnalysisDataInput(
-                        parameterCode='qc_coverage_region_2',
-                        dataIds=[qc_cov_region_2_id],
-                    ),
-                ]
-            )
         specific_parameter_inputs: list[AnalysisParameterInput] = [
             AnalysisParameterInput(
                 code='additional_args',
