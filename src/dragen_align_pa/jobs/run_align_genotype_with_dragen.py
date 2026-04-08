@@ -102,7 +102,7 @@ def _prepare_fastq_inputs(
             + (
                 '--qc-coverage-reports-1 cov_report,cov_report '
                 if config_retrieve(['workflow', 'sequencing_type']) == 'genome'
-                else ''
+                else '--cnv-interval-width 500 --cnv-merge-threshold 0.4 --sv-exome true '
             ),
         ),
     ]
@@ -163,7 +163,7 @@ def _build_cram_specific_inputs(
                 + (
                     '--qc-coverage-reports-1 cov_report,cov_report '
                     if config_retrieve(['workflow', 'sequencing_type']) == 'genome'
-                    else ''
+                    else '--cnv-interval-width 500 --cnv-merge-threshold 0.4 --sv-exome true '
                 ),
             ),
         ]
@@ -221,8 +221,9 @@ def submit_dragen_run(
             dataIds=[qc_cross_cont_vcf_id],
         ),
     ]
-    if config_retrieve(['workflow', 'sequencing_type']) == 'exome':
-        exome_bed_id: str = config_retrieve(['ica', 'reference_data', 'exome_bed'])
+    is_exome: bool = config_retrieve(['workflow', 'sequencing_type']) == 'exome'
+    exome_bed_id: str = config_retrieve(['ica', 'reference_data', 'exome_bed']) if is_exome else ''
+    if is_exome:
         common_data_inputs.extend(
             [
                 AnalysisDataInput(
@@ -240,15 +241,15 @@ def submit_dragen_run(
             ]
         )
     common_parameter_inputs: list[AnalysisParameterInput] = _build_common_parameters()
-    if config_retrieve(['workflow', 'sequencing_type']) == 'genome':
+    if not is_exome:
         common_parameter_inputs.append(AnalysisParameterInput(code='cnv_segmentation_mode', value='SLM'))
     else:
         common_parameter_inputs.extend(
             [
                 AnalysisParameterInput(code='cnv_segmentation_mode', value='HSLM'),
-                AnalysisParameterInput(code='cnv_interval_width', value='500'),
-                AnalysisParameterInput(code='cnv_merge_threshold', value='0.4'),
-                AnalysisParameterInput(code='sv_exome', value='true'),
+                AnalysisParameterInput(code='vc_target', value=exome_bed_id),
+                AnalysisParameterInput(code='cnv_target', value=exome_bed_id),
+                AnalysisParameterInput(code='sv_call_regions', value=exome_bed_id),
             ]
         )
 
