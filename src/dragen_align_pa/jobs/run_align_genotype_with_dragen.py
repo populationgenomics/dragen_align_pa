@@ -244,13 +244,8 @@ def submit_dragen_run(
     if not is_exome:
         common_parameter_inputs.append(AnalysisParameterInput(code='cnv_segmentation_mode', value='SLM'))
     else:
-        common_parameter_inputs.extend(
-            [
-                AnalysisParameterInput(code='cnv_segmentation_mode', value='HSLM'),
-                AnalysisParameterInput(code='vc_target', value=exome_bed_id),
-                AnalysisParameterInput(code='cnv_target', value=exome_bed_id),
-                AnalysisParameterInput(code='sv_call_regions', value=exome_bed_id),
-            ]
+        common_parameter_inputs.append(
+            AnalysisParameterInput(code='cnv_segmentation_mode', value='HSLM'),
         )
 
     specific_data_inputs: list[AnalysisDataInput]
