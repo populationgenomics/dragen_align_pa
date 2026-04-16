@@ -98,7 +98,7 @@ def _prepare_fastq_inputs(
             value=(
                 '--qc-coverage-reports-1 cov_report,cov_report '
                 "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
-                "'--vc-gvcf-gq-bands 13 20 30 40 '"
+                "'--vc-gvcf-gq-bands 10 20 30 40 '"
             ),
         ),
     ]
@@ -155,7 +155,7 @@ def _build_cram_specific_inputs(
                     '--qc-coverage-count-soft-clipped-bases true '
                     '--qc-coverage-reports-1 cov_report,cov_report '
                     "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
-                    '--vc-gvcf-gq-bands 13 20 30 40 '
+                    '--vc-gvcf-gq-bands 10 20 30 40 '
                 ),
             ),
         ]
