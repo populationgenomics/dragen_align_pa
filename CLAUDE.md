@@ -103,7 +103,7 @@ config keys), see `docs/dragen_pipeline_reference.md`.
 
 ## DRAGEN 3.7 Guide
 
-Full guide: `/Users/jossch/Downloads/dragen_guide_1.md` (21 103 lines).
+Full guide: `docs/dragen_guide.md` (21 103 lines).
 Use `Read` with `offset`/`limit` to jump directly to the relevant section.
 
 ### Section map — topics relevant to this pipeline
