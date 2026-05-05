@@ -376,7 +376,7 @@ and incorporated into the full read alignments.
 
 The DRAGEN Methylation Pipeline provides support for automating the processing of bisulfite
 
-sequencing data to generate a BAM with the tags required for methylation analy sis and reports
+sequencing data to generate a BAM with the tags required for methylation analysis and reports
 
 detailing the locations with methylated cytosines.
 
@@ -1832,9 +1832,9 @@ an mounted external storage system.
 
 ## Process Your Input Data
 
-To analy ze FASTQ data, use the *dragen* command. For example, the following command can be used
+To analyze FASTQ data, use the *dragen* command. For example, the following command can be used
 
-to analy ze a single-ended FASTQ file:
+to analyze a single-ended FASTQ file:
 
 ```bash
 dragen \
@@ -2863,7 +2863,7 @@ counts, from the alignments of the BAM file. It generates a *.target.counts file
 
 normalization step. Target counts should be calculated for each input BAM file, including the case
 
-sample under analy sis and the normals samples.
+sample under analysis and the normals samples.
 
 ```bash
 dragen -f \
@@ -2929,7 +2929,7 @@ dragen -f \
 
 De novo calling requires previously generated normalized signal files (*.tn.tsv) from the single sample
 
-analy sis. If a pedigree file is supplied, then a de novo state and a de novo qualityscore will be
+analysis. If a pedigree file is supplied, then a de novo state and a de novo qualityscore will be
 
 annotated for the proband sample’s records.
 
@@ -3369,7 +3369,7 @@ SNV + SV Supported Supported Supported
 
 CNV + SNV + SV Supported Supported Supported
 
-WES analy sis is supported if the mode is supported in singe caller mode and there is no input
+WES analysis is supported if the mode is supported in singe caller mode and there is no input
 
 configuration conflict.
 
@@ -3422,7 +3422,7 @@ page on the Illumina website.
 
 You use the DRAGEN host software program *dragen* to build and load reference genomes, and then to
 
-analy ze sequencing data bydecompressing the data, mapping, aligning, sorting, duplicate marking
+analyze sequencing data bydecompressing the data, mapping, aligning, sorting, duplicate marking
 
 with optional removal, and variant calling.
 
@@ -4306,7 +4306,7 @@ Input streaming is supported for the following use cases.
 
 For other file types that are significantly smaller in size, download them locally before running the
 
-analy sis.
+analysis.
 
 Security and Permissions
 
@@ -4483,7 +4483,7 @@ seeds are populated and 33.3% (1/3) of read seed positions are looked up, then t
 
 densityshould be 16.7% (1/6).
 
-Local Analy sis Software automatically adjusts theseed lookup pattern to make sure it does not
+Local Analysis Software automatically adjusts theseed lookup pattern to make sure it does not
 
 systematically miss the seed positions populated from the reference. For example, the mapper does
 
@@ -4493,7 +4493,7 @@ in the hash table, even if the reference seed interval is 2 and seed-densityis 0
 
 Map Orientations
 
-The *--Mapper.map-orientations* option is used in mapping reads for bisulfite methylation analy sis. The
+The *--Mapper.map-orientations* option is used in mapping reads for bisulfite methylation analysis. The
 
 option is set automatically based on the value set for *--methylation-protocol* .
 
@@ -4515,7 +4515,7 @@ only be FR, not FF, or RF.
 
 Seed Density Command-Line Options
 
-Although Local Analy sis Software primarily maps reads byfinding exact reference matches to short
+Although Local Analysis Software primarily maps reads byfinding exact reference matches to short
 
 seeds, it can also map seeds differing from the reference byone nucleotide byalso looking up single-
 
@@ -6889,7 +6889,7 @@ Where:
 
 ### Somatic mode
 
-The DRAGEN SomaticPipeline allows ultrarapid analy sis of NGS data to identifycancer-associated
+The DRAGEN SomaticPipeline allows ultrarapid analysis of NGS data to identifycancer-associated
 
 mutations in somaticchromosomes. DRAGEN calls SNVs and indels from both matched tumor-normal
 
@@ -6988,7 +6988,7 @@ tumor-normal mode.
 
 The *--vc-min-tumor-read-qual* option specifies the minimum read quality(MAPQ) to be considered
 
-for variant calling. The default value is 3for tumor-normal analy sis or 20 for tumor-only analy sis.
+for variant calling. The default value is 3for tumor-normal analysis or 20 for tumor-only analysis.
 
 - *--vc-callability-tumor-thresh* and *--vc-callability-normal-thresh*
 
@@ -7022,7 +7022,7 @@ corresponding to an increase of 40 phred.
 
 - *--vc-enable-liquid-tumor-mode* and *vc-tin-contam-tolerance*
 
-In a tumor-normal analy sis, DRAGEN accounts for tumor-in-normal (TiN) contamination byrunning
+In a tumor-normal analysis, DRAGEN accounts for tumor-in-normal (TiN) contamination byrunning
 
 liquid tumor mode. Liquid tumor mode is disabled bydefault. When liquid tumor mode is enabled,
 
@@ -7391,7 +7391,7 @@ the VCF, but FILTER=weak_evidence.
 
 the VCF and FILTER=PASS (unless the variant is filtered bya different filter).
 
-- The default vc-sq-filter-threshold is 17.5 for tumor-normal and 3.0 for tumor-only analy sis.
+- The default vc-sq-filter-threshold is 17.5 for tumor-normal and 3.0 for tumor-only analysis.
 
 The following is an example somaticT/N VCF record. Tumor SQ > vc-sq-call-threshold but tumor SQ <
 
@@ -7419,15 +7419,15 @@ probabilityof observing clustered co-phased variants. The penaltyis applied afte
 variants, so that penalized variants still appear in the VCF if their unpenalized score is high enough.
 
 
-### Joint Analy sis for Multiple Samples
+### Joint Analysis for Multiple Samples
 
-DRAGEN supports pedigree-based and population-based joint analy sis for multiple samples. In
+DRAGEN supports pedigree-based and population-based joint analysis for multiple samples. In
 
-pedigree-based analy sis, samples from the same species are related to each other. In population-
+pedigree-based analysis, samples from the same species are related to each other. In population-
 
-based analy sis, samples of the same species are unrelated to each other.
+based analysis, samples of the same species are unrelated to each other.
 
-Joint analy sis requires a gVCF file for each sample. To create a gVCF file, run the germline small variant
+Joint analysis requires a gVCF file for each sample. To create a gVCF file, run the germline small variant
 
 caller with the *--vc-emit-ref-confidence gVCF* option.
 
@@ -7464,7 +7464,7 @@ GT:AD:AF:DP:GQ:FT:F1R2:F2R1:PL:GP ./.:.:.:.:.:LowDepth
 
 #### Pedigree Mode
 
-Use pedigree mode to jointly analy ze samples from related individuals and to perform *de novo* calling.
+Use pedigree mode to jointly analyze samples from related individuals and to perform *de novo* calling.
 
 To invoke pedigree mode set the *--enable-joint-genotyping* option to true and use the *--pedigree-file*
 
@@ -7648,7 +7648,7 @@ The following command line options are available for *de novo* small variant cal
 
 #### Population Mode
 
-DRAGEN provides a population-based analy sis option to jointly analy ze samples from unrelated
+DRAGEN provides a population-based analysis option to jointly analyze samples from unrelated
 
 individuals. To initiate population mode, use the following genotypers.
 
@@ -7744,7 +7744,7 @@ To enable banded gVCF generation, set to GVCF. To enable base pair resolution gV
 
 set to BP_RESOLUTION. Banded gVCF generation is enabled bydefault and recommended. BP_
 
-Resolution results in large files that slow down anysubsequent analy sis.
+Resolution results in large files that slow down anysubsequent analysis.
 
 - *--vc-gvcf-gq-bands*
 
@@ -7959,9 +7959,9 @@ options. 200 gVCFs are supported, but it is not recommended to combine more than
 variant file path per line.
 
 
-#### Joint Analy sis Output Format
+#### Joint Analysis Output Format
 
-There are two available joint analy sis output files:
+There are two available joint analysis output files:
 
 - **Multisample VCF** —A VCF file containing a column with genotype information for each of the input
 
@@ -8369,7 +8369,7 @@ VCF.
 
 ### Systematic Noise Filtering
 
-When Local Analy sis Software is used in the Tumor-Normal or Tumor-Only somaticmode, a BED file
+When Local Analysis Software is used in the Tumor-Normal or Tumor-Only somaticmode, a BED file
 
 with site-specificnoise level can be specified for the purpose of filtering out sequencing / systematic
 
@@ -8377,7 +8377,7 @@ noise. The site-specificnoise level is used to calculate an AQ score, similar to
 
 score is smaller than the defined threshold, the variant is filtered as systematicnoise. The systematic
 
-noise BED file is built using VCFs that were generated bythe Local Analy sis Software SomaticPipeline
+noise BED file is built using VCFs that were generated bythe Local Analysis Software SomaticPipeline
 
 
 ---
@@ -8665,7 +8665,7 @@ sequencing (NGS) data. This pipeline supports multiple applications in a single 
 
 DRAGEN Software, including processing of whole-genome sequencing data and whole-exome
 
-sequencing data for germline analy sis.
+sequencing data for germline analysis.
 
 The DRAGEN CNV pipeline supports two normalization modes of operation. The two modes apply
 
@@ -8713,7 +8713,7 @@ or population samples are readily available. All other modules are shared betwee
 algorithms.
 
 
-### Signal Flow Analy sis
+### Signal Flow Analysis
 
 The following figures show a high-level overview of the steps in the DRAGEN CNV Pipeline as the signal
 
@@ -8944,7 +8944,7 @@ specifyadditional contigs to bypass with the *--cnv-skip-contig-list* option.
 
 With whole exome sequence data, the target BED file supplied with the *--cnv-target-bed* option is used
 
-to determine the intervals for analy sis.
+to determine the intervals for analysis.
 
 The target counts stage generates a .target.counts.gz file, which can be later used in place of anyBAM
 
@@ -9072,15 +9072,15 @@ counts for panel of normals, all MAPQ0 alignments are counted.
 
 - *--cnv-target-bed* —Specifies a properly formatted BED file that indicates the target intervals to
 
-sample coverage over. For use in WES analy sis.
+sample coverage over. For use in WES analysis.
 
 - *--cnv-interval-width* —Specifies the width of the sampling interval for CNV processing. This option
 
-controls the effective window size. The default is 1000 for WGS analy sis and 500 for WES analy sis.
+controls the effective window size. The default is 1000 for WGS analysis and 500 for WES analysis.
 
 - *--cnv-skip-contig-list* —Specifies a comma-separated list of contig identifiers to skip when
 
-generating intervals for WGS analy sis. The default contigs that are skipped, if not specified, are
+generating intervals for WGS analysis. The default contigs that are skipped, if not specified, are
 
 "chrM,MT,m,chrm".
 
@@ -9093,7 +9093,7 @@ generated each time. The intervals created take into account the mappabilityof t
 
 using a k-mer uniqueness map created during hashtable generation. A dropout region is a complex
 
-region that does not count alignments and results in an interval missing from the analy sis. Dropout
+region that does not count alignments and results in an interval missing from the analysis. Dropout
 
 regions include centromeres, telomeres, and low complexityregions. If there is sufficient signal in the
 
@@ -9151,7 +9151,7 @@ GC content percentage. Allowed values are 10, 20, 25, 50, or 100. The default is
 
 The DRAGEN CNV pipeline supports two normalization algorithms:
 
-- Self Normalization—Estimates the autosomal diploid level from the sample under analy sis to
+- Self Normalization—Estimates the autosomal diploid level from the sample under analysis to
 
 determine the baseline level to normalize by. Sex chromosomes and PAR regions are handled
 
@@ -9174,7 +9174,7 @@ to select the mode of normalization.
 
 - Whole genome sequencing
 
-- Single sample analy sis
+- Single sample analysis
 
 - Additional matched samples are not readily available
 
@@ -9191,7 +9191,7 @@ to select the mode of normalization.
 
 - Additional matched samples are available
 
-- Tumor/Matched-Normal analy sis
+- Tumor/Matched-Normal analysis
 
 - Non-human samples
 
@@ -9212,7 +9212,7 @@ the case sample itself to determine the baseline from which to make a call.
 
 Because self normalization uses the statistics within the case sample, this mode is not recommended
 
-for WES or targeted sequencing analy sis due to the potential for insufficient data.
+for WES or targeted sequencing analysis due to the potential for insufficient data.
 
 The self normalization mode is the recommended approach for whole-genome sequencing single
 
@@ -9239,7 +9239,7 @@ target counts stage becomes the effective interval width based on the number of 
 
 positions. You typically do not have to modifythis option.
 
-Self normalization auto-generates the target intervals for use during analy sis based on the reference
+Self normalization auto-generates the target intervals for use during analysis based on the reference
 
 genome and only works for standard human references. Non-standard human references require a
 
@@ -9314,11 +9314,11 @@ make the calls. This step involves selecting a panel of normals, which is a list
 
 used for reference-based median normalization.
 
-You can run the analy sis in other workflow combinations, keeping in mind that the CNV events are
+You can run the analysis in other workflow combinations, keeping in mind that the CNV events are
 
 called for the reference samples used. Ideally the panel of normals samples follow libraryprep and
 
-sequencing workflows that are identical to the workflows of the case sample under analy sis. For calling
+sequencing workflows that are identical to the workflows of the case sample under analysis. For calling
 
 on sex chromosomes, it is recommended that you use sex matched references in the panel. Because
 
@@ -9388,7 +9388,7 @@ dragen \
 This command normalizes the case sample against the panel of normals.
 
 
-#### Panels of Normals for Somatic Analy sis
+#### Panels of Normals for Somatic Analysis
 
 For WGS applications, DRAGEN supports somaticanaly sis for both Tumor Matched Normal mode as
 
@@ -9470,7 +9470,7 @@ segmentation algorithms implemented in DRAGEN, including the following:
 
 The SLM algorithm has three variants, SLM, HSLM, and ASLM. HSLM (Heterogeneous SLM) is for use
 
-in exome analy sis and handles target capture kits that are not equally spaced. ASLM (Adaptive SLM)
+in exome analysis and handles target capture kits that are not equally spaced. ASLM (Adaptive SLM)
 
 includes additional sample-specificestimation of technical variabilityof depth of coverage (as opposed
 
@@ -9484,9 +9484,9 @@ somaticwhole genome processing, and CBS for whole exome processing.
 
 - *--cnv-segmentation-mode* —Specifies the segmentation algorithm to perform. The default value is
 
-determined bythe type of analy sis. The following are the available default values.
+determined bythe type of analysis. The following are the available default values.
 
-Analy sis Default
+Analysis Default
 
 Germline WGS SLM
 
@@ -9502,7 +9502,7 @@ Targeted/WES HSLM
 
 would allow them to be merged. The default value is 0 for WGS, which means the segments must
 
-be directly adjacent. For WES analy sis this parameter is disabled bydefault due to the spacing of
+be directly adjacent. For WES analysis this parameter is disabled bydefault due to the spacing of
 
 targeted intervals.
 
@@ -9517,7 +9517,7 @@ default is 0.2 for WGS and 0.4 for WES. To disable merging, set the value to 0.
 
 Circular BinarySegmentation is implemented directly in DRAGEN and is based on *A faster circular*
 
-*binarysegmentation for the analy sis of arrayCGH data* with enhancements to improve sensitivityfor
+*binarysegmentation for the analysis of arrayCGH data* with enhancements to improve sensitivityfor
 
 NGS data.
 
@@ -9596,11 +9596,11 @@ CNV detection pipeline.
 
 ### Blacklist Filtering
 
-You can input blacklist BED to the CNV caller to filter out regions from analy sis. This is useful if there
+You can input blacklist BED to the CNV caller to filter out regions from analysis. This is useful if there
 
 are certain regions in the genome, which are known to be problematic. You can also blacklist larger
 
-intervals that specifycommon CNVs to aid in downstream analy sis. DRAGEN does not provide a
+intervals that specifycommon CNVs to aid in downstream analysis. DRAGEN does not provide a
 
 prebuilt blacklist, but you can use the *cnv-blacklist-bed* option to specifythe intervals to blacklist. The
 
@@ -9608,7 +9608,7 @@ intervals should be formatted in standard three-column BED format.
 
 The intervals in the blacklist are compared with the original target counts intervals. If the overlap is
 
-greater than *cnv-blacklist-min-overlap* , the target counts interval are excluded from analy sis. The
+greater than *cnv-blacklist-min-overlap* , the target counts interval are excluded from analysis. The
 
 ```bash
 *.target.counts.gz
@@ -9643,7 +9643,7 @@ file includes only copynumber gain and loss events. For copyneutral segments, re
 
 For more information about the .seg.called.merged file, and how to use the output files to aid in debug
 
-and analy sis, see *Signal Flow Analy sis* on page 120.
+and analysis, see *Signal Flow Analysis* on page 120.
 
 
 #### CNV VCF File
@@ -9813,7 +9813,7 @@ provides the metricand does not take anyaction based on it.
 
 #### Visualization and BigWig Files
 
-To perform analy sis on a known truth set, you can use the intermediate output files from the pipeline
+To perform analysis on a known truth set, you can use the intermediate output files from the pipeline
 
 stages. These files can be parsed to aid in fine-tuning options.
 
@@ -9845,7 +9845,7 @@ Using these tracks alongside publicly available tracks allows for easier interpr
 
 autogenerates IGV session XMLfile if tracks are generated byDRAGEN CNV. The *.cnv.igv_
 
-session.xml can be loaded directly into IGV for analy sis.
+session.xml can be loaded directly into IGV for analysis.
 
 
 ---
@@ -9884,7 +9884,7 @@ To improve accuracy, the DRAGEN CNV Pipeline excludes genomicintervals if one or
 
 intervals failed at least one qualityrequirement. The excluded intervals are reported to *.excluded_
 
-intervals.bed.gz file. The file identifies the regions of the genome that are not callable for CNV analy sis
+intervals.bed.gz file. The file identifies the regions of the genome that are not callable for CNV analysis
 
 and describes the reason intervals were excluded in the fourth column. The following are the possible
 
@@ -9931,7 +9931,7 @@ INTERVAL
 
 The output and filtering options control the CNV output files.
 
-- *--cnv-blacklist-bed* —Specifies a BED file indicating intervals to exclude from the from CNV analy sis.
+- *--cnv-blacklist-bed* —Specifies a BED file indicating intervals to exclude from the from CNV analysis.
 
 If a target interval overlaps regions specified from blacklist BED file more than *cnv-blacklist-min-*
 
@@ -9943,13 +9943,13 @@ target interval and blacklist region (0.5).
 
 - *--cnv-enable-plots* —Generate plots as part of the CNV pipeline. The default is false.
 
-- If you perform WGS CNV analy sis with high-resolution intervals (less than 1000 bp), then plot
+- If you perform WGS CNV analysis with high-resolution intervals (less than 1000 bp), then plot
 
 generation can take longer to complete. Illumina recommends that you use the default (disabled).
 
 - *--cnv-enable-ref-calls* —Emit copyneutral (REF) calls in the output VCF file. The default is true for
 
-single WGS CNV analy sis.
+single WGS CNV analysis.
 
 - *--cnv-enable-tracks* —Generate track files that can be imported into IGV for viewing. When this
 
@@ -10103,7 +10103,7 @@ provides the following information about the samples in the run.
 
 - A correlation metricof the read count profile between the case sample and anypanel of normals
 
-samples. A correlation metricgreater than 0.90 is recommended for confident analy sis, but there is
+samples. A correlation metricgreater than 0.90 is recommended for confident analysis, but there is
 
 no hard restriction enforced bythe software.
 
@@ -10139,7 +10139,7 @@ PlatinumGenomes_50X_NA12878: FEMALE XX 0.968929
 
 The predicted sexes for samples in use are also printed to the \*.cnv_metrics.csvoutput file.
 
-To perform analy sis on the sex chromosomes using a panel of normals, it is recommended that you use
+To perform analysis on the sex chromosomes using a panel of normals, it is recommended that you use
 
 sex matched samples in the panel of normals.
 
@@ -10150,7 +10150,7 @@ You can override the sex of the sample with the *–sample-sex* option .
 
 Multisample CNV calling is possible starting from tangent normalized counts files (*.tn.tsv.gz) specified
 
-with the *--cnv-input* option (one per sample). Multisample CNV analy sis benefits from using joint
+with the *--cnv-input* option (one per sample). Multisample CNV analysis benefits from using joint
 
 segmentation to increase the sensitivityof detection of copynumber variable segments. For each copy
 
@@ -10162,9 +10162,9 @@ VCF entryto facilitate annotation and interpretation.
 ---
 <!-- Page 143 -->
 
-Multisample CNV calling is recommended for onlyWGS analy sis.
+Multisample CNV calling is recommended for onlyWGS analysis.
 
-The following is an example command line for running a trio analy sis:
+The following is an example command line for running a trio analysis:
 
 ```bash
 dragen \
@@ -10204,7 +10204,7 @@ sample is marked as DeNovo. Default value is 0.10.
 
 First, CNV calling is performed on each sample independently. Joint segmentation then uses the copy
 
-number variable segments from each single sample analy sis to derive a set of joint copynumber
+number variable segments from each single sample analysis to derive a set of joint copynumber
 
 variable segments. This set of joint segments is determined simply bytaking the union of all
 
@@ -10220,7 +10220,7 @@ Figure 10 Overlapping Segments
 
 Following joint segmentation, copynumber calling is again performed independently on each sample
 
-using the joint segments. Segments can be merged as with the single sample analy sis, but each joint
+using the joint segments. Segments can be merged as with the single sample analysis, but each joint
 
 segment is emitted in the mutlisample VCF as a single entry. The qualityscore (QS in the VCF) from the
 
@@ -10239,15 +10239,15 @@ A de novo event is defined as the existence of a genotype at a particular locus 
 
 that did not result from standard Mendelian inheritance from the parents. The de novo calling stage
 
-identifies putative de novo events in the proband of each trio of a multisample analy sis. In some cases,
+identifies putative de novo events in the proband of each trio of a multisample analysis. In some cases,
 
-these putative de novo events maybe real, but theycan also arise from sequencing or analy sis
+these putative de novo events maybe real, but theycan also arise from sequencing or analysis
 
 artifacts. Consequently, a de novo qualityscore is assigned to each putative de novo event and used to
 
 filter out low-qualityde novo events. Trios are specified byspecifying a .ped file with the *--pedigree-file*
 
-option. Multiple trios can be specified (eg, quad analy sis), and all valid trios will be processed.
+option. Multiple trios can be specified (eg, quad analysis), and all valid trios will be processed.
 
 For each joint segment in a trio, the de novo caller determines if there is a Mendelian inheritance
 
@@ -10866,7 +10866,7 @@ performs sequence-graph based realignment of reads that originate inside and aro
 
 repeat. It then genotypes the length of the repeat in each allele based on these graph alignments.
 
-More information and analy sis is available in the following ExpansionHunter papers:
+More information and analysis is available in the following ExpansionHunter papers:
 
 - ExpansionHunter (http://www.genome.org/cgi/doi/10.1101/gr.225672.117)
 
@@ -10908,13 +10908,13 @@ For more information on the specfile specified by *--repeat-genotype-specs* opti
 
 The main output of repeat expansion detection is a VCF file, containing the variants found via this
 
-analy sis.
+analysis.
 
 Repeat Expansion Specification Files
 
 The repeat-specification (also called variant catalog) JSON file defines the repeat regions for
 
-ExpansionHunter to analy ze. Default repeat-specification for some pathogenicrepeats are in the
+ExpansionHunter to analyze. Default repeat-specification for some pathogenicrepeats are in the
 
 `/opt/edico/repeat-specs/_directory` (based on the reference genome used with DRAGEN).
 
@@ -11079,7 +11079,7 @@ has a veryhigh identityparalog, SMN2, with differs only in approximately10 SNVs 
 
 of these (hg19 chr5:70247773C->T) affects splicing and largely disrupts the production of functional
 
-SMN protein from SMN2. Standard WGS analy sis does not produce complete variant calling results for
+SMN protein from SMN2. Standard WGS analysis does not produce complete variant calling results for
 
 
 ---
@@ -11373,7 +11373,7 @@ To enable the CYP2D6 Caller, `use --enable-cyp2d6=true` . The CYP2D6 Caller is d
 
 default. The CYP2D6 Caller can run directly with the mapper or from prealigned BAM/CRAM input. You
 
-can also enable the CYP2D6 Caller in parallel with other components as part of a germline analy sis
+can also enable the CYP2D6 Caller in parallel with other components as part of a germline analysis
 
 workflow.
 
@@ -11422,7 +11422,7 @@ The DRAGEN Structural Variant (SV) Caller integrates and extends Manta structura
 
 methods to provide structural variant (SV) and indel calls 50 bases or larger. SVs and indels are called
 
-from mapped paired-end sequencing reads. The SV caller is optimized for analy sis of germline variation
+from mapped paired-end sequencing reads. The SV caller is optimized for analysis of germline variation
 
 in small sets of individuals .
 
@@ -11471,7 +11471,7 @@ candidates are found per edge.
 
 2. Analy zes breakend association graph to discover candidate SVs, then scores discovered candidate
 
-SVs and anyknown SVs from the input. Analy sis and scoring is performed as follows.
+SVs and anyknown SVs from the input. Analysis and scoring is performed as follows.
 
 a. Inference of SV candidates associated with the given graph edge.
 
@@ -11488,7 +11488,7 @@ d. Output scored SVs to VCF.
 
 The Consumable Prefix SV Caller can discover all structural variant types that are identifiable in the
 
-absence of copynumber analy sis and large-scale de novo assembly. For more information on
+absence of copynumber analysis and large-scale de novo assembly. For more information on
 
 detectable types, see *Detected Variant Classes* on page 162.
 
@@ -11518,13 +11518,13 @@ The SV Caller is primarily tested for whole-genome and whole-exome (or other tar
 
 sequencing assays on DNA. For these assays the following applications are supported:
 
-- Joint analy sis of 10 or fewer diploid individuals
+- Joint analysis of 10 or fewer diploid individuals
 
-- Subtractive analy sis of a matched tumor/normal sample pair
+- Subtractive analysis of a matched tumor/normal sample pair
 
-- Analy sis of an individual tumor sample
+- Analysis of an individual tumor sample
 
-For joint analy sis, there is no specificrestriction against larger cohorts, but this has not been
+For joint analysis, there is no specificrestriction against larger cohorts, but this has not been
 
 extensively tested so there might be stabilityor call qualityissues.
 
@@ -11617,7 +11617,7 @@ The DRAGEN SV caller is capable of force genotyping a set of SVs input from a VC
 
 genotyping means that the input SVs are scored and emitted in the output of the SV Caller even if the
 
-variant is not supported in the sample data. For example, given a germline analy sis, the input variants
+variant is not supported in the sample data. For example, given a germline analysis, the input variants
 
 are processed and written to the output VCF, even if the variant qualitythreshold falls below the
 
@@ -11633,9 +11633,9 @@ distinguish a confident homozygous reference genotype from a lack of sequencing 
 
 SV locus.
 
-Forced genotyping SVs are processed according to the current SV analy sis being run. For example if a
+Forced genotyping SVs are processed according to the current SV analysis being run. For example if a
 
-germline analy sis is configured byproviding one or more normal samples as input, then the input SVs
+germline analysis is configured byproviding one or more normal samples as input, then the input SVs
 
 are scored under a germline model.
 
@@ -11720,7 +11720,7 @@ from the sample data. When forced genotyping is run in standalone, all output re
 
 flag. When integrated with SV calling, the flag can distinguish the SV alleles that would not have
 
-been discovered in a standard SV analy sis.
+been discovered in a standard SV analysis.
 
 - For these variants only, the usual SV caller ID field generated from the SV Locus graph is not
 
@@ -11769,7 +11769,7 @@ handled optimally. For libraries where the typical fragment size is less than th
 
 caller attempts to differentiate reads sequencing into adapter sequence from variant signal. In such
 
-cases, the SV Caller's input qualitychecks mayfail and cause SV analy sis to be skipped.
+cases, the SV Caller's input qualitychecks mayfail and cause SV analysis to be skipped.
 
 Input Quality Checks
 
@@ -11779,9 +11779,9 @@ input corresponds to a paired read assaywith the expected FR orientation, prior 
 
 fragment size distribution. To check consensus read pair orientation, a subset of high qualityread pairs
 
-is sampled. At least 90% of these must have the expected FR orientation for SV analy sis to continue,
+is sampled. At least 90% of these must have the expected FR orientation for SV analysis to continue,
 
-otherwise the SV caller issues a warning, skips anyfurther analy sis, and the resulting output files
+otherwise the SV caller issues a warning, skips anyfurther analysis, and the resulting output files
 
 displayemptyresults.
 
@@ -11795,7 +11795,7 @@ pair must have a non-zero mapping qualityto the same chromosome, are not filtere
 
 read mapping, and do not contain indels or soft-clipping. If a sample does not contain a sufficient
 
-number of such read pairs, the SV Caller issues a warning, skips anyfurther analy sis, and writes empty
+number of such read pairs, the SV Caller issues a warning, skips anyfurther analysis, and writes empty
 
 results to its output files.
 
@@ -11819,7 +11819,7 @@ At least one BAM or CRAM file must be provided for the normal or tumor sample. A
 
 normal sample pair can be provided as well. If multiple input files are provided for the normal sample,
 
-each file is treated as a separate sample as part of a joint diploid sample analy sis.
+each file is treated as a separate sample as part of a joint diploid sample analysis.
 
 In standalone mode, input BAM or CRAM files contain the following limitations:
 
@@ -11863,7 +11863,7 @@ The following command line options are supported for the Structural Variant Call
 
 compress the file in gzip or bgzip format.
 
-- *--sv-region* —Limit the analy sis to a specified region of the genome for debugging purposes. This
+- *--sv-region* —Limit the analysis to a specified region of the genome for debugging purposes. This
 
 option can be specified multiple times to build a list of regions. The value must be in the format
 
@@ -11959,13 +11959,13 @@ dragen -f \
 
 The structural variants VCF output file is available in the output directory. The file is named *<output-*
 
-*file-prefix>.sv.vcf.gz* . The contents of the file depend on the type of analy sis.
+*file-prefix>.sv.vcf.gz* . The contents of the file depend on the type of analysis.
 
-For each major analy sis category(germline, tumor/normal and tumor-only), the appropriate VCF
+For each major analysis category(germline, tumor/normal and tumor-only), the appropriate VCF
 
 output file is output, reflecting variant calls made under the variant calling mode corresponding to the
 
-given analy sis type.
+given analysis type.
 
 The Structural Variant caller produces additional output in the `<output-directory>/sv/` directory.
 
@@ -11982,7 +11982,7 @@ Additional subdirectories contain logs and intermediate outputs from the variant
 
 In `<output-directory>/sv/results/variants` , the SV Caller outputs a set of VCF files. Currently,
 
-two VCF files are created for a germline analy sis, and an additional somaticVCF is produced for a
+two VCF files are created for a germline analysis, and an additional somaticVCF is produced for a
 
 tumor/normal subtraction. These files are:
 
@@ -11993,7 +11993,7 @@ diploidSV.vcf.gz
 
 SVs and indels scored and genotyped under a diploid model for the set of samples in a joint diploid
 
-sample analy sis or for the normal sample in a tumor/normal subtraction analy sis. In the case of a
+sample analysis or for the normal sample in a tumor/normal subtraction analysis. In the case of a
 
 tumor/normal subtraction, the scores in this file do not reflect anyinformation from the tumor
 
@@ -12023,7 +12023,7 @@ The file includes indels of size 8 and larger. The smallest indels are provided 
 
 but are not scored. Indel scoring starts at size 50.
 
-For tumor-only analy sis, the SV Caller produces the following additional output VCF:
+For tumor-only analysis, the SV Caller produces the following additional output VCF:
 
 - 
 ```bash
@@ -12090,7 +12090,7 @@ In this case, the SV Caller reports the insertion using the <INS> symbolicallele
 
 INFO fields LEFT_SVINSSEQ and RIGHT_SVINSSEQ to describe the assembled left and right ends of
 
-the insert sequence. The following is an example of such a record from the joint diploid analy sis of
+the insert sequence. The following is an example of such a record from the joint diploid analysis of
 
 NA12878, NA12891 and NA12892 mapped to hg19:
 
@@ -12431,7 +12431,7 @@ KnownSVScoring flag)
 
 There are two levels of filters: record level (FILTER) and sample level (FORMAT/FT).
 
-Most record-level filters are independent of sample-level filters. However, in a germline analy sis, if
+Most record-level filters are independent of sample-level filters. However, in a germline analysis, if
 
 none of the samples pass all sample-level filters, the SampleFT filter record-level filter is applied.
 
@@ -12548,7 +12548,7 @@ diploidSV.sv_metrics.csv
 
 The number of passing SV calls under a diploid model. This file is only produced in the germline
 
-analy sis, or tumor/normal analy sis.
+analysis, or tumor/normal analysis.
 
 
 ---
@@ -12561,16 +12561,16 @@ somaticSV.sv_metrics.csv
 
 The number of passing SV calls under a somaticvariant model. This file is only produced in the
 
-tumor/normal analy sis.
+tumor/normal analysis.
 
 - 
 ```bash
 tumorSV.sv_metrics.csv
 ```
 
-The number of passing SV calls in the tumor-only analy sis. This file is only produced in the tumor-
+The number of passing SV calls in the tumor-only analysis. This file is only produced in the tumor-
 
-only analy sis.
+only analysis.
 
 
 ## Structural Variant De Novo Quality Scoring
@@ -12838,7 +12838,7 @@ example, data from exome or targeted sequencing.
 
 humans.
 
-- There is no germline sample. For example, tumor-only analy sis.
+- There is no germline sample. For example, tumor-only analysis.
 
 
 #### Calling Model
@@ -13087,7 +13087,7 @@ reports are autogenerated and do not require anyactivation or specificcommands. 
 
 coverage metrics can be enabled, and additional coverage regions can be specified.
 
-Metriccalculation is performed during analy sis so that it does not impact the DRAGEN run time.
+Metriccalculation is performed during analysis so that it does not impact the DRAGEN run time.
 
 Figure 14 Generation of Metrics and Reports
 
@@ -14518,7 +14518,7 @@ processed byVLRD.
 
 VLRD considers the information available from all the homologous regions jointly to update the read
 
-alignments. The updated VLRD map/align output is primarily useful for pile-up analy sis involving
+alignments. The updated VLRD map/align output is primarily useful for pile-up analysis involving
 
 homologous regions.
 
@@ -14965,7 +14965,7 @@ When you specifya valid path for *--umi-metrics-interval-file* , Consumable Pref
 
 set of on target UMI statistics that contains only families within the specified BED file.
 
-If you need to analy ze the extent to which the observed UMIs cover the full space of possible UMI
+If you need to analyze the extent to which the observed UMIs cover the full space of possible UMI
 
 sequences, the histogram of unique UMIs per fragment position metricmaybe helpful. It is a zero-
 
@@ -15266,7 +15266,7 @@ splice junctions are present both in the SAM alignment record and an additional 
 
 The output BAM file meets the SAM specification and is compatible with downstream RNA-Seq
 
-analy sis tools.
+analysis tools.
 
 
 #### RNA-Seq BAM Tags
@@ -15393,7 +15393,7 @@ A splice junction entryin the SJ.out.tab file is filtered out if *any* of these 
 
 - SJ is a canonical motif and the maximum spliced alignment overhang is < 12.
 
-The filtered SJ.out.tab is recommended for use with anydownstream analy sis or post processing tools.
+The filtered SJ.out.tab is recommended for use with anydownstream analysis or post processing tools.
 
 Alternatively, you can use the unfiltered SJ.out.tab and apply your own filters (for example, with basic
 
@@ -15620,7 +15620,7 @@ for that read.
 
 The DRAGEN Gene Fusion module uses the DRAGEN RNA spliced aligner for detection of gene fusion
 
-events. It performs a split-read analy sis on the supplementary(chimeric) alignments to detect potential
+events. It performs a split-read analysis on the supplementary(chimeric) alignments to detect potential
 
 breakpoints. The putative fusion events then go through various filtering stages to mitigate potential
 
@@ -16319,7 +16319,7 @@ calling.
 
 Different methylation protocols require the generation of two or four alignments per input read,
 
-followed byan analy sis to choose a best alignment and determine which cytosines are methylated.
+followed byan analysis to choose a best alignment and determine which cytosines are methylated.
 
 DRAGEN can automate this process, generating a single output BAM file with Bismark-compatible tags
 
@@ -16439,7 +16439,7 @@ BSWR and BSCR strands are sequenced. With this protocol, all four aligner runs a
 
 relatively few good alignments are expected from the runs for the BSW and BSC strands, so DRAGEN is
 
-automatically tuned to a faster analy sis mode for those runs.
+automatically tuned to a faster analysis mode for those runs.
 
 For anyprotocol, you must use a reference hash table that was produced with *--ht-methylated true* .
 
@@ -16645,7 +16645,7 @@ to T, whereas typical bisulfite conversion converts unmethylated C to T. This ap
 
 genomiccomplexityand uses less destructive chemicals to enable lower input DNA.
 
-To enable analy sis of FASTQ data generated through TAPS, set `--methylation-TAPS` to true. By
+To enable analysis of FASTQ data generated through TAPS, set `--methylation-TAPS` to true. By
 
 default, the option is false. This option is performed only during the alignment step and is not necessary
 
@@ -16782,7 +16782,7 @@ debugging). The default is false.
 
 - *--bcl-use-hw false* —Do not use DRAGEN FPGA acceleration during BCLconversion. This allows
 
-concurrent execution of BCLconversion with DRAGEN analy sis.
+concurrent execution of BCLconversion with DRAGEN analysis.
 
 - *--bcl-sampleproject-subdirectories true* —Output FASTQ files to subdirectories based on sample
 
@@ -16800,7 +16800,7 @@ Undetermined.
 
 The following additional options can be used to manually control performance. Use of these options
 
-might reduce performance or result in analy sis failure. Contact Illumina Technical Support if issues
+might reduce performance or result in analysis failure. Contact Illumina Technical Support if issues
 
 occur.
 
@@ -18408,7 +18408,7 @@ To generate a usage report, your server must meet the following requirements:
 
 - 256 GB RAM and 2 TB HDD for 300x germline single sample coverage.
 
-- T/N analy sis coverage.
+- T/N analysis coverage.
 
 - 6 TB and 512 GB RAM.
 
@@ -19044,7 +19044,7 @@ bismark exactly, including bugs. bismark
 
 methylation-protocol Libraryprotocol for methylation --methylation- none /
 
-analy sis. protocol directional /
+analysis. protocol directional /
 
 nondirectional
 
@@ -20562,7 +20562,7 @@ identifiers to skip when contig-list
 
 generating intervals for WGS
 
-analy sis. The default contigs that
+analysis. The default contigs that
 
 are skipped, if not specified, are
 
@@ -20600,7 +20600,7 @@ that specifies the target intervals
 
 to sample coverage over. For use
 
-in WES analy sis.
+in WES analysis.
 
 cnv-target-factor- Percentile of panel-of-normals --cnv-target-factor-
 
@@ -20756,7 +20756,7 @@ contig sequences output in a
 
 VCF file. Default is false.
 
-sv-region Limit the analy sis to a specified --sv-region Must be in
+sv-region Limit the analysis to a specified --sv-region Must be in
 
 region of the genome for the format
 
