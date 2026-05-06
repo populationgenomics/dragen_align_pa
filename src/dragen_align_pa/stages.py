@@ -778,6 +778,7 @@ class RunMultiQc(CohortStage):
         DownloadGvcfFromIca,
         DownloadMlrGvcfFromIca,
         DownloadDataFromIca,
+        ReheaderMlrGvcf,
         RunMultiQc,
         FastqIntakeQc,
     ]
