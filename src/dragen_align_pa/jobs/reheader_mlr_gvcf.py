@@ -1,9 +1,10 @@
 from __future__ import annotations
-import re
-from cpg_utils.hail_batch import Batch, get_batch
+
 import cpg_utils
 from cpg_utils.config import image_path
+from cpg_utils.hail_batch import Batch, get_batch
 from hailtop.batch.job import BashJob
+
 
 def reheader_mlr_gvcf(
     base_gvcf_path: cpg_utils.Path,
@@ -16,7 +17,7 @@ def reheader_mlr_gvcf(
 
     b: Batch = get_batch()
     job: BashJob = b.new_bash_job(name='reheader_mlr_gvcf')
-    job.image(image_path{'bcftools', '1.23-2'})
+    job.image(image_path('bcftools', '1.23-2'))
     job.storage(storage='16GB')
 
     gvcf_input_group = b.read_input_group(
