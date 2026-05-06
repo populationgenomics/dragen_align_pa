@@ -7,7 +7,7 @@ name='dragen_align_pa'
 description='Realign CRAM files with Dragen 3.7.8 in ICA'
 readme = "README.md"
 # # currently cpg-flow is pinned to this version
-requires-python = ">=3.10,<3.11"
+requires-python = ">=3.11,<3.12"
 version="2.1.0"
 license={ "file" = "LICENSE" }
 classifiers=[
