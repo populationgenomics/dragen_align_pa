@@ -44,7 +44,7 @@ def reheader_mlr_gvcf(
 
         bcftools annotate --no-version --write-index=tbi \\
             -h <(bcftools view -h {gvcf_input_group['base_gvcf']} | grep '^##GVCFBlock') \\
-            {gvcf_input_group['recal_gvcf']} -o {reheadered_gvcf_outputs['gvcf.gz']}
+            {gvcf_input_group['recal_gvcf']} -o {reheadered_gvcf_outputs['gvcf.gz']} -Oz
 
         """
     )
