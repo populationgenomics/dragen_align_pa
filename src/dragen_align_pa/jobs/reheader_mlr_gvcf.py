@@ -38,10 +38,10 @@ def reheader_mlr_gvcf(
         f"""
         set -euo pipefail
 
-        bcftools annotate -h <(bcftools view -h {gvcf_input_group['base_gvcf']} | grep '^##GVCFBlock') {gvcf_input_group['recal_gvcf']} -o {reheadered_gvcf_outputs['gvcf.gz']}
+        bcftools annotate --no-version --write-index=tbi \\
+            -h <(bcftools view -h {gvcf_input_group['base_gvcf']} | grep '^##GVCFBlock') \\
+            {gvcf_input_group['recal_gvcf']} -o {reheadered_gvcf_outputs['gvcf.gz']}
 
-        # Index the reheadered gVCF
-        bcftools index -t {reheadered_gvcf_outputs['gvcf.gz']}
         """
     )
 
