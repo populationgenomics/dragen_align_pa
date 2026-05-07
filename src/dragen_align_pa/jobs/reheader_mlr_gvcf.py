@@ -49,7 +49,7 @@ def reheader_mlr_gvcf(
 
 
         # Index the reheadered gVCF
-        bcftools index {reheadered_gvcf_outputs['gvcf.gz']}
+        bcftools index -t {reheadered_gvcf_outputs['gvcf.gz']}
         """
     )
 
