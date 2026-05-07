@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-import cpg_utils
+from typing import TYPE_CHECKING
+
 from cpg_utils.config import image_path
 from cpg_utils.hail_batch import Batch, get_batch
-from hailtop.batch.job import BashJob
+
+if TYPE_CHECKING:
+    import cpg_utils
+    from hailtop.batch.job import BashJob
 
 
 def reheader_mlr_gvcf(
