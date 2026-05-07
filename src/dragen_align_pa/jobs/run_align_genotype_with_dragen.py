@@ -102,7 +102,10 @@ def _prepare_fastq_inputs(
             + (
                 '--qc-coverage-reports-1 cov_report,cov_report '
                 if config_retrieve(['workflow', 'sequencing_type']) == 'genome'
-                else '--cnv-interval-width 500 --cnv-merge-threshold 0.4 --sv-exome true '
+                else (
+                    '--cnv-interval-width 500 --cnv-merge-threshold 0.4 --sv-exome true '
+                    '--vc-target-bed-padding 50 '
+                )
             ),
         ),
     ]
@@ -163,7 +166,10 @@ def _build_cram_specific_inputs(
                 + (
                     '--qc-coverage-reports-1 cov_report,cov_report '
                     if config_retrieve(['workflow', 'sequencing_type']) == 'genome'
-                    else '--cnv-interval-width 500 --cnv-merge-threshold 0.4 --sv-exome true '
+                    else (
+                        '--cnv-interval-width 500 --cnv-merge-threshold 0.4 --sv-exome true '
+                        '--vc-target-bed-padding 50 '
+                    )
                 ),
             ),
         ]

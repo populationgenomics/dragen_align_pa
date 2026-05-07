@@ -1,0 +1,13 @@
+# Per-cohort overlay for the Mackenzie Agilent Clinical Research Exome (CRE, v1) batch.
+# Layered on top of dragen_align_pa_defaults.toml via CPG_CONFIG_PATH.
+# The exome_bed value here must match CANONICAL_TO_BED_ID['CRE'] in
+# src/dragen_align_pa/constants.py; PrepareIcaForDragenAnalysis hard-fails at the
+# first stage if cohort design and configured bed disagree.
+
+[workflow]
+sequencing_type = 'exome'
+# TODO: replace with the real metamist cohort ID for Mackenzie CRE samples.
+input_cohorts = ['COH_PLACEHOLDER_MACKENZIE_CRE']
+
+[ica.reference_data]
+exome_bed = 'PLACEHOLDER-cre-bed-not-yet-uploaded-to-ica'

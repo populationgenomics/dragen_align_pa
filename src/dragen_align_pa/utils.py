@@ -6,13 +6,17 @@ from typing import TYPE_CHECKING, Any
 import cpg_utils
 from cloudpathlib.exceptions import NoStatError
 from cpg_flow.targets import Cohort, SequencingGroup
-from cpg_utils.config import get_access_level, get_driver_image, output_path
+from cpg_utils.config import config_retrieve, get_access_level, get_driver_image, output_path
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
 from metamist.graphql import gql, query
 
-from dragen_align_pa.constants import DRAGEN_VERSION
+from dragen_align_pa.constants import (
+    CANONICAL_TO_BED_ID,
+    DESIGN_TO_CANONICAL,
+    DRAGEN_VERSION,
+)
 
 if TYPE_CHECKING:
     from graphql import DocumentNode
@@ -92,6 +96,92 @@ def run_subprocess_with_log(
         logger.error(f'STDOUT: {e.stdout}')
         logger.error(f'STDERR: {e.stderr}')
         raise
+
+
+def _resolve_sg_canonical_design(sg: SequencingGroup) -> str:
+    """Resolve a SequencingGroup's canonical exome design from its assay metadata.
+
+    Looks up assay.meta['library_type'] across the SG's assays, maps each through
+    DESIGN_TO_CANONICAL (substring match -- metamist values are not normalised), and
+    requires exactly one canonical design across the SG.
+    """
+    raw_values: set[str] = set()
+    for assay in sg.assays or ():
+        library_type = assay.meta.get('library_type')
+        if library_type:
+            raw_values.add(str(library_type))
+    if not raw_values:
+        raise RuntimeError(
+            f"Sequencing group {sg.id} has no assay.meta['library_type']; cannot resolve exome design.",
+        )
+
+    canonical: set[str] = set()
+    unmapped: set[str] = set()
+    for raw in raw_values:
+        match = next((c for key, c in DESIGN_TO_CANONICAL.items() if key in raw), None)
+        if match is None:
+            unmapped.add(raw)
+        else:
+            canonical.add(match)
+    if unmapped:
+        raise RuntimeError(
+            f'Sequencing group {sg.id} has unmapped library_type value(s): {sorted(unmapped)}. '
+            f'Add these to DESIGN_TO_CANONICAL in constants.py.',
+        )
+    if len(canonical) != 1:
+        raise RuntimeError(
+            f'Sequencing group {sg.id} maps to multiple canonical designs: {sorted(canonical)}.',
+        )
+    return canonical.pop()
+
+
+def assert_cohort_design_matches_configured_bed(cohort: Cohort) -> None:
+    """Hard-fail check for exome runs: cohort is design-homogeneous and matches the configured bed.
+
+    Only runs when workflow.sequencing_type == 'exome'. Verifies:
+      1. Every SG in the cohort resolves to the same canonical design.
+      2. The configured [ica.reference_data].exome_bed matches CANONICAL_TO_BED_ID for that design.
+
+    Why: a single ICA DRAGEN submit takes one bed for vc/cnv/sv targets. Mixed designs in a
+    cohort, or a config pointing at the wrong bed, silently produce garbage CNV/SV calls and
+    SNV false-negatives in design-disjoint regions.
+    """
+    if config_retrieve(['workflow', 'sequencing_type']) != 'exome':
+        return
+
+    sgs = cohort.get_sequencing_groups()
+    if not sgs:
+        raise RuntimeError(f'Cohort {cohort.id} has no sequencing groups.')
+
+    designs: dict[str, str] = {sg.id: _resolve_sg_canonical_design(sg) for sg in sgs}
+    unique_designs = set(designs.values())
+    if len(unique_designs) != 1:
+        by_design: dict[str, list[str]] = {}
+        for sg_id, d in designs.items():
+            by_design.setdefault(d, []).append(sg_id)
+        raise RuntimeError(
+            f'Cohort {cohort.id} has mixed exome designs {sorted(unique_designs)}. '
+            f'Split into one cohort per design. Breakdown: {by_design}',
+        )
+    cohort_design = unique_designs.pop()
+
+    configured_bed = config_retrieve(['ica', 'reference_data', 'exome_bed'])
+    expected_bed = CANONICAL_TO_BED_ID.get(cohort_design)
+    if expected_bed is None:
+        raise RuntimeError(
+            f'No CANONICAL_TO_BED_ID entry for design {cohort_design!r}; update constants.py.',
+        )
+    if configured_bed != expected_bed:
+        bed_to_design = {v: k for k, v in CANONICAL_TO_BED_ID.items()}
+        configured_design = bed_to_design.get(configured_bed, '<unknown>')
+        raise RuntimeError(
+            f'Configured exome_bed {configured_bed!r} (design={configured_design}) does not match '
+            f'cohort {cohort.id} design {cohort_design!r} (expected bed {expected_bed!r}). '
+            'Check the TOML against the cohort.',
+        )
+    logger.info(
+        f'Exome design check passed: cohort {cohort.id} -> {cohort_design}, bed {configured_bed!r}.',
+    )
 
 
 def initialise_python_job(
