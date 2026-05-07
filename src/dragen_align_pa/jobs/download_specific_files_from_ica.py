@@ -12,7 +12,7 @@ from google.cloud.storage.bucket import Bucket
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils, ica_utils, utils
+from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.constants import (
     BUCKET_NAME,
 )
@@ -99,10 +99,15 @@ def run(
     sequencing_group: SequencingGroup,
     file_spec: FileTypeSpec,
     pipeline_id_arguid_path: cpg_utils.Path,
+    gcs_output_dir: cpg_utils.Path,
 ) -> None:
     """
     The main Python function for the download job.
     Coordinates helper functions to list, filter, and stream files.
+
+    `gcs_output_dir` is the directory the calling stage declared in `expected_outputs`
+    (e.g. `outputs['gvcf'].parent`); both bucket and prefix are derived from it so the
+    download lands exactly where the stage promised.
     """
     sg_name: str = sequencing_group.name
     ica_analysis_output_folder: str = config_retrieve(
@@ -123,9 +128,11 @@ def run(
     logger.info(f'Targeting ICA folder: {base_ica_folder_path}')
 
     # --- 3. Setup GCS Client ---
-    gcs_output_path_prefix = str(utils.get_output_path(f'{file_spec.gcs_prefix}')).removeprefix(f'gs://{BUCKET_NAME}/')
+    gcs_output_bucket_name, _, gcs_output_path_prefix = (
+        str(gcs_output_dir).removeprefix('gs://').partition('/')
+    )
     storage_client = storage.Client()
-    gcs_bucket = storage_client.bucket(BUCKET_NAME)
+    gcs_bucket = storage_client.bucket(gcs_output_bucket_name)
 
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     path_parameters: dict[str, str] = {'projectId': secrets['projectID']}

@@ -476,6 +476,7 @@ class DownloadCramFromIca(SequencingGroupStage):
             sequencing_group=sequencing_group,
             file_spec=cram_spec,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
+            gcs_output_dir=outputs['cram'].parent,
         )
 
         return self.make_outputs(
@@ -536,6 +537,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
             sequencing_group=sequencing_group,
             file_spec=base_gvcf_spec,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
+            gcs_output_dir=outputs['gvcf'].parent,
         )
 
         return self.make_outputs(
@@ -598,6 +600,7 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
             sequencing_group=sequencing_group,
             file_spec=recal_gvcf_spec,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
+            gcs_output_dir=outputs['gvcf'].parent,
         )
 
         return self.make_outputs(
