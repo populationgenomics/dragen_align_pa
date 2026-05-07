@@ -38,14 +38,7 @@ def reheader_mlr_gvcf(
         f"""
         set -euo pipefail
 
-        bcftools view -h {gvcf_input_group['base_gvcf']} > base_header.txt
-        bcftools view -h {gvcf_input_group['recal_gvcf']} > recal_header.txt
-
-
-        awk 'FNR==NR {{ if (/^##GVCFBlock/) blocks = blocks $0 ORS; next }} \\
-        !inserted && /^##INFO=/ {{ printf "%s", blocks; inserted = 1 }} \\
-        {{ print }}' base_header.txt recal_header.txt > new_header.txt \\
-        && bcftools reheader -h new_header.txt {gvcf_input_group['recal_gvcf']} -o {reheadered_gvcf_outputs['gvcf.gz']}
+        bcftools annotate -h <(bcftools view -h {gvcf_input_group['base_gvcf']} | grep '^##GVCFBlock') {gvcf_input_group['recal_gvcf']} -o {reheadered_gvcf_outputs['gvcf.gz']}
 
         # Index the reheadered gVCF
         bcftools index -t {reheadered_gvcf_outputs['gvcf.gz']}
