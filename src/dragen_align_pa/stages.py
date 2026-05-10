@@ -29,6 +29,7 @@ from dragen_align_pa.jobs import (
     manage_dragen_pipeline,
     manage_md5_pipeline,
     prepare_ica_for_analysis,
+    reheader_mlr_gvcf,
     run_multiqc,
     somalier_extract,
     upload_data_to_ica,
@@ -475,6 +476,7 @@ class DownloadCramFromIca(SequencingGroupStage):
             sequencing_group=sequencing_group,
             file_spec=cram_spec,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
+            gcs_output_dir=outputs['cram'].parent,
         )
 
         return self.make_outputs(
@@ -535,6 +537,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
             sequencing_group=sequencing_group,
             file_spec=base_gvcf_spec,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
+            gcs_output_dir=outputs['gvcf'].parent,
         )
 
         return self.make_outputs(
@@ -545,8 +548,6 @@ class DownloadGvcfFromIca(SequencingGroupStage):
 
 
 @stage(
-    analysis_type='gvcf',
-    analysis_keys=['gvcf'],
     required_stages=[DownloadGvcfFromIca, ManageDragenMlr, ManageDragenPipeline],
 )
 class DownloadMlrGvcfFromIca(SequencingGroupStage):
@@ -555,8 +556,12 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
         sequencing_group: SequencingGroup,
     ) -> dict[str, cpg_utils.Path]:
         return {
-            'gvcf': get_output_path(filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz'),
-            'gvcf_tbi': get_output_path(filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz.tbi'),
+            'gvcf': get_output_path(
+                filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz', category='tmp'
+            ),
+            'gvcf_tbi': get_output_path(
+                filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz.tbi', category='tmp'
+            ),
         }
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
@@ -595,6 +600,7 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
             sequencing_group=sequencing_group,
             file_spec=recal_gvcf_spec,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
+            gcs_output_dir=outputs['gvcf'].parent,
         )
 
         return self.make_outputs(
@@ -707,6 +713,41 @@ class SomalierExtract(SequencingGroupStage):
         return self.make_outputs(sequencing_group, data=out_somalier_path, skipped=True)
 
 
+@stage(required_stages=[DownloadGvcfFromIca, DownloadMlrGvcfFromIca], analysis_type='gvcf', analysis_keys=['gvcf'])
+class ReheaderMlrGvcf(SequencingGroupStage):
+    """
+    Reheader the MLR gVCF to insert correct reference block information that the MLR process removes.
+    """
+
+    def expected_outputs(self, sequencing_group: SequencingGroup) -> dict[str, cpg_utils.Path]:
+        return {
+            'gvcf': get_output_path(filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz'),
+            'gvcf_tbi': get_output_path(filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz.tbi'),
+        }
+
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
+
+        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
+
+        base_gvcf_path: cpg_utils.Path = inputs.as_path(
+            target=sequencing_group,
+            stage=DownloadGvcfFromIca,
+            key='gvcf',
+        )
+        recal_gvcf_path: cpg_utils.Path = inputs.as_path(
+            target=sequencing_group,
+            stage=DownloadMlrGvcfFromIca,
+            key='gvcf',
+        )
+        reheader_mlr_gvcf_job: BashJob = reheader_mlr_gvcf.reheader_mlr_gvcf(
+            base_gvcf_path=base_gvcf_path,
+            recal_gvcf_path=recal_gvcf_path,
+            reheadered_gvcf_path=outputs['gvcf'],
+        )
+
+        return self.make_outputs(target=sequencing_group, data=outputs, jobs=reheader_mlr_gvcf_job)  # pyright: ignore[reportArgumentType]
+
+
 @stage(required_stages=[DownloadDataFromIca, SomalierExtract])
 class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -740,6 +781,7 @@ class RunMultiQc(CohortStage):
         DownloadGvcfFromIca,
         DownloadMlrGvcfFromIca,
         DownloadDataFromIca,
+        ReheaderMlrGvcf,
         RunMultiQc,
         FastqIntakeQc,
     ]

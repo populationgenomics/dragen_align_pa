@@ -128,7 +128,8 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                         if 'ar_guid' in data:
                             preserved_ar_guid_for_target = data['ar_guid']
                             logger.info(
-                                f"Preserved AR GUID '{preserved_ar_guid_for_target}' from existing file for {target.name}."
+                                f"Preserved AR GUID '{preserved_ar_guid_for_target}' from existing file "
+                                f'for {target.name}.'
                             )
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.warning(f"Could not read AR GUID from {pipeline_id_arguid_file}: {e}.")
@@ -150,8 +151,8 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
         for target in monitored_targets:
             if is_finished(target):
                 continue
-            target_name: str = target.name
-            pipeline_id_arguid_file: cpg_utils.Path = outputs[
+            target_name = target.name
+            pipeline_id_arguid_file = outputs[
                 pipeline_id_file_key_template.format(target_name=target_name)
             ]
 
@@ -198,7 +199,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                 elif pipeline_status == 'SUCCEEDED':
                     target.set_status(new_status=PipelineStatus.SUCCEEDED)
                     logger.info(f'{pipeline_name} pipeline {target.pipeline_id} has succeeded for {target_name}')
-                    pipeline_success_file: cpg_utils.Path = outputs[
+                    pipeline_success_file = outputs[
                         success_file_key_template.format(target_name=target_name)
                     ]
                     with pipeline_success_file.open('w') as success_file:
