@@ -22,7 +22,8 @@ PrepareIcaForDragenAnalysis (Cohort)
                 ├──► ManageDragenMlr (Cohort)                  [per-SG submissions — unchanged]
                 ├──► DownloadCramFromIca (SG)                  ✱ resolves batch from state file
                 ├──► DownloadGvcfFromIca (SG)                  ✱ resolves batch from state file
-                ├──► DownloadMlrGvcfFromIca (SG)               ✱ resolves batch from state file
+                ├──► DownloadMlrGvcfFromIca (SG)               ✱ resolves batch from state file (tmp output)
+                ├──► ReheaderMlrGvcf (SG)                      [unchanged; produces the final registered gVCF]
                 ├──► DownloadDataFromIca (SG)                  ✱ per-sample artefacts only
                 ├──► DownloadBatchArtefactsFromIca (Cohort)    ✱ NEW: passfail.json / summary.json / reports/
                 ├──► SomalierExtract (SG)                      [unchanged]
@@ -220,7 +221,8 @@ def get_ica_sample_folder(pipeline_id_arguid_path: cpg_utils.Path, sg_name: str)
 |----------------------------------|-------------|-----------------------------------------|--------------------------------------------------------------------------|
 | `DownloadCramFromIca`            | SG          | `get_ica_sample_folder(state, sg)`      | `{sg}.cram`, `{sg}.cram.crai`                                            |
 | `DownloadGvcfFromIca`            | SG          | same                                    | `{sg}.hard-filtered.gvcf.gz`, `.tbi`                                     |
-| `DownloadMlrGvcfFromIca`         | SG          | MLR state file (unchanged)              | `{sg}.hard-filtered.recal.gvcf.gz`, `.tbi`                               |
+| `DownloadMlrGvcfFromIca`         | SG          | MLR state file (unchanged)              | `{sg}.hard-filtered.recal.gvcf.gz`, `.tbi` (to `category='tmp'`)         |
+| `ReheaderMlrGvcf`                | SG          | n/a (consumes base + recal gVCF)        | produces final `recal_gvcf/{sg}.hard-filtered.recal.gvcf.gz[.tbi]` — registered as the cohort's final gVCF via `analysis_type='gvcf'`. Unchanged by migration. |
 | `DownloadDataFromIca`            | SG          | `get_ica_sample_folder(state, sg)`      | per-sample artefacts (everything in `<sample_id>/` minus CRAM/gVCF)      |
 | `DownloadBatchArtefactsFromIca`  | Cohort      | `{cohort}_batches.json`                 | `passfail.json`, `summary.json`, `reports/` — once per batch             |
 | `SomalierExtract`                | SG          | unchanged                               |                                                                          |
