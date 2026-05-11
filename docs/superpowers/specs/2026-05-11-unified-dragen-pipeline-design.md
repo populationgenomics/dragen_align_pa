@@ -5,6 +5,8 @@
 **Feature branches:** cut from `dragen-unified-dev`, merge back via PR
 **Scope:** Replace the two existing per-input-type ICA pipelines (`ica.pipelines.cram`, `ica.pipelines.fastq`) with a single unified pipeline (`DRAGEN378-custom-unified-F2-v1`, ICA pipeline ID `18a4baab-a12f-415d-ba8e-10b5bf6834d0`) that handles CRAM/FASTQ inputs and WGS/WES sequencing types, and switch from per-sequencing-group ICA submissions to per-batch submissions.
 
+**ICA pipeline definition:** The authoritative XML for `DRAGEN378-custom-unified-F2-v1` is checked in alongside this document at [`dragen378-custom-unified-f2-v1.xml`](./dragen378-custom-unified-f2-v1.xml). It enumerates the pipeline's input codes (`crams`, `cram_reference`, `fastqs`, `fastq_list`, `qc_coverage_region_beds`, `qc_cross_cont_vcf`, `ref_tar`, `additional_files`) and top-level parameters (`enable_map_align`, `output_format`, `enable_variant_caller`, `enable_sv`, `enable_cnv`, `dragen_reports`, `error_strategy`, `additional_args`). Section 3 below derives the submitter's data-input and parameter shapes from this XML; treat the XML as the source of truth if they ever diverge.
+
 ## 1. Stage graph
 
 ```
