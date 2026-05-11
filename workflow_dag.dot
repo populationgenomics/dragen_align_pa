@@ -33,7 +33,6 @@ digraph DragenAlignPAWorkflow {
     DownloadGvcfFromIca         [fillcolor="#b3e2cd", label="DownloadGvcfFromIca\n(SG)\n[ICA monitor]"];
     DownloadDataFromIca         [fillcolor="#b3e2cd", label="DownloadDataFromIca\n(SG)\n[ICA monitor]"];
     SomalierExtract             [fillcolor="#8da0cb", label="SomalierExtract\n(SG)"];
-    RunMultiQc                  [fillcolor="#8da0cb", label="RunMultiQc\n(C)"];
     DeleteDataInIca             [fillcolor="#fbb4ae", style="filled,bold", penwidth=3, label="DeleteDataInIca\n(C)\nEND"];
 
     // Strict left-to-right ordering for minimal edge crossing
@@ -47,7 +46,6 @@ digraph DragenAlignPAWorkflow {
     {rank=same; ManageDragenPipeline;}
     {rank=same; DownloadDataFromIca;}
     {rank=same; SomalierExtract;}
-    {rank=same; RunMultiQc;}
     {rank=same; DeleteDataInIca;}
 
     // Edges (dependencies)
@@ -70,7 +68,6 @@ digraph DragenAlignPAWorkflow {
     DownloadGvcfFromIca -> DownloadDataFromIca;
     DownloadMlrGvcfFromIca -> DownloadDataFromIca;
     DownloadCramFromIca -> SomalierExtract;
-    DownloadDataFromIca -> RunMultiQc;
-    SomalierExtract -> RunMultiQc;
-    RunMultiQc -> DeleteDataInIca;
+    DownloadDataFromIca -> DeleteDataInIca;
+    SomalierExtract -> DeleteDataInIca;
 }

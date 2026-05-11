@@ -10,7 +10,7 @@ The pipeline's scope covers:
 * Validating FASTQ data integrity before processing.
 * Submitting and monitoring the DRAGEN alignment jobs on ICA.
 * Downloading all results (CRAM, gVCF, QC metrics) from ICA back to GCS.
-* Running internal QC (Somalier, MultiQC) on the results.
+* Running internal QC (Somalier) on the results.
 * Automated cleanup of all data (source and generated) from the ICA platform.
 
 2. __Architectural Approach__

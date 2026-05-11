@@ -153,7 +153,6 @@ Both paths converge, providing the necessary inputs to `ManageDragenPipeline`.
 3.  **Download Stages**: A set of parallel stages that download specific outputs using the streaming/verifying method (`DownloadCramFromIca`, `DownloadGvcfFromIca`, `DownloadMlrGvcfFromIca`, `DownloadDataFromIca`).
 4.  **QC Stages**:
       * `SomalierExtract`: Runs `somalier extract` on the newly downloaded CRAM.
-      * `RunMultiQc`: Aggregates all QC metrics from `DownloadDataFromIca` and `SomalierExtract`.
 5.  **DeleteDataInIca**: A final cleanup stage that collects all FIDs (both source data and generated data) and deletes them from ICA to manage storage costs.
 
 ---
@@ -184,7 +183,7 @@ All configurable parameters are defined in `config/dragen_align_pa_defaults.toml
 
   * `[workflow]`:
       * `input_cohorts`: List of Metamist cohort IDs.
-      * `last_stages`: Defines the terminal stage(s) for the `cpg-flow` runner (e.g., `['RunMultiQc']`).
+      * `last_stages`: Defines the terminal stage(s) for the `cpg-flow` runner (e.g., `['DeleteDataInIca']`).
       * `reads_type`: Critical. Must be `"fastq"` or `"cram"`.
   * `[ica.projects]`: Defines the ICA project IDs for alignment and MLR.
   * `[ica.management]`:
