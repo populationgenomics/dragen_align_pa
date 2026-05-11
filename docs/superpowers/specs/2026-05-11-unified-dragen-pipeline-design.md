@@ -210,8 +210,12 @@ Note: ICA names the analysis folder `<user_reference><pipeline_id>`; with `user_
 ### Management flag semantics under batching
 
 - `monitor_previous=true`: reads `{cohort}_batches.json`, picks up monitoring of in-flight batches. If the file doesn't exist, raises.
-- `force_resubmit=true`: deletes `{cohort}_batches.json` and all per-SG state files, preserves AR GUID per batch (lifted up from per-SG), re-batches the cohort, submits fresh.
-- `cancel_cohort_run=true`: aborts every batch with a known `pipeline_id`, marks them `CANCELLED` in the batches file, deletes per-SG state files.
+- `force_resubmit=true`: deletes `{cohort}_batches.json` and all per-SG state files, preserves AR GUID per batch (lifted up from per-SG), re-batches the cohort, submits fresh. Deletion of the versioned per-SG state file is necessary here — it's the only way to achieve a clean state for the re-batch.
+- `cancel_cohort_run=true`: aborts every batch with a known `pipeline_id`, marks them `CANCELLED` in the batches file, **preserves the per-SG state files**. The versioned per-SG state file is the single source of per-SG truth and is not deleted unless forced; preserving it keeps AR GUIDs available for a future `force_resubmit=true` (the only sanctioned recovery path after cancel) to harvest and reuse. CANCELLED is a **terminal** state: the orchestrator raises `CohortCancelled` after cancel so the cohort run terminates cleanly; any subsequent rerun without `force_resubmit=true` also raises `CohortCancelled` as soon as ANY CANCELLED batch is detected (regardless of whether other batches succeeded). This unconditional terminal behaviour means downstream Download stages never read per-SG state files for cancelled SGs — they can't see an "analysis aborted" / "analysis not found" ICA error unless a future caller deliberately bypasses the orchestrator's guard.
+- Mutually exclusive: `force_resubmit=true` and `cancel_cohort_run=true` cannot be set together; the orchestrator raises a `ValueError` with a suggested cancel→wait→force_resubmit sequence.
+- Precedence: if both `force_resubmit=true` and `monitor_previous=true` are set, `force_resubmit` wins and `monitor_previous` is logged-as-ignored.
+
+In addition, the shared `manage_ica_pipeline_loop` mirrors its in-memory `FAILED_FINAL` and `CANCELLED` target transitions into `{cohort}_batches.json` via an `on_status_change` callback supplied by the DRAGEN orchestrator. Without this mirror, the loop's terminal transitions never reach the batches file, leaving entries stuck at `INPROGRESS` and breaking both the per-sample retry path's batch-level-FAILED branch and the resume-skip filter. MLR does not supply this callback (its targets have no equivalent cohort-level state file).
 
 ## 5. Per-SG download path resolution
 
@@ -370,11 +374,15 @@ if [[ ${#SAMPLES[@]} -eq 0 ]]; then
     SAMPLES=("CPG00001" "CPG00002")
 fi
 
-USER_REFERENCE="${USER_REFERENCE:-test-WGS-2samples-}"
+USER_REFERENCE="${USER_REFERENCE:-COH0001-batch0000_test-guid_}"
 PIPELINE_ID="${PIPELINE_ID:-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}"
 FAILED_SAMPLES="${FAILED_SAMPLES:-}"
 
-ANALYSIS_DIR="${OUTPUT_ROOT}/analysis/${USER_REFERENCE}${PIPELINE_ID}"
+# Production convention: `{user_reference}-{pipeline_id}` — the hyphen is
+# required (user_reference ends with `_` so the folder is `…_-{pipeline_id}`).
+# Matches `get_ica_sample_folder` in `utils.py` so the synthetic bundle is a
+# faithful production-layout fixture.
+ANALYSIS_DIR="${OUTPUT_ROOT}/analysis/${USER_REFERENCE}-${PIPELINE_ID}"
 
 mkdir -p "${ANALYSIS_DIR}/reports/report_files/samples"
 mkdir -p "${ANALYSIS_DIR}/ica_logs/analysis"
