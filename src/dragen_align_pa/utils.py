@@ -125,11 +125,6 @@ def get_output_path(filename: str, category: str | None = None) -> cpg_utils.Pat
     return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/output/{filename}', category=category))
 
 
-def get_qc_path(filename: str, category: str | None = None) -> cpg_utils.Path:
-    """Gets a path in the 'qc' directory."""
-    return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/qc/{filename}', category=category))
-
-
 def get_manifest_path_for_cohort(cohort: Cohort) -> cpg_utils.Path:
     """
     Queries Metamist for the 'manifest' analysis for a given cohort

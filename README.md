@@ -4,7 +4,7 @@
 
 This pipeline aligns or realigns genomic sequencing data (from FASTQ or CRAM files) using the DRAGEN pipeline on the Illumina Connected Analytics (ICA) platform.
 
-It manages data upload to ICA, submission and monitoring of the DRAGEN pipeline, and download of results (CRAMs, gVCFs, QC metrics) back to Google Cloud Storage (GCS). It also performs subsequent QC steps, including Somalier fingerprinting and MultiQC report generation.
+It manages data upload to ICA, submission and monitoring of the DRAGEN pipeline, and download of results (CRAMs, gVCFs, QC metrics) back to Google Cloud Storage (GCS). It also performs subsequent QC steps, including Somalier fingerprinting.
 
 
 ## Pipeline Overview v3.2.2
@@ -28,7 +28,6 @@ The workflow performs the following main steps:
 5.  **Download Results:** Downloads the key outputs (CRAMs, gVCFs, and QC metrics) from ICA back to GCS.
 6.  **Post-Processing QC:**
       * Runs `somalier extract` on the newly generated CRAM file to create a genomic fingerprint.
-      * Aggregates all QC metrics (from DRAGEN and Somalier) into a single MultiQC report.
 7.  **Cleanup (Optional, after checking all outputs are correct):** Deletes the data from the ICA platform to reduce storage costs.
 
 ## Prerequisites
@@ -45,7 +44,7 @@ Your TOML configuration file must specify the following key options:
       * `input_cohorts`: A list of Metamist cohort IDs to process (e.g., `['COH0001']`).
       * `sequencing_type`: Must be set (e.g., `"genome"`).
       * `reads_type`: Critical. Must be set to either `"fastq"` or `"cram"`.
-      * `last_stages`: A list of the final stages to run. To run the full pipeline including QC, use `['RunMultiQc']`. To also delete data from ICA after, use `['DeleteDataInIca']`.
+      * `last_stages`: A list of the final stages to run. To run the full pipeline including cleanup, use `['DeleteDataInIca']`.
       * `skip_stages`: (Optional) A list of stages to skip, e.g., `['DeleteDataInIca']`.
 
    * **If `reads_type = "cram"`:**
@@ -128,8 +127,6 @@ When successful, the pipeline downloads all results to your dataset's GCS bucket
       * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/dragen_metrics/`
   * **Somalier Fingerprints:**
       * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/somalier/`
-  * **Aggregated QC Report:**
-      * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/qc/{cohort_name}_multiqc_report.html`
 
 ---
 

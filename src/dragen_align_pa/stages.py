@@ -30,7 +30,6 @@ from dragen_align_pa.jobs import (
     manage_md5_pipeline,
     prepare_ica_for_analysis,
     reheader_mlr_gvcf,
-    run_multiqc,
     somalier_extract,
     upload_data_to_ica,
     upload_fastq_file_list,
@@ -42,7 +41,6 @@ from dragen_align_pa.utils import (
     get_output_path,
     get_pipeline_path,
     get_prep_path,
-    get_qc_path,
     initialise_python_job,
 )
 
@@ -748,30 +746,6 @@ class ReheaderMlrGvcf(SequencingGroupStage):
         return self.make_outputs(target=sequencing_group, data=outputs, jobs=reheader_mlr_gvcf_job)  # pyright: ignore[reportArgumentType]
 
 
-@stage(required_stages=[DownloadDataFromIca, SomalierExtract])
-class RunMultiQc(CohortStage):
-    def expected_outputs(self, cohort: Cohort) -> dict[str, str]:  # pyright: ignore[reportIncompatibleMethodOverride]
-        return {
-            'multiqc_data': str(get_output_path(filename=f'{cohort.name}_multiqc_data.json')),
-            'multiqc_report': str(get_qc_path(filename=f'{cohort.name}_multiqc_report.html', category='web')),
-        }
-
-    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
-        outputs: dict[str, str] = self.expected_outputs(cohort=cohort)
-
-        multiqc_job: BashJob | None = run_multiqc.run_multiqc(
-            cohort=cohort,
-            inputs=inputs,
-            outputs=outputs,
-        )
-
-        if not multiqc_job:
-            logger.warning('MultiQC job was not created (no input files found). Skipping stage.')
-            return self.make_outputs(cohort, skipped=True)
-
-        return self.make_outputs(target=cohort, data=outputs, jobs=multiqc_job)  # pyright: ignore[reportArgumentType]
-
-
 # Change this to a sequencing group stage to be safer.
 @stage(
     required_stages=[
@@ -782,7 +756,7 @@ class RunMultiQc(CohortStage):
         DownloadMlrGvcfFromIca,
         DownloadDataFromIca,
         ReheaderMlrGvcf,
-        RunMultiQc,
+        SomalierExtract,
         FastqIntakeQc,
     ]
 )
