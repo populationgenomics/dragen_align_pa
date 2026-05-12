@@ -73,24 +73,24 @@ md5_pipeline_id = "e767f290-bc60-4281-b11d-6a65c9791253"
 chunk_size = "100"
 
 # Unified DRAGEN378 pipeline (single pipeline for CRAM/FASTQ, WGS/WES)
-[ica.dragen]
+[dragen_align_pa.manage_dragen_pipeline]
 pipeline_id = "18a4baab-a12f-415d-ba8e-10b5bf6834d0"
 batch_size = 5
 
 # WGS-only flags. Empty preset is fine; cnv_segmentation_mode is divergent vs WES.
-[ica.dragen.presets.genome]
+[dragen_align_pa.manage_dragen_pipeline.presets.genome]
 cnv_segmentation_mode = "SLM"
 additional_args = "--cnv-enable-self-normalization true"
 additional_files = []
 
 # WES-only flags. Fill in WES BED + PoN file IDs per cohort.
-[ica.dragen.presets.exome]
+[dragen_align_pa.manage_dragen_pipeline.presets.exome]
 cnv_segmentation_mode = "HSLM"
 additional_args = "--sv-exome true --sv-call-regions-bed <bed-name> --vc-target-bed <bed-name> --cnv-target-bed <bed-name> --cnv-target-factor-threshold 5 --cnv-enable-self-normalization false"
 additional_files = []
 
 # Per-run user override hooks. Appended after the preset values.
-[ica.dragen.user]
+[dragen_align_pa.manage_dragen_pipeline.user]
 additional_args = ""
 additional_files = []
 

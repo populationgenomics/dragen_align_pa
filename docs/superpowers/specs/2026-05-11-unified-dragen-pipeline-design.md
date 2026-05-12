@@ -39,6 +39,10 @@ Net change: one stage (`ManageDragenPipeline`) gains batching logic. Four downlo
 
 ## 2. Config schema
 
+### Namespacing convention
+
+Stage-specific config lives under `[dragen_align_pa.<stage_name_snake_case>]` (e.g. `[dragen_align_pa.manage_dragen_pipeline]` below). Pipeline-wide infrastructure stays under its existing namespace (`[workflow]`, `[ica.projects]`, `[ica.management]`, `[ica.data_prep]`, `[ica.tags]`, `[ica.api]`, `[images]`, `[manifest]`). This makes stage-owned keys grep-discoverable from the stage class name and keeps reordering within the TOML predictable. Follow-up: `[ica.mlr]` should migrate to `[dragen_align_pa.manage_dragen_mlr]` in Task 19b (Segment B), since that task already edits `manage_dragen_mlr.py` and is the natural place to update its config callsites. `[ica.pipelines.md5]` is out of scope for this migration (the MD5 stage isn't being touched).
+
 ### Hardcoded in code (always sent, regardless of WGS/WES or CRAM/FASTQ)
 
 Submitter assembles `additional_args` from:
@@ -69,21 +73,21 @@ Submitter assembles `additional_args` from:
 ### Config — divergent values + user overrides
 
 ```toml
-[ica.dragen]
+[dragen_align_pa.manage_dragen_pipeline]
 pipeline_id = "18a4baab-a12f-415d-ba8e-10b5bf6834d0"
 batch_size  = 5
 
-[ica.dragen.presets.genome]
+[dragen_align_pa.manage_dragen_pipeline.presets.genome]
 cnv_segmentation_mode = "SLM"
 additional_args  = "--cnv-enable-self-normalization true"
 additional_files = []
 
-[ica.dragen.presets.exome]
+[dragen_align_pa.manage_dragen_pipeline.presets.exome]
 cnv_segmentation_mode = "HSLM"
 additional_args = "--sv-exome true --sv-call-regions-bed <bed-name> --vc-target-bed <bed-name> --cnv-target-bed <bed-name> --cnv-target-factor-threshold 5 --cnv-enable-self-normalization false"
 additional_files = []     # ICA file IDs for SV call regions BED, target BED, PoN files
 
-[ica.dragen.user]
+[dragen_align_pa.manage_dragen_pipeline.user]
 additional_args  = ""
 additional_files = []
 ```
