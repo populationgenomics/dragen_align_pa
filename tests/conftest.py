@@ -15,7 +15,9 @@ import cpg_utils.config
 
 _TEST_CONFIG: dict[tuple, object] = {
     ('workflow', 'reads_type'): 'cram',
-    ('ica', 'pipelines', 'dragen_version'): 'DRAGEN378',
+    # Match the production TOML value verbatim so any future test that doesn't
+    # explicitly monkeypatch DRAGEN_VERSION still gets a path-shape match.
+    ('ica', 'pipelines', 'dragen_version'): 'dragen_3_7_8',
 }
 
 
