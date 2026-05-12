@@ -1,7 +1,12 @@
+from __future__ import annotations
+
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import cpg_utils
 
 SCHEMA_VERSION = 1
 
@@ -127,7 +132,7 @@ class BatchesFile:
       keeping a per-batch copy here gives cleanup a single source of truth.
     """
 
-    def __init__(self, path: 'cpg_utils.Path | Path'):
+    def __init__(self, path: cpg_utils.Path | Path):
         self.path = path
         self.batch_size: int = 0
         self.batches: list[dict[str, Any]] = []
