@@ -207,7 +207,7 @@ ICA output path for an SG (used by every per-SG download stage):
 /{BUCKET_NAME}/{ica.data_prep.output_folder}/{user_reference}-{pipeline_id}/{sg_name}/
 ```
 
-Note: ICA names the analysis folder `<user_reference><pipeline_id>`; with `user_reference` ending in `_` we get `…_-<pipeline_id>` which matches the convention in today's code.
+Note: ICA names the analysis folder `<user_reference>-<pipeline_id>` — i.e. it inserts a single `-` between the submitted `user_reference` and the analysis `pipeline_id`. Because our `user_reference` ends with `_` (per Task 13 of the implementation plan: `f'{batch.name}_{ar_guid}_'`), the rendered folder name is `…_-<pipeline_id>`, which matches the convention in today's code. The explicit hyphen in the path-construction template above (and in `get_ica_sample_folder`, in `_on_succeeded`'s `analysis_folder_name`, and in the demo-bundle fixture) all reflect this single, consistent rule.
 
 ### Management flag semantics under batching
 

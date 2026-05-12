@@ -258,12 +258,15 @@ Run:
 python -m tests.fixtures.generate_demo_bundle /tmp/demo-bundle-smoke --samples CPG_A CPG_B
 ```
 
-Expected: prints `Generated: /tmp/demo-bundle-smoke/analysis/test-WGS-2samples-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee`.
+Expected: prints `Generated: /tmp/demo-bundle-smoke/analysis/COH0001-batch0000_test-guid_-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee`
+(the production-shaped folder name: `{user_reference}-{pipeline_id}` where
+`user_reference` defaults to `'COH0001-batch0000_test-guid_'` and ends in `_`,
+so the rendered folder starts `…_-aaaaaaaa…`).
 
 Verify:
 ```bash
-ls /tmp/demo-bundle-smoke/analysis/test-WGS-2samples-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/
-cat /tmp/demo-bundle-smoke/analysis/test-WGS-2samples-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/passfail.json
+ls /tmp/demo-bundle-smoke/analysis/COH0001-batch0000_test-guid_-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/
+cat /tmp/demo-bundle-smoke/analysis/COH0001-batch0000_test-guid_-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/passfail.json
 rm -rf /tmp/demo-bundle-smoke
 ```
 
