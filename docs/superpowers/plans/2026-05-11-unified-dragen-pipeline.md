@@ -45,7 +45,7 @@
 - `src/dragen_align_pa/jobs/upload_fastq_file_list.py` (upload moved into submitter)
 
 **PR-checkpoint markers** (where a working-state commit could be tagged for review)
-- After **Task 14c** — core data types, helpers, config, loop generalization, submitter + passfail + orchestration tests (no stage rewiring yet — old pipeline still runnable)
+- After **Task 14b** — core data types, helpers, config, loop generalization, submitter + passfail + their tests (no stage rewiring yet — old pipeline still runnable). Task 14c is deferred to land alongside Task 15 (it tests `_build_retry_batches` which Task 15 introduces).
 - After **Task 23** — new pipeline end-to-end runnable, old stages removed
 - After **Task 24** — docs + DAG refreshed
 
@@ -2535,6 +2535,8 @@ git commit -m "Add unit tests for submit_dragen_batch additional_args assembly +
 ---
 
 ## Task 14c: Unit tests for retry-batch orchestration
+
+> **Ordering note:** Task 14c depends on Task 15 (it imports `_build_retry_batches` from `manage_dragen_pipeline.py`, which Task 15 introduces). The Segment A / Segment B PR split therefore runs Task 14c **immediately after Task 15** in Segment B, not in Segment A. The plan keeps it numbered "14c" for continuity with the design-review discussion.
 
 **Files:**
 - Create: `tests/test_manage_dragen_pipeline.py`
