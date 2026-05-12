@@ -1,3 +1,4 @@
+import json
 import re
 import subprocess
 from math import ceil
@@ -6,13 +7,13 @@ from typing import TYPE_CHECKING, Any
 import cpg_utils
 from cloudpathlib.exceptions import NoStatError
 from cpg_flow.targets import Cohort, SequencingGroup
-from cpg_utils.config import get_access_level, get_driver_image, output_path
+from cpg_utils.config import config_retrieve, get_access_level, get_driver_image, output_path
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
 from metamist.graphql import gql, query
 
-from dragen_align_pa.constants import DRAGEN_VERSION
+from dragen_align_pa.constants import BUCKET_NAME, DRAGEN_VERSION
 
 if TYPE_CHECKING:
     from graphql import DocumentNode
@@ -123,6 +124,64 @@ def get_pipeline_path(filename: str) -> cpg_utils.Path:
 def get_output_path(filename: str, category: str | None = None) -> cpg_utils.Path:
     """Gets a path in the final 'output' directory."""
     return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/output/{filename}', category=category))
+
+
+PER_SG_STATE_SCHEMA_VERSION = 1
+
+
+def get_ica_sample_folder(pipeline_id_arguid_path: cpg_utils.Path, sg_name: str) -> str:
+    """Resolve the ICA folder containing a single SG's batch output.
+
+    Reads the per-SG state file (extended schema with `schema_version`,
+    `user_reference`, `pipeline_id`, `batch_index`) and constructs:
+        /{bucket}/{output_folder}/{user_reference}-{pipeline_id}/{sg_name}/
+
+    Failure modes:
+    - State file missing → `FileNotFoundError` (resume the orchestrator with
+      `monitor_previous=true` to repopulate from `{cohort}_batches.json`).
+    - State file lacks `schema_version` or has the wrong value →
+      `ValueError`. The file was written by an older code path. A vanilla
+      rerun of `ManageDragenPipeline` only rewrites per-SG files for batches
+      whose status is PENDING/INPROGRESS — files for SUCCEEDED batches are
+      left alone. To force rewriting under the new schema:
+        (a) Rerun the cohort with `force_resubmit=true` (deletes batches.json
+            + every per-SG state file, then re-batches and re-submits), OR
+        (b) Manually delete the offending per-SG file so the next resume pass
+            re-reads from `{cohort}_batches.json` (the authoritative source).
+    - Required key absent under the right schema version → `KeyError`
+      naming the missing field.
+    - State file present, schema valid, BUT the SG's batch was CANCELLED →
+      this helper returns a syntactically valid path that points at an
+      ABORTED ICA analysis. The helper has no awareness of batch status.
+      In practice this branch is unreachable from production code because
+      the orchestrator-level resume-after-cancel guard in
+      `manage_dragen_pipeline.run()` raises `CohortCancelled` on ANY
+      remaining CANCELLED batches, halting the cohort before downstream
+      Download stages run. If a future caller bypasses that guard, the
+      subsequent ICA call would fail with "analysis not found".
+
+    Note: per-SG state files are derived projections of `{cohort}_batches.json`
+    (see Task 6 BatchesFile docstring for the recovery contract).
+    """
+    with pipeline_id_arguid_path.open('r') as fh:
+        state = json.load(fh)
+    version = state.get('schema_version', 0)
+    if version != PER_SG_STATE_SCHEMA_VERSION:
+        raise ValueError(
+            f'Per-SG state file {pipeline_id_arguid_path} has schema_version {version}; '
+            f'code expects {PER_SG_STATE_SCHEMA_VERSION}. Rerun the cohort with '
+            f'force_resubmit=true (or manually delete the file) to rewrite it under '
+            f'the new schema.',
+        )
+    for required in ('user_reference', 'pipeline_id'):
+        if required not in state:
+            raise KeyError(
+                f'Per-SG state file {pipeline_id_arguid_path} missing required key {required!r}.',
+            )
+    user_reference = state['user_reference']
+    pipeline_id = state['pipeline_id']
+    output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
+    return f'/{BUCKET_NAME}/{output_folder}/{user_reference}-{pipeline_id}/{sg_name}/'
 
 
 def get_manifest_path_for_cohort(cohort: Cohort) -> cpg_utils.Path:
