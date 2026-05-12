@@ -63,12 +63,19 @@ def _build_additional_args() -> str:
         raise ValueError(
             f"workflow.sequencing_type must be 'genome' or 'exome', got {sequencing_type!r}",
         )
-    preset = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type], default=None)
+    preset = config_retrieve(
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type],
+        default=None,
+    )
     if preset is None:
         raise ValueError(
-            f'Missing config section [dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}]; add it to your TOML.',
+            f'Missing config section [dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}]; '
+            f'add it to your TOML.',
         )
-    user = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'user'], default={'additional_args': '', 'additional_files': []})
+    user = config_retrieve(
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'user'],
+        default={'additional_args': '', 'additional_files': []},
+    )
 
     # Join with explicit spaces. Empty parts are filtered out before the join so
     # we don't end up with double spaces when a preset or user override is "".
@@ -83,8 +90,9 @@ def _build_additional_args() -> str:
     placeholders = _PRESET_PLACEHOLDER_RE.findall(assembled)
     if placeholders:
         raise ValueError(
-            f"DRAGEN additional_args contains unfilled placeholders {placeholders} from "
-            f"[dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}]. Fill them in your config before running.",
+            f'DRAGEN additional_args contains unfilled placeholders {placeholders} from '
+            f'[dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}]. '
+            f'Fill them in your config before running.',
         )
     return assembled
 
@@ -310,8 +318,9 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     coverage_region_beds: list[str] = config_retrieve(['ica', 'qc', 'coverage_region_beds'], default=[])
     cross_cont_vcf: str | None = config_retrieve(['ica', 'qc', 'cross_cont_vcf'], default=None)
 
+    sequencing_type = config_retrieve(['workflow', 'sequencing_type'])
     preset_files = config_retrieve(
-        ['dragen_align_pa', 'manage_dragen_pipeline', 'presets', config_retrieve(['workflow', 'sequencing_type']), 'additional_files'],
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type, 'additional_files'],
         default=[],
     )
     user_files = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'], default=[])

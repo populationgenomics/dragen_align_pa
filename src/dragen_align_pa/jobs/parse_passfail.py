@@ -22,6 +22,8 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils
 
+_HTTP_FORBIDDEN = 403
+
 
 def parse_passfail_file(path: Path | cpg_utils.Path) -> dict[str, str]:
     """Load a passfail.json file from disk and return the {sample_id: status} mapping."""
@@ -74,7 +76,7 @@ def fetch_passfail_from_ica(
 
     try:
         response = _mint_and_fetch()
-        if response.status_code == 403:
+        if response.status_code == _HTTP_FORBIDDEN:
             # Presigned URL expired between minting and reading; mint a fresh one.
             logger.warning(
                 f'passfail.json presigned URL returned 403 for {ica_folder_path}; re-minting and retrying once.',

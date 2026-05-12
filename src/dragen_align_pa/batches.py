@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import cpg_utils
 
 SCHEMA_VERSION = 1
@@ -83,7 +84,7 @@ class BatchesFile:
                     "status": "PENDING" | "INPROGRESS" | "SUCCEEDED" | "FAILED" | "CANCELLED",
                     "passfail": {sg_name: "Success" | "Fail"} | null,
                     "passfail_seen": bool,             # True iff passfail.json was fetched + recorded
-                    "has_been_retried": bool,          # True once any SG from this batch has been retried (action gate); pre-set True at creation for retry_generation=1 batches
+                    "has_been_retried": bool,          # action gate; pre-set True for retry_generation=1
                     "error_strategy": "auto" | "continue" | "terminate",
                 }
             ],

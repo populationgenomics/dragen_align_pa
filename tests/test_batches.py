@@ -71,7 +71,12 @@ def test_batches_file_record_pipeline_id(tmp_path: Path):
         Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A']),
     ])
     bf.write()
-    bf.record_pipeline_submission(batch_index=0, pipeline_id='abc', ar_guid='xyz', user_reference='COH0001-batch0000_xyz_')
+    bf.record_pipeline_submission(
+        batch_index=0,
+        pipeline_id='abc',
+        ar_guid='xyz',
+        user_reference='COH0001-batch0000_xyz_',
+    )
     bf.write()
 
     loaded = BatchesFile(path=path)

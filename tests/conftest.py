@@ -29,8 +29,12 @@ def _test_output_path(suffix: str = '') -> str:
     return f'gs://cpg-test-dataset-test/{suffix}'
 
 
-cpg_utils.config.config_retrieve = _test_config_retrieve
-cpg_utils.config.output_path = _test_output_path
+# Monkey-patching a module attribute with a narrower signature; mypy's
+# concern here doesn't apply at runtime because every test caller invokes
+# config_retrieve / output_path through the same two-arg / one-arg shape
+# that the stubs cover. Ignore the assignment-type check.
+cpg_utils.config.config_retrieve = _test_config_retrieve  # type: ignore[assignment]
+cpg_utils.config.output_path = _test_output_path  # type: ignore[assignment]
 
 
 from pathlib import Path  # noqa: E402

@@ -120,6 +120,15 @@ ignore = [
 [tool.ruff.lint.isort]
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 
+[tool.ruff.lint.per-file-ignores]
+# Test files relax a handful of lints that don't earn their keep in test code:
+# - SLF001: tests legitimately access private members of the module under test.
+# - PLR2004: tests compare against literal "magic" values (counts, indices, etc.).
+# - ANN202: return-type annotations on inner helpers / factories in tests add noise.
+# - ANN003: **kwargs typing on test helpers (e.g. _write_state(**fields)) is verbose.
+# - ARG005: lambda stubs in monkeypatch.setattr often ignore the called args.
+"tests/**" = ["SLF001", "PLR2004", "ANN202", "ANN003", "ARG005"]
+
 [tool.bumpversion]
 current_version = "3.2.2"
 parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"

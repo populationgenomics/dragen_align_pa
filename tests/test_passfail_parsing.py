@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from dragen_align_pa.jobs.parse_passfail import parse_passfail_file
