@@ -323,6 +323,18 @@ Computed by `manage_dragen_pipeline.py` after the retry pass (not inside the sha
 - FASTQ mode: `MakeFastqFileList` writes RGSM = SG name in each row.
 - CRAM mode: the CRAM-to-BAM conversion preserves the RG line whose SM tag was set when the original CRAM was generated — this must be verified during implementation.
 
+Concrete example. For a batch of 5 SGs `[sample1, sample2, sample3, sample4, sample5]`:
+
+- FASTQ mode — the batch CSV row for `sample3` looks like:
+  ```
+  sample3,1,gs://.../sample3_L1_R1.fastq.gz,gs://.../sample3_L1_R2.fastq.gz,...
+  ```
+- DRAGEN writes `passfail.json` at the batch root, keyed by RGSM:
+  ```json
+  {"sample1":"Success","sample2":"Success","sample3":"Fail","sample4":"Success","sample5":"Success"}
+  ```
+- The orchestrator joins `sample_id → sg_name` directly (no munging) and records the per-SG verdict into `{cohort}_batches.json` via `BatchesFile.record_passfail`. Retry granularity is therefore per-SG: `sample3` alone forms a one-SG retry batch; `sample1/2/4/5` are not re-run. See §6 "Per-sample retry orchestration" for the retry-batch construction rules and the `error_strategy=continue` requirement for single-sample retry batches.
+
 The file is small (KB-scale); fetched in-memory by a new `fetch_passfail_from_ica` helper that resolves the file ID via `ica_api_utils.find_file_id_by_name` and reads the presigned URL with `requests.get(...).json()`. No GCS or disk staging — the dict is consumed directly by `BatchesFile.record_passfail`.
 
 ## 7. Validation plan
