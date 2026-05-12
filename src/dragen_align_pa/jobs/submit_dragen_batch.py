@@ -201,12 +201,12 @@ def _load_per_sg_fastq_lists(
     for sg_name in sg_names:
         path = per_sg_fastq_list_paths[sg_name]
         with path.open() as fh:
-            df = pd.read_csv(fh)
+            sg_fastq_df = pd.read_csv(fh)
         if expected_columns is None:
-            expected_columns = list(df.columns)
+            expected_columns = list(sg_fastq_df.columns)
             # Schema sanity-check on the first CSV: if MakeFastqFileList ever
             # renames its required columns, this surfaces immediately rather
-            # than as a `KeyError` on `df['Read1File']` later.
+            # than as a `KeyError` on `sg_fastq_df['Read1File']` later.
             missing_required = required_columns - set(expected_columns)
             if missing_required:
                 raise ValueError(
@@ -214,20 +214,20 @@ def _load_per_sg_fastq_lists(
                     f'columns {missing_required} (got {expected_columns}). '
                     f'MakeFastqFileList must emit Read1File / Read2File.',
                 )
-        elif list(df.columns) != expected_columns:
+        elif list(sg_fastq_df.columns) != expected_columns:
             raise ValueError(
                 f'FASTQ list header mismatch for SG {sg_name} in {path}: '
-                f'expected {expected_columns}, got {list(df.columns)}. '
+                f'expected {expected_columns}, got {list(sg_fastq_df.columns)}. '
                 f'All per-SG CSVs must share the same column shape.',
             )
-        if df.empty:
+        if sg_fastq_df.empty:
             raise ValueError(
                 f'FASTQ list for SG {sg_name} at {path} has zero data rows; '
                 f'the combined batch CSV would silently omit this SG.',
             )
-        frames.append(df)
-        fastq_filenames.update(df['Read1File'].tolist())
-        fastq_filenames.update(df['Read2File'].tolist())
+        frames.append(sg_fastq_df)
+        fastq_filenames.update(sg_fastq_df['Read1File'].tolist())
+        fastq_filenames.update(sg_fastq_df['Read2File'].tolist())
     combined = pd.concat(frames, ignore_index=True)
     return sorted(fastq_filenames), combined
 
