@@ -303,3 +303,153 @@ def _build_fastq_data_inputs(
         ],
         fastq_list_fid,
     )
+
+
+def _build_common_data_inputs() -> list[AnalysisDataInput]:
+    dragen_ht_id: str = config_retrieve(['ica', 'pipelines', 'dragen_ht_id'])
+    coverage_region_beds: list[str] = config_retrieve(['ica', 'qc', 'coverage_region_beds'], default=[])
+    cross_cont_vcf: str | None = config_retrieve(['ica', 'qc', 'cross_cont_vcf'], default=None)
+
+    preset_files = config_retrieve(
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'presets', config_retrieve(['workflow', 'sequencing_type']), 'additional_files'],
+        default=[],
+    )
+    user_files = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'], default=[])
+    additional_files = list(preset_files) + list(user_files)
+
+    inputs: list[AnalysisDataInput] = [AnalysisDataInput(parameterCode='ref_tar', dataIds=[dragen_ht_id])]
+    if coverage_region_beds:
+        inputs.append(AnalysisDataInput(parameterCode='qc_coverage_region_beds', dataIds=coverage_region_beds))
+    if cross_cont_vcf:
+        inputs.append(AnalysisDataInput(parameterCode='qc_cross_cont_vcf', dataIds=[cross_cont_vcf]))
+    if additional_files:
+        inputs.append(AnalysisDataInput(parameterCode='additional_files', dataIds=additional_files))
+    return inputs
+
+
+def run(
+    batch: Batch,
+    analysis_output_fid_path: cpg_utils.Path,
+    cram_state_paths: dict[str, cpg_utils.Path] | None,
+    fastq_ids_path: cpg_utils.Path | None,
+    per_sg_fastq_list_paths: dict[str, cpg_utils.Path] | None,
+    error_strategy: str = 'auto',
+    ar_guid_override: str | None = None,
+) -> dict[str, str | list[str]]:
+    """Submit one batch to the unified DRAGEN pipeline.
+
+    Returns a dict containing:
+        pipeline_id: ICA analysis ID (str)
+        ar_guid: analysis-runner GUID (str)
+        user_reference: the user_reference assembled for this batch (str)
+        error_strategy: the value submitted to ICA (str)
+        fastq_list_fid: only set in FASTQ mode (str)
+        cram_fids: only set in CRAM mode (list[str])
+
+    Caller is responsible for persisting the result into the cohort batches file.
+
+    Persistence boundary (caller contract):
+
+    1. `run` does NOT touch state files. It returns the submission identity to
+       the caller. If `run` raises (network blip, ICA 5xx, etc.), no state has
+       been written and the caller can safely retry.
+    2. If `submit_nextflow_analysis` returns successfully, an ICA analysis
+       exists. If the caller then crashes BEFORE persisting per-SG state files
+       + `{cohort}_batches.json`, the next orchestrator pass sees status
+       PENDING and re-submits — generating a new pipeline_id and orphaning
+       the previous analysis (it will eventually be cleaned up by ICA's
+       retention policy). This is intentional: we prefer at-least-once
+       submission with idempotent reconciliation over a multi-write
+       transaction.
+    3. The caller (`manage_dragen_pipeline.py::_build_submit_callable`)
+       persists in this order: per-SG state files first (best-effort
+       projections of batches.json) → `batches.json` (the commit point).
+       See Task 15 for the rationale.
+    """
+    secrets = ica_api_utils.get_ica_secrets()
+    project_id: str = secrets['projectID']
+
+    with analysis_output_fid_path.open('r') as fh:
+        analysis_output_fid: str = json.load(fh)['analysis_output_fid']
+
+    if ar_guid_override is not None:
+        # `force_resubmit` lifts the prior batch's AR GUID out of per-SG state
+        # so the new submission keeps the same ICA folder identity (spec §4 line 213).
+        # `is not None` (not truthiness) so an empty-string override raises clearly
+        # rather than silently falling through to the env GUID.
+        if not ar_guid_override:
+            raise ValueError(
+                f'ar_guid_override was empty string for batch {batch.name}; '
+                f'callers should pass None to use the env GUID.',
+            )
+        ar_guid = ar_guid_override
+        logger.info(f'Reusing preserved AR GUID for batch {batch.name}: {ar_guid}')
+    else:
+        ar_guid = try_get_ar_guid()
+        if not ar_guid:
+            raise RuntimeError(
+                'try_get_ar_guid() returned None/empty — analysis-runner GUID is missing from env. '
+                'This breaks ICA folder naming and per-SG state files. Refusing to submit.',
+            )
+    user_reference = f'{batch.name}_{ar_guid}_'
+
+    pipeline_id_config: str = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'pipeline_id'])
+    user_tags: list[str] = config_retrieve(['ica', 'tags', 'user_tags'])
+    technical_tags: list[str] = config_retrieve(['ica', 'tags', 'technical_tags'])
+    reference_tags: list[str] = config_retrieve(['ica', 'tags', 'reference_tags'])
+
+    with ica_api_utils.get_ica_api_client() as api_client:
+        analysis_api = project_analysis_api.ProjectAnalysisApi(api_client)
+        data_api = project_data_api.ProjectDataApi(api_client)
+
+        common_data_inputs = _build_common_data_inputs()
+        fastq_list_fid: str | None = None
+        cram_fids: list[str] | None = None
+
+        if cram_state_paths is not None:
+            specific_data_inputs, cram_fids = _build_cram_data_inputs(
+                batch=batch, per_sg_state_paths=cram_state_paths,
+            )
+        elif fastq_ids_path is not None and per_sg_fastq_list_paths is not None:
+            specific_data_inputs, fastq_list_fid = _build_fastq_data_inputs(
+                api_instance=data_api,
+                project_id=project_id,
+                batch=batch,
+                fastq_ids_path=fastq_ids_path,
+                per_sg_fastq_list_paths=per_sg_fastq_list_paths,
+            )
+        else:
+            raise ValueError(f'submit_dragen_batch: no valid input mode for batch {batch.name}')
+
+        body = CreateNextflowAnalysis(
+            userReference=user_reference,
+            pipelineId=pipeline_id_config,
+            tags=AnalysisTag(
+                technicalTags=technical_tags,
+                userTags=user_tags,
+                referenceTags=reference_tags,
+            ),
+            outputParentFolderId=analysis_output_fid,
+            analysisInput=NextflowAnalysisInput(
+                inputs=common_data_inputs + specific_data_inputs,
+                parameters=_build_top_level_parameters(error_strategy=error_strategy),
+            ),
+        )
+        analysis_id = ica_api_utils.submit_nextflow_analysis(
+            api_instance=analysis_api,
+            path_params={'projectId': project_id},
+            body=body,
+        )
+
+    logger.info(f'Submitted DRAGEN batch {batch.name} → ICA analysis {analysis_id}')
+    result: dict[str, str | list[str]] = {
+        'pipeline_id': analysis_id,
+        'ar_guid': ar_guid,
+        'user_reference': user_reference,
+        'error_strategy': error_strategy,
+    }
+    if fastq_list_fid is not None:
+        result['fastq_list_fid'] = fastq_list_fid
+    if cram_fids is not None:
+        result['cram_fids'] = cram_fids
+    return result
