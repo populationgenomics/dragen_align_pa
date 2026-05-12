@@ -183,3 +183,9 @@ reference_data/
 
 # Mac
 .DS_Store
+
+# Real ICA bundle downloads (never commit)
+/ica-demo-bundle/
+
+# Synthetic fixture output (script default)
+/tests/fixtures/ica-demo-bundle/
