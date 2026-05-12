@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from dragen_align_pa.utils import PER_SG_STATE_SCHEMA_VERSION, get_ica_sample_folder
+from dragen_align_pa.utils import PER_SG_STATE_SCHEMA_VERSION, get_batch_artefacts_path, get_ica_sample_folder
 
 
 def _write_state(path: Path, **fields) -> None:
@@ -51,3 +51,22 @@ def test_get_ica_sample_folder_raises_on_missing_state(tmp_path: Path):
     import pytest
     with pytest.raises(FileNotFoundError):
         get_ica_sample_folder(tmp_path / 'does-not-exist.json', sg_name='CPG00001')
+
+
+def test_get_batch_artefacts_path(monkeypatch):
+    monkeypatch.setattr('dragen_align_pa.utils.DRAGEN_VERSION', 'dragen_3_7_8')
+
+    captured = {}
+
+    def fake_output_path(suffix, category=None):
+        captured['suffix'] = suffix
+        captured['category'] = category
+        return f'gs://test-bucket/{suffix}'
+
+    monkeypatch.setattr('dragen_align_pa.utils.output_path', fake_output_path)
+
+    result = get_batch_artefacts_path(cohort_name='COH0001', batch_index=3)
+    assert str(result) == 'gs://test-bucket/ica/dragen_3_7_8/output/dragen_batch_metrics/COH0001_batch0003'
+    # `get_batch_artefacts_root` builds the prefix; the per-batch path is
+    # constructed by trailing `/{batch_name}` from the cpg_utils.Path operator.
+    assert captured['suffix'] == 'ica/dragen_3_7_8/output/dragen_batch_metrics'

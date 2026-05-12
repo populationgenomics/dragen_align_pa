@@ -126,6 +126,31 @@ def get_output_path(filename: str, category: str | None = None) -> cpg_utils.Pat
     return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/output/{filename}', category=category))
 
 
+def get_batch_artefacts_root(cohort_name: str) -> cpg_utils.Path:  # noqa: ARG001
+    """Per-cohort artefacts root under GCS (siblings: passfail/summary/reports per batch).
+
+    The cohort name is currently unused in path construction (all cohorts share
+    a `dragen_batch_metrics/` root under the cohort-scoped output prefix), but
+    it is in the signature so callers can pass it consistently with
+    `get_batch_artefacts_path` and so a future per-cohort namespace change has
+    a single place to land.
+    """
+    return get_output_path('dragen_batch_metrics')
+
+
+def get_batch_artefacts_path(cohort_name: str, batch_index: int) -> cpg_utils.Path:
+    """Per-batch artefacts directory under GCS (passfail.json, summary.json, reports/).
+
+    Note: the GCS subdirectory uses **underscore** (`{cohort}_batch{NN}`) — distinct
+    from `Batch.name`, which uses **hyphen** (`{cohort}-batch{NN}`) as the
+    cpg-flow target identifier. The two are deliberately split: hyphen for the
+    in-process target name (matches the `user_reference` pattern), underscore
+    for the GCS path (filesystem-friendly, won't be confused with the cohort name).
+    Both forms zero-pad `batch_index` to width 4.
+    """
+    return get_batch_artefacts_root(cohort_name) / f'{cohort_name}_batch{batch_index:04d}'
+
+
 PER_SG_STATE_SCHEMA_VERSION = 1
 
 
