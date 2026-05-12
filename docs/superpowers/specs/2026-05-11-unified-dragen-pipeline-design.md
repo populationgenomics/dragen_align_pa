@@ -5,6 +5,8 @@
 **Feature branches:** cut from `dragen-unified-dev`, merge back via PR
 **Scope:** Replace the two existing per-input-type ICA pipelines (`ica.pipelines.cram`, `ica.pipelines.fastq`) with a single unified pipeline (`DRAGEN378-custom-unified-F2-v1`, ICA pipeline ID `18a4baab-a12f-415d-ba8e-10b5bf6834d0`) that handles CRAM/FASTQ inputs and WGS/WES sequencing types, and switch from per-sequencing-group ICA submissions to per-batch submissions.
 
+**ICA pipeline definition:** The authoritative XML for `DRAGEN378-custom-unified-F2-v1` is checked in alongside this document at [`dragen378-custom-unified-f2-v1.xml`](./dragen378-custom-unified-f2-v1.xml). It enumerates the pipeline's input codes (`crams`, `cram_reference`, `fastqs`, `fastq_list`, `qc_coverage_region_beds`, `qc_cross_cont_vcf`, `ref_tar`, `additional_files`) and top-level parameters (`enable_map_align`, `output_format`, `enable_variant_caller`, `enable_sv`, `enable_cnv`, `dragen_reports`, `error_strategy`, `additional_args`). Section 3 below derives the submitter's data-input and parameter shapes from this XML; treat the XML as the source of truth if they ever diverge.
+
 ## 1. Stage graph
 
 ```
@@ -14,15 +16,18 @@ PrepareIcaForDragenAnalysis (Cohort)
         │        └──► DownloadMd5Results
         │               └──► ValidateMd5Sums
         │                     └──► MakeFastqFileList     [per-SG CSVs; unchanged]
-        │                            └──► UploadFastqFileList   [unchanged]
+        │                                                  ✱ NOTE: UploadFastqFileList is REMOVED;
+        │                                                  the submitter concatenates per-SG CSVs into
+        │                                                  one combined per-batch CSV and uploads inline.
         │
         ├──► UploadDataToIca (SG)           [CRAM only — unchanged]
         │
         └──► ManageDragenPipeline (Cohort)  ✱ rewritten: batched submitter
-                ├──► ManageDragenMlr (Cohort)                  [per-SG submissions — unchanged]
+                ├──► ManageDragenMlr (Cohort)                  ✱ outputs land in parent batch's per-SG folder
                 ├──► DownloadCramFromIca (SG)                  ✱ resolves batch from state file
                 ├──► DownloadGvcfFromIca (SG)                  ✱ resolves batch from state file
-                ├──► DownloadMlrGvcfFromIca (SG)               ✱ resolves batch from state file (tmp output)
+                ├──► DownloadMlrGvcfFromIca (SG)               ✱ same get_ica_sample_folder helper
+                                                                 (MLR outputs live in the Dragen batch folder)
                 ├──► ReheaderMlrGvcf (SG)                      [unchanged; produces the final registered gVCF]
                 ├──► DownloadDataFromIca (SG)                  ✱ per-sample artefacts only
                 ├──► DownloadBatchArtefactsFromIca (Cohort)    ✱ NEW: passfail.json / summary.json / reports/
@@ -114,7 +119,7 @@ Final WES preset values (PoN file IDs, target BED IDs, etc.) land via subsequent
 
 1. Sort cohort SG names lexicographically (stable, deterministic across re-runs).
 2. Chunk into batches of `batch_size`. The final batch may be smaller.
-3. Batches numbered `0..N-1`. Zero-padded to width `max(2, len(str(N-1)))`.
+3. Batches numbered `0..N-1`. Zero-padded to width 4 (`:04d`) — large enough for 10000 batches (≈ 50000 SGs at `batch_size=5`) without lex-sort breakage. The plan deliberately picks fixed width 4 rather than variable `max(2, len(str(N-1)))` so the format is uniform across persisted files and human-readable paths.
 
 ### Per-batch ICA submission inputs
 
@@ -131,7 +136,7 @@ Final WES preset values (PoN file IDs, target BED IDs, etc.) land via subsequent
 
 ### Parameters
 
-The seven fixed top-level params (Section 2) + the assembled `additional_args` string. `user_reference = f"{cohort.name}-batch{batch_index:0Nd}_{ar_guid}_"`.
+The seven fixed top-level params (Section 2) + the assembled `additional_args` string. `user_reference = f"{cohort.name}-batch{batch_index:04d}_{ar_guid}_"`.
 
 ### Per-batch FASTQ list CSV
 
@@ -155,7 +160,7 @@ Existing path; schema extended:
 {
   "pipeline_id": "abc-…",
   "ar_guid": "xyz",
-  "user_reference": "COH0001-batch00_xyz_",
+  "user_reference": "COH0001-batch0000_xyz_",
   "batch_index": 0
 }
 ```
@@ -166,25 +171,31 @@ Downstream per-SG stages continue to look this up via `inputs.as_dict(stage=Mana
 
 ```json
 {
+  "schema_version": 1,
   "batch_size": 5,
   "n_batches": 4,
   "batches": [
     {
       "batch_index": 0,
-      "user_reference": "COH0001-batch00_xyz_",
+      "retry_generation": 0,
+      "user_reference": "COH0001-batch0000_xyz_",
       "pipeline_id": "abc-…",
       "ar_guid": "xyz",
       "analysis_output_folder_fid": "fol.…",
       "fastq_list_fid": "fil.…",
+      "cram_fids": null,
       "sg_names": ["CPG00001", "CPG00002", "CPG00003", "CPG00004", "CPG00005"],
       "status": "SUCCEEDED",
       "passfail_seen": true,
       "passfail": {"CPG00001": "Success", "CPG00002": "Fail", …},
-      "has_been_retried": false
+      "has_been_retried": false,
+      "error_strategy": "auto"
     }
   ]
 }
 ```
+
+`retry_generation` is `0` for initial batches and `1` for retry batches; resume logic keys off `retry_generation` + `status` (NOT `has_been_retried`) so in-flight retry batches survive a crash. `error_strategy` is recorded per batch because single-sample retry batches use `continue` (the unified pipeline's `auto` terminates single-sample runs).
 
 Authoritative cohort-level view used by the submitter loop, retry logic, and `DownloadBatchArtefactsFromIca`. Per-SG files are derived from this and exist for compatibility with the existing per-SG download-stage I/O contract.
 
@@ -196,13 +207,17 @@ ICA output path for an SG (used by every per-SG download stage):
 /{BUCKET_NAME}/{ica.data_prep.output_folder}/{user_reference}-{pipeline_id}/{sg_name}/
 ```
 
-Note: ICA names the analysis folder `<user_reference><pipeline_id>`; with `user_reference` ending in `_` we get `…_-<pipeline_id>` which matches the convention in today's code.
+Note: ICA names the analysis folder `<user_reference>-<pipeline_id>` — i.e. it inserts a single `-` between the submitted `user_reference` and the analysis `pipeline_id`. Because our `user_reference` ends with `_` (per Task 13 of the implementation plan: `f'{batch.name}_{ar_guid}_'`), the rendered folder name is `…_-<pipeline_id>`, which matches the convention in today's code. The explicit hyphen in the path-construction template above (and in `get_ica_sample_folder`, in `_on_succeeded`'s `analysis_folder_name`, and in the demo-bundle fixture) all reflect this single, consistent rule.
 
 ### Management flag semantics under batching
 
 - `monitor_previous=true`: reads `{cohort}_batches.json`, picks up monitoring of in-flight batches. If the file doesn't exist, raises.
-- `force_resubmit=true`: deletes `{cohort}_batches.json` and all per-SG state files, preserves AR GUID per batch (lifted up from per-SG), re-batches the cohort, submits fresh.
-- `cancel_cohort_run=true`: aborts every batch with a known `pipeline_id`, marks them `CANCELLED` in the batches file, deletes per-SG state files.
+- `force_resubmit=true`: deletes `{cohort}_batches.json` and all per-SG state files, preserves AR GUID per batch (lifted up from per-SG), re-batches the cohort, submits fresh. Deletion of the versioned per-SG state file is necessary here — it's the only way to achieve a clean state for the re-batch.
+- `cancel_cohort_run=true`: aborts every batch with a known `pipeline_id`, marks them `CANCELLED` in the batches file, **preserves the per-SG state files**. The versioned per-SG state file is the single source of per-SG truth and is not deleted unless forced; preserving it keeps AR GUIDs available for a future `force_resubmit=true` (the only sanctioned recovery path after cancel) to harvest and reuse. CANCELLED is a **terminal** state: the orchestrator raises `CohortCancelled` after cancel so the cohort run terminates cleanly; any subsequent rerun without `force_resubmit=true` also raises `CohortCancelled` as soon as ANY CANCELLED batch is detected (regardless of whether other batches succeeded). This unconditional terminal behaviour means downstream Download stages never read per-SG state files for cancelled SGs — they can't see an "analysis aborted" / "analysis not found" ICA error unless a future caller deliberately bypasses the orchestrator's guard.
+- Mutually exclusive: `force_resubmit=true` and `cancel_cohort_run=true` cannot be set together; the orchestrator raises a `ValueError` with a suggested cancel→wait→force_resubmit sequence.
+- Precedence: if both `force_resubmit=true` and `monitor_previous=true` are set, `force_resubmit` wins and `monitor_previous` is logged-as-ignored.
+
+In addition, the shared `manage_ica_pipeline_loop` mirrors its in-memory `FAILED_FINAL` and `CANCELLED` target transitions into `{cohort}_batches.json` via an `on_status_change` callback supplied by the DRAGEN orchestrator. Without this mirror, the loop's terminal transitions never reach the batches file, leaving entries stuck at `INPROGRESS` and breaking both the per-sample retry path's batch-level-FAILED branch and the resume-skip filter. MLR does not supply this callback (its targets have no equivalent cohort-level state file).
 
 ## 5. Per-SG download path resolution
 
@@ -221,7 +236,7 @@ def get_ica_sample_folder(pipeline_id_arguid_path: cpg_utils.Path, sg_name: str)
 |----------------------------------|-------------|-----------------------------------------|--------------------------------------------------------------------------|
 | `DownloadCramFromIca`            | SG          | `get_ica_sample_folder(state, sg)`      | `{sg}.cram`, `{sg}.cram.crai`                                            |
 | `DownloadGvcfFromIca`            | SG          | same                                    | `{sg}.hard-filtered.gvcf.gz`, `.tbi`                                     |
-| `DownloadMlrGvcfFromIca`         | SG          | MLR state file (unchanged)              | `{sg}.hard-filtered.recal.gvcf.gz`, `.tbi` (to `category='tmp'`)         |
+| `DownloadMlrGvcfFromIca`         | SG          | Dragen per-SG state file via `get_ica_sample_folder` (MLR outputs land in the parent Dragen batch's per-SG folder per the implementation plan) | `{sg}.hard-filtered.recal.gvcf.gz`, `.tbi` (to `category='tmp'`) |
 | `ReheaderMlrGvcf`                | SG          | n/a (consumes base + recal gVCF)        | produces final `recal_gvcf/{sg}.hard-filtered.recal.gvcf.gz[.tbi]` — registered as the cohort's final gVCF via `analysis_type='gvcf'`. Unchanged by migration. |
 | `DownloadDataFromIca`            | SG          | `get_ica_sample_folder(state, sg)`      | per-sample artefacts (everything in `<sample_id>/` minus CRAM/gVCF)      |
 | `DownloadBatchArtefactsFromIca`  | Cohort      | `{cohort}_batches.json`                 | `passfail.json`, `summary.json`, `reports/` — once per batch             |
@@ -262,7 +277,7 @@ class Batch:
 
     @property
     def name(self) -> str:
-        return f"{self.cohort_name}-batch{self.batch_index:02d}"
+        return f"{self.cohort_name}-batch{self.batch_index:04d}"
 ```
 
 `ProcessingTarget` widens to `Cohort | SequencingGroup | Batch`. Only `.name` is consumed by the loop, so no other protocol surface is needed.
@@ -308,7 +323,19 @@ Computed by `manage_dragen_pipeline.py` after the retry pass (not inside the sha
 - FASTQ mode: `MakeFastqFileList` writes RGSM = SG name in each row.
 - CRAM mode: the CRAM-to-BAM conversion preserves the RG line whose SM tag was set when the original CRAM was generated — this must be verified during implementation.
 
-The file is small; pulled via the existing `download_specific_files_from_ica` helper.
+Concrete example. For a batch of 5 SGs `[sample1, sample2, sample3, sample4, sample5]`:
+
+- FASTQ mode — the batch CSV row for `sample3` looks like:
+  ```
+  sample3,1,gs://.../sample3_L1_R1.fastq.gz,gs://.../sample3_L1_R2.fastq.gz,...
+  ```
+- DRAGEN writes `passfail.json` at the batch root, keyed by RGSM:
+  ```json
+  {"sample1":"Success","sample2":"Success","sample3":"Fail","sample4":"Success","sample5":"Success"}
+  ```
+- The orchestrator joins `sample_id → sg_name` directly (no munging) and records the per-SG verdict into `{cohort}_batches.json` via `BatchesFile.record_passfail`. Retry granularity is therefore per-SG: `sample3` alone forms a one-SG retry batch; `sample1/2/4/5` are not re-run. See §6 "Per-sample retry orchestration" for the retry-batch construction rules and the `error_strategy=continue` requirement for single-sample retry batches.
+
+The file is small (KB-scale); fetched in-memory by a new `fetch_passfail_from_ica` helper that resolves the file ID via `ica_api_utils.find_file_id_by_name` and reads the presigned URL with `requests.get(...).json()`. No GCS or disk staging — the dict is consumed directly by `BatchesFile.record_passfail`.
 
 ## 7. Validation plan
 
@@ -361,11 +388,15 @@ if [[ ${#SAMPLES[@]} -eq 0 ]]; then
     SAMPLES=("CPG00001" "CPG00002")
 fi
 
-USER_REFERENCE="${USER_REFERENCE:-test-WGS-2samples-}"
+USER_REFERENCE="${USER_REFERENCE:-COH0001-batch0000_test-guid_}"
 PIPELINE_ID="${PIPELINE_ID:-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}"
 FAILED_SAMPLES="${FAILED_SAMPLES:-}"
 
-ANALYSIS_DIR="${OUTPUT_ROOT}/analysis/${USER_REFERENCE}${PIPELINE_ID}"
+# Production convention: `{user_reference}-{pipeline_id}` — the hyphen is
+# required (user_reference ends with `_` so the folder is `…_-{pipeline_id}`).
+# Matches `get_ica_sample_folder` in `utils.py` so the synthetic bundle is a
+# faithful production-layout fixture.
+ANALYSIS_DIR="${OUTPUT_ROOT}/analysis/${USER_REFERENCE}-${PIPELINE_ID}"
 
 mkdir -p "${ANALYSIS_DIR}/reports/report_files/samples"
 mkdir -p "${ANALYSIS_DIR}/ica_logs/analysis"

@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<pd:pipeline xmlns:pd="xsd://www.illumina.com/ica/cp/pipelinedefinition" code="" version="1.0">
+    <pd:dataInputs>
+        <pd:dataInput code="crams" format="CRAM" type="FILE" required="false" multiValue="true">
+            <pd:label>CRAM Input Files</pd:label>
+            <pd:description>Input CRAM files. FASTQs should NOT be provided if CRAM files are selected.
+				When provided, the pipeline converts CRAM to BAM before running DRAGEN.
+			</pd:description>
+        </pd:dataInput>
+        <pd:dataInput code="cram_reference" format="UNKNOWN" type="DIRECTORY" required="false" multiValue="false">
+            <pd:label>CRAM Reference</pd:label>
+            <pd:description>A folder containing CRAM reference FA.GZ and FAI. Required when using CRAM input.This must be different from the DRAGEN Reference</pd:description>
+        </pd:dataInput>
+        <pd:dataInput code="fastqs" format="FASTQ" type="FILE" required="false" multiValue="true">
+            <pd:label>FASTQ Input Files</pd:label>
+            <pd:description>Input FASTQ files. CRAM should NOT be provided if FASTQ files are selected. Multiple samples may be provided. If a supplementary FASTQ list is not provided, the
+				pipeline will attempt to determine which FASTQ files belong together via the naming scheme. The RGSM
+				will be taken as the name up to "_SX" and the suffix after "_RX." "_LXXX" in the filename denotes the
+				lane number and "_RX" to denotes the read number. If either is omitted, lane 1 and read 1 will be used
+				in the FASTQ list. The tool will automatically write a FASTQ list from all files provided and process
+				each sample.
+			</pd:description>
+        </pd:dataInput>
+        <pd:dataInput code="fastq_list" format="CSV" type="FILE" required="false" multiValue="false">
+            <pd:label>FASTQ List CSV (optional)</pd:label>
+            <pd:description>Optional FASTQ list CSV to override auto-generated groupings. Use filename only (not full path). 
+                FASTQ files must still be provided via the FASTQs field.
+				Columns: RGID, RGSM, RGLB, Lane, Read1, Read2.
+			</pd:description>
+        </pd:dataInput>
+        <pd:dataInput code="ref_tar" format="TAR" type="FILE" required="true" multiValue="false">
+            <pd:label>DRAGEN Reference</pd:label>
+            <pd:description>DRAGEN Reference TAR</pd:description>
+        </pd:dataInput>
+        <pd:dataInput code="qc_coverage_region_beds" format="BED" type="FILE" required="false" multiValue="true">
+            <pd:label>QC Coverage Region BED Files (up to 3)</pd:label>
+            <pd:description>Up to 3 BED files can be provided for the --qc-coverage-region-n option.
+				Files are automatically assigned to --qc-coverage-region-1, --qc-coverage-region-2,
+				and --qc-coverage-region-3 based on the order they are provided.
+			</pd:description>
+        </pd:dataInput>
+        <pd:dataInput code="qc_cross_cont_vcf" format="VCF" type="FILE" required="false" multiValue="false">
+            <pd:label>QC Cross Contamination VCF</pd:label>
+            <pd:description>VCF or VCF.GZ file for cross contamination QC.
+				Corresponds to DRAGEN argument "--qc-cross-cont-vcf".
+			</pd:description>
+        </pd:dataInput>
+        <pd:dataInput code="additional_files" format="UNKNOWN" type="FILE" required="false" multiValue="true">
+            <pd:label>Additional Files</pd:label>
+            <pd:description> Additional files to be input to DRAGEN. The file type must be set to "UNKNOWN." 
+                Reference uploaded files by their filename in "Additional DRAGEN Args".
+				WES examples:
+				  Upload target.bed, then add: --vc-target-bed target.bed.
+				  Upload cnv_pon.txt.gz, then add: --cnv-combined-counts cnv_pon.txt.gz.
+				WGS examples:
+				  Upload pop_snp.vcf.gz, then add: --cnv-population-b-allele-vcf pop_snp.vcf.gz.
+			</pd:description>
+        </pd:dataInput>
+    </pd:dataInputs>
+    <pd:steps>
+        <pd:step execution="MANDATORY" code="General">
+            <pd:label>General Options</pd:label>
+            <pd:description locked="false"></pd:description>
+            <pd:tool code="generalparameters">
+                <pd:label locked="false"></pd:label>
+                <pd:description locked="false"></pd:description>
+                <pd:parameter code="dragen_reports" minValues="0" maxValues="1" classification="USER">
+                    <pd:label>Enable DRAGEN Reports</pd:label>
+                    <pd:description>DRAGEN Reports will output an HTML file, "report.html" that displays the various
+						metrics.
+					</pd:description>
+                    <pd:optionsType>
+                        <pd:option>true</pd:option>
+                        <pd:option>false</pd:option>
+                    </pd:optionsType>
+                    <pd:value>true</pd:value>
+                </pd:parameter>
+                <pd:parameter code="additional_args" minValues="0" maxValues="1" classification="USER">
+                    <pd:label>Additional DRAGEN Args</pd:label>
+                    <pd:description>Additional DRAGEN args can be provided here. 
+                    If additional files are needed, please add them to the "Additional Files" input.
+                    Reference uploaded files by filename.
+					</pd:description>
+                    <pd:stringType/>
+                    <pd:value></pd:value>
+                </pd:parameter>
+            </pd:tool>
+        </pd:step>
+        <pd:step execution="MANDATORY" code="map_align">
+            <pd:label>Map Align Options</pd:label>
+            <pd:description locked="false"></pd:description>
+            <pd:tool code="map_align_options">
+                <pd:label locked="false"></pd:label>
+                <pd:description locked="false"></pd:description>
+                <pd:parameter code="enable_map_align" minValues="0" maxValues="1" classification="USER">
+                    <pd:label>Enable Map/Align</pd:label>
+                    <pd:description>Corresponds to DRAGEN argument "--enable-map-align".
+						When enabled, also sets --enable-map-align-output true
+						and --enable-duplicate-marking true.
+					</pd:description>
+                    <pd:optionsType>
+                        <pd:option>true</pd:option>
+                        <pd:option>false</pd:option>
+                    </pd:optionsType>
+                    <pd:value>true</pd:value>
+                </pd:parameter>
+                <pd:parameter code="output_format" minValues="0" maxValues="1" classification="USER">
+                    <pd:label>Map/Align Output Format</pd:label>
+                    <pd:description>Corresponds to DRAGEN argument "--output-format"</pd:description>
+                    <pd:optionsType>
+                        <pd:option>BAM</pd:option>
+                        <pd:option>CRAM</pd:option>
+                        <pd:option>SAM</pd:option>
+                    </pd:optionsType>
+                    <pd:value>CRAM</pd:value>
+                </pd:parameter>
+            </pd:tool>
+        </pd:step>
+        <pd:step execution="MANDATORY" code="callers">
+            <pd:label>Variant Caller Options</pd:label>
+            <pd:description>Common variant callers shared between WGS and WES.</pd:description>
+            <pd:tool code="caller_options">
+                <pd:label></pd:label>
+                <pd:description></pd:description>
+                <pd:parameter code="enable_variant_caller" minValues="0" maxValues="1" classification="USER">
+                    <pd:label>Enable Small Variant Caller</pd:label>
+                    <pd:description>Corresponds to DRAGEN argument "--enable-variant-caller"</pd:description>
+                    <pd:optionsType>
+                        <pd:option>true</pd:option>
+                        <pd:option>false</pd:option>
+                    </pd:optionsType>
+                    <pd:value>true</pd:value>
+                </pd:parameter>
+                <pd:parameter code="enable_sv" minValues="0" maxValues="1" classification="USER">
+                    <pd:label>Enable SV Calling</pd:label>
+                    <pd:description>Corresponds to DRAGEN argument "--enable-sv".
+						For WES, also add "--sv-exome true" and "--sv-call-regions-bed" via Additional DRAGEN Args.
+					</pd:description>
+                    <pd:optionsType>
+                        <pd:option>true</pd:option>
+                        <pd:option>false</pd:option>
+                    </pd:optionsType>
+                    <pd:value>true</pd:value>
+                </pd:parameter>
+                <pd:parameter code="enable_cnv" minValues="0" maxValues="1" classification="USER">
+                    <pd:label>Enable CNV Calling</pd:label>
+                    <pd:description>Corresponds to DRAGEN argument "--enable-cnv".
+						Example for WGS, add "--cnv-enable-self-normalization true" via Additional DRAGEN Args.
+						Example for WES, add "--cnv-target-bed" and "--cnv-combined-counts pon.target.counts" via Additional DRAGEN Args.
+					</pd:description>
+                    <pd:optionsType>
+                        <pd:option>true</pd:option>
+                        <pd:option>false</pd:option>
+                    </pd:optionsType>
+                    <pd:value>true</pd:value>
+                </pd:parameter>
+                <pd:parameter code="error_strategy" minValues="0" maxValues="1" classification="USER">
+                    <pd:label>DRAGEN Error Strategy</pd:label>
+                    <pd:description>Controls pipeline behavior when a DRAGEN sample fails. 'auto' (default): terminates on single-sample runs, continues processing remaining samples on multi-sample runs. 'ignore': always continues. 'terminate': always stops on first failure.
+					</pd:description>
+                    <pd:optionsType>
+                        <pd:option>auto</pd:option>
+                        <pd:option>ignore</pd:option>
+                        <pd:option>terminate</pd:option>
+                    </pd:optionsType>
+                    <pd:value>auto</pd:value>
+                </pd:parameter>
+            </pd:tool>
+        </pd:step>
+    </pd:steps>
+</pd:pipeline>
