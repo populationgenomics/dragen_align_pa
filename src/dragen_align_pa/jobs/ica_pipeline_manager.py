@@ -19,10 +19,11 @@ from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import config_retrieve, try_get_ar_guid
 from loguru import logger
 
+from dragen_align_pa.batches import Batch
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline
 from dragen_align_pa.utils import delete_pipeline_id_file
 
-ProcessingTarget: TypeAlias = Cohort | SequencingGroup
+ProcessingTarget: TypeAlias = Cohort | SequencingGroup | Batch
 
 
 class PipelineStatus(Enum):
@@ -67,12 +68,14 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
     submit_function_factory: Callable[[str], Callable[[], str]],
     allow_retry: bool,
     sleep_time_seconds: int,
+    on_succeeded: Callable[[MonitoredTarget], None] | None = None,
+    on_status_change: Callable[[MonitoredTarget, PipelineStatus], None] | None = None,
 ) -> None:
     """
     Generic loop to manage ICA pipeline execution for a cohort.
 
     Args:
-        targets_to_process: The list of targets (Cohort or SequencingGroup) to process.
+        targets_to_process: The list of targets (Cohort, SequencingGroup, or Batch) to process.
         outputs: The outputs dictionary for the stage.
         api_root: The ICA API root endpoint.
         pipeline_name: Name of the pipeline (e.g., "Dragen", "MLR") for logging.
@@ -89,6 +92,50 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                                  pipeline_id (str).
         allow_retry: Whether to retry a failed pipeline once.
         sleep_time_seconds: Time to sleep between polling loops.
+        on_succeeded: Optional callback invoked when a target transitions to
+                      SUCCEEDED. The callback runs FIRST; only after it returns
+                      successfully is `target.set_status(SUCCEEDED)` and the
+                      success marker file written. If the callback raises, the
+                      target stays INPROGRESS, the next poll cycle re-fires the
+                      callback. This makes the SUCCEEDED transition transactional:
+                      the orchestrator never persists "the batch finished" if
+                      post-success bookkeeping (e.g. downloading passfail.json)
+                      failed.
+
+                      Per-batch `error_strategy` is plumbed via the
+                      `submit_function_factory` closure: the DRAGEN orchestrator
+                      builds a factory that captures the per-batch error_strategy
+                      recorded in `{cohort}_batches.json`, so retry batches with
+                      `error_strategy='continue'` submit correctly without
+                      changing the factory's `Callable[[str], Callable[[], str]]`
+                      signature. MLR's factory ignores this dimension entirely.
+
+                      Note: `on_succeeded` receives the `MonitoredTarget` wrapper,
+                      not the wrapped `Batch` / `SequencingGroup`. Access
+                      `monitored.target.sg_names` (for `Batch`) to reach the
+                      underlying domain object.
+
+                      MLR omits `on_succeeded` — its behaviour is unchanged.
+
+        on_status_change: Optional notification callback invoked when a target
+                      reaches a TERMINAL non-success status (`FAILED_FINAL` or
+                      `CANCELLED`). Fires AFTER `target.set_status(new_status)`,
+                      so it's pure notification — exceptions are caught and
+                      logged but do not roll back the transition. DRAGEN uses
+                      this to mirror the loop's in-memory terminal status into
+                      `{cohort}_batches.json` (without this, the batches file
+                      would forever say `INPROGRESS` for batches that ICA
+                      reported as failed (mapped to `PipelineStatus.FAILED_FINAL`)
+                      or that the operator cancelled via `cancel_cohort_run`,
+                      breaking the per-sample retry
+                      path's `elif b['status'] == 'FAILED':` branch).
+                      `SUCCEEDED` is intentionally NOT routed through this
+                      callback — that transition is transactional and goes
+                      through `on_succeeded` instead.
+
+                      MLR omits this callback (default `None`); its in-memory
+                      target state is sufficient because MLR has no equivalent
+                      cohort-level state file.
     """
     if not targets_to_process:
         raise ValueError(f'Cannot run {pipeline_name} pipeline management loop with an empty list of targets.')
@@ -147,6 +194,22 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
     def is_finished(target: MonitoredTarget) -> bool:
         return target.status in {PipelineStatus.SUCCEEDED, PipelineStatus.CANCELLED, PipelineStatus.FAILED_FINAL}
 
+    def _fire_status_change(target: MonitoredTarget, new_status: PipelineStatus) -> None:
+        """Best-effort notification of a terminal transition. Exceptions are
+        logged and swallowed — the in-memory transition has already happened
+        and we do NOT want to roll it back. Distinct from `on_succeeded`
+        (which is transactional for the SUCCEEDED transition)."""
+        if on_status_change is None:
+            return
+        try:
+            on_status_change(target, new_status)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                f'on_status_change callback failed for {target.name} '
+                f'(new_status={new_status.name}, pipeline {target.pipeline_id}): {exc}. '
+                f'Continuing — in-memory transition stands.',
+            )
+
     while not all(is_finished(target) for target in monitored_targets):
         for target in monitored_targets:
             if is_finished(target):
@@ -174,6 +237,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                 )
                 delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
                 target.set_status(PipelineStatus.CANCELLED)
+                _fire_status_change(target, PipelineStatus.CANCELLED)
             else:
                 submit_callable: Callable[[], str] = submit_function_factory(target_name)
 
@@ -197,6 +261,23 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                     target.set_status(new_status=PipelineStatus.INPROGRESS)
 
                 elif pipeline_status == 'SUCCEEDED':
+                    # Transactional SUCCEEDED transition: run the post-success callback
+                    # FIRST (e.g. fetch passfail.json + persist into the cohort batches
+                    # file). Only when it returns cleanly do we mark the target SUCCEEDED
+                    # and write the success marker. If the callback raises, leave state
+                    # as INPROGRESS so the next poll cycle re-fires it — this prevents
+                    # divergent state where the loop has set SUCCEEDED but the caller's
+                    # side-state (e.g. batches.json) was not updated.
+                    if on_succeeded is not None:
+                        try:
+                            on_succeeded(target)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.error(
+                                f'on_succeeded callback failed for {target_name} '
+                                f'(pipeline {target.pipeline_id}): {exc}. '
+                                f'Leaving status INPROGRESS so the next poll re-fires.',
+                            )
+                            continue
                     target.set_status(new_status=PipelineStatus.SUCCEEDED)
                     logger.info(f'{pipeline_name} pipeline {target.pipeline_id} has succeeded for {target_name}')
                     pipeline_success_file = outputs[
@@ -212,6 +293,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                     target.set_status(new_status=PipelineStatus.CANCELLED)
                     target.pipeline_id = None
                     delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
+                    _fire_status_change(target, PipelineStatus.CANCELLED)
 
                 elif pipeline_status in ['FAILED', 'FAILEDFINAL']:
                     logger.error(f'{pipeline_name} pipeline {target.pipeline_id} has failed for {target_name}.')
@@ -229,6 +311,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                             f.write(json.dumps({'pipeline_id': target.pipeline_id, 'ar_guid': target.ar_guid}))
                     else:
                         target.set_status(PipelineStatus.FAILED_FINAL)
+                        _fire_status_change(target, PipelineStatus.FAILED_FINAL)
                         logger.error(
                             f'{target_name} failed {pipeline_name} pipeline {target.pipeline_id} and '
                             f'retry is not allowed or already attempted.'
