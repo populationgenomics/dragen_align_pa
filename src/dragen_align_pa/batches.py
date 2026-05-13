@@ -190,10 +190,6 @@ class BatchesFile:
                 )
         self.batch_size = data['batch_size']
         self.batches = data['batches']
-        # Migrate old rows that lack `retried_sgs` (defensive: tests / fixtures may load
-        # files written by older code paths). Don't touch other fields.
-        for b in self.batches:
-            b.setdefault('retried_sgs', [])
 
     def write(self) -> None:
         """Single-PUT atomic write — GCS object PUTs are atomic per object.
