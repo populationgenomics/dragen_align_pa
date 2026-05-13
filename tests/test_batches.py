@@ -276,3 +276,19 @@ def test_initialise_mixed_batch_sizes_apply_strategy_per_batch(tmp_path: Path):
     ])
     assert bf.batches[0]['error_strategy'] == 'auto'
     assert bf.batches[1]['error_strategy'] == 'continue'
+
+
+def test_successful_sg_names_excludes_cancelled_batches(tmp_path: Path):
+    """A batch that records passfail then immediately gets CANCELLED must
+    NOT appear in successful_sg_names(). Otherwise the orchestrator's
+    resume-after-cancel guard fires for SGs that already succeeded —
+    `failed_sg_names` already excludes CANCELLED for the symmetric reason."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(batch_size=5, batches=[
+        Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
+    ])
+    bf.record_passfail(0, {'CPG_A': 'Success', 'CPG_B': 'Success'})
+    bf.record_status(0, 'CANCELLED')
+    assert bf.successful_sg_names() == []
+    assert sorted(bf.cancelled_sg_names()) == ['CPG_A', 'CPG_B']

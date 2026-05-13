@@ -330,15 +330,22 @@ class BatchesFile:
         ]
 
     def successful_sg_names(self) -> list[str]:
-        """SGs explicitly marked Success in any batch's passfail.
+        """SGs explicitly marked Success in any non-CANCELLED batch's passfail.
 
         Asymmetric with `failed_sg_names` by design: success requires positive
         confirmation from `passfail.json`, whereas batch-level FAILED implies
         Fail for every SG in the batch. An SG only appears here once its
         batch's `passfail_seen` is True.
+
+        CANCELLED batches are excluded for symmetry with `failed_sg_names` —
+        if a batch records passfail then is cancelled, those SGs report only
+        through `cancelled_sg_names()` so the resume-after-cancel guard
+        doesn't double-count them.
         """
         successful: list[str] = []
         for b in self.batches:
+            if b['status'] == 'CANCELLED':
+                continue
             if b['passfail']:
                 successful.extend(sg for sg, status in b['passfail'].items() if status == 'Success')
         return successful
