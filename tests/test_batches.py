@@ -296,9 +296,10 @@ def test_successful_sg_names_excludes_cancelled_batches(tmp_path: Path):
 
 def test_find_batch_for_sg_robust_to_out_of_order_storage(tmp_path: Path):
     """Defend the documented contract ('most recent batch wins') against an
-    out-of-order self.batches list. The current implementation iterates and
-    overwrites — correct only if batches are in ascending batch_index order.
-    A future refactor or hand-edit could break that silently."""
+    out-of-order self.batches list. The previous implementation iterated
+    and overwrote, which was correct only if batches were stored in
+    ascending batch_index order. A future refactor or hand-edit could
+    break that silently."""
     path = tmp_path / 'COH0001_batches.json'
     bf = BatchesFile(path=path)
     bf.initialise(batch_size=5, batches=[

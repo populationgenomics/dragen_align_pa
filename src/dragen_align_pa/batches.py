@@ -333,10 +333,10 @@ class BatchesFile:
         Fail for every SG in the batch. An SG only appears here once its
         batch's `passfail_seen` is True.
 
-        CANCELLED batches are excluded for symmetry with `failed_sg_names` —
-        if a batch records passfail then is cancelled, those SGs report only
-        through `cancelled_sg_names()` so the resume-after-cancel guard
-        doesn't double-count them.
+        CANCELLED batches are excluded so a batch that records passfail then
+        is cancelled reports only through `cancelled_sg_names()` — this matches
+        `failed_sg_names`'s exclusion of CANCELLED and prevents the
+        resume-after-cancel guard from double-counting them.
         """
         successful: list[str] = []
         for b in self.batches:

@@ -5,6 +5,7 @@ import pytest
 
 from dragen_align_pa.batches import Batch
 from dragen_align_pa.jobs import submit_dragen_batch
+from dragen_align_pa.jobs.submit_dragen_batch import _MAX_COVERAGE_REGION_BEDS
 
 
 def _config_factory(sequencing_type='genome', preset_args='', user_args=''):
@@ -142,9 +143,6 @@ def test_run_rejects_mixed_cram_and_fastq_inputs():
         )
 
 
-_MAX_COVERAGE_REGION_BEDS = 3
-
-
 def test_build_common_data_inputs_rejects_too_many_coverage_beds(monkeypatch):
     """Design spec §3 caps qc_coverage_region_beds at 3 entries. A
     misconfigured TOML with 4+ would silently send them all to ICA.
@@ -183,8 +181,10 @@ def test_build_common_data_inputs_accepts_max_coverage_beds(monkeypatch):
         'config_retrieve',
         lambda key, default=None: cfg.get(tuple(key), default),
     )
-    # Just confirm no exception — list shape is covered by downstream tests.
-    submit_dragen_batch._build_common_data_inputs()
+    inputs = submit_dragen_batch._build_common_data_inputs()
+    coverage_inputs = [i for i in inputs if i['parameterCode'] == 'qc_coverage_region_beds']
+    assert len(coverage_inputs) == 1
+    assert list(coverage_inputs[0]['dataIds']) == bed_ids
 
 
 def _make_fastq_ids_path(content: str, tmp_path):

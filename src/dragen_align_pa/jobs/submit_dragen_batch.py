@@ -93,11 +93,14 @@ def _build_additional_args() -> str:
     for source_name, source in (('preset', preset_args), ('user', user_args)):
         placeholders = _PRESET_PLACEHOLDER_RE.findall(source)
         if placeholders:
+            config_path = (
+                f'dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}'
+                if source_name == 'preset'
+                else 'dragen_align_pa.manage_dragen_pipeline.user'
+            )
             raise ValueError(
                 f'DRAGEN additional_args {source_name} string contains unfilled placeholders '
-                f'{placeholders} (config path: '
-                f'[dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}] / '
-                f'[dragen_align_pa.manage_dragen_pipeline.user]). '
+                f'{placeholders} (config path: [{config_path}]). '
                 f'Fill them in your config before running.',
             )
 
