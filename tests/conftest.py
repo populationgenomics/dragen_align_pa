@@ -13,6 +13,17 @@ Per-test overrides should monkeypatch `dragen_align_pa.utils.config_retrieve`
 
 import cpg_utils.config
 
+# Originals captured so pytest_sessionfinish can restore them at the end of
+# the run. We MUST monkeypatch at module-import time (not in a session-scoped
+# autouse fixture) because dragen_align_pa.constants reads cpg_utils.config
+# at its own import time, which happens during pytest collection before any
+# fixture can run. The trade-off is that the patch is not auto-bracketed by
+# pytest's fixture machinery — pytest_sessionfinish below provides explicit
+# bracketing instead.
+_ORIGINAL_CONFIG_RETRIEVE = cpg_utils.config.config_retrieve
+_ORIGINAL_OUTPUT_PATH = cpg_utils.config.output_path
+
+
 _TEST_CONFIG: dict[tuple, object] = {
     ('workflow', 'reads_type'): 'cram',
     # Match the production TOML value verbatim so any future test that doesn't
@@ -69,3 +80,15 @@ def demo_bundle_with_failure(tmp_path: Path) -> Path:
         pipeline_id=DEMO_PIPELINE_ID,
         failed_samples=('CPG00002',),
     )
+
+
+def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
+    """Restore the originals captured at module import.
+
+    This is cosmetic for a one-shot test run (the process exits anyway), but
+    makes the monkeypatch boundary explicit and discoverable: anyone tracing
+    `cpg_utils.config.config_retrieve` can find both the install and the
+    teardown in this file.
+    """
+    cpg_utils.config.config_retrieve = _ORIGINAL_CONFIG_RETRIEVE  # type: ignore[assignment]
+    cpg_utils.config.output_path = _ORIGINAL_OUTPUT_PATH  # type: ignore[assignment]
