@@ -121,3 +121,48 @@ def test_run_rejects_mixed_cram_and_fastq_inputs():
             fastq_ids_path=_BoomPath(),  # type: ignore[arg-type]
             per_sg_fastq_list_paths={'CPG_A': _BoomPath()},  # type: ignore[dict-item]
         )
+
+
+_MAX_COVERAGE_REGION_BEDS = 3
+
+
+def test_build_common_data_inputs_rejects_too_many_coverage_beds(monkeypatch):
+    """Design spec §3 caps qc_coverage_region_beds at 3 entries. A
+    misconfigured TOML with 4+ would silently send them all to ICA.
+    Mock just enough config_retrieve to drive the validation path."""
+    bed_ids = [f'fil.{i:07d}' for i in range(_MAX_COVERAGE_REGION_BEDS + 1)]
+    cfg = {
+        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
+        ('ica', 'qc', 'coverage_region_beds'): bed_ids,
+        ('ica', 'qc', 'cross_cont_vcf'): None,
+        ('workflow', 'sequencing_type'): 'genome',
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
+    }
+    monkeypatch.setattr(
+        submit_dragen_batch,
+        'config_retrieve',
+        lambda key, default=None: cfg.get(tuple(key), default),
+    )
+    with pytest.raises(ValueError, match='coverage_region_beds'):
+        submit_dragen_batch._build_common_data_inputs()
+
+
+def test_build_common_data_inputs_accepts_max_coverage_beds(monkeypatch):
+    """3 entries is the documented maximum — must not raise."""
+    bed_ids = [f'fil.{i:07d}' for i in range(_MAX_COVERAGE_REGION_BEDS)]
+    cfg = {
+        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
+        ('ica', 'qc', 'coverage_region_beds'): bed_ids,
+        ('ica', 'qc', 'cross_cont_vcf'): None,
+        ('workflow', 'sequencing_type'): 'genome',
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
+    }
+    monkeypatch.setattr(
+        submit_dragen_batch,
+        'config_retrieve',
+        lambda key, default=None: cfg.get(tuple(key), default),
+    )
+    # Just confirm no exception — list shape is covered by downstream tests.
+    submit_dragen_batch._build_common_data_inputs()

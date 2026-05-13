@@ -51,6 +51,8 @@ _COMMON_ADDITIONAL_ARGS = (
 
 _PRESET_PLACEHOLDER_RE = re.compile(r'<[a-zA-Z][a-zA-Z0-9_-]*>')
 
+_MAX_COVERAGE_REGION_BEDS = 3
+
 
 def _build_additional_args() -> str:
     """Concatenate common + sequencing-type preset + user override into one args string.
@@ -316,6 +318,12 @@ def _build_fastq_data_inputs(
 def _build_common_data_inputs() -> list[AnalysisDataInput]:
     dragen_ht_id: str = config_retrieve(['ica', 'pipelines', 'dragen_ht_id'])
     coverage_region_beds: list[str] = config_retrieve(['ica', 'qc', 'coverage_region_beds'], default=[])
+    if len(coverage_region_beds) > _MAX_COVERAGE_REGION_BEDS:
+        raise ValueError(
+            f'ica.qc.coverage_region_beds has {len(coverage_region_beds)} entries; '
+            f'DRAGEN supports at most {_MAX_COVERAGE_REGION_BEDS} (design spec §3). '
+            f'Trim the list in your TOML.',
+        )
     cross_cont_vcf: str | None = config_retrieve(['ica', 'qc', 'cross_cont_vcf'], default=None)
 
     sequencing_type = config_retrieve(['workflow', 'sequencing_type'])
