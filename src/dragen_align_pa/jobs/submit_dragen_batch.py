@@ -297,10 +297,29 @@ def _build_fastq_data_inputs(
     """Construct ICA data inputs for a FASTQ-mode batch.
 
     Returns (data_inputs, fastq_list_fid). The per-batch combined CSV is uploaded inline.
+
+    Duplicate handling: a FASTQ filename may appear in {cohort}_fastq_ids.txt
+    more than once (re-upload after a transient failure leaves both rows in
+    the manifest, with distinct ICA IDs). We deterministically keep the LAST
+    row per fastq_name (most recent upload wins) and log when collapsing —
+    sending all matched IDs would push duplicates into dataIds and silently
+    submit the wrong/stale file.
     """
     sg_fastq_names, combined_csv = _load_per_sg_fastq_lists(batch.sg_names, per_sg_fastq_list_paths)
     fastq_ids_df = _read_fastq_ids(fastq_ids_path)
     matched = fastq_ids_df[fastq_ids_df['fastq_name'].isin(sg_fastq_names)]
+
+    # Collapse re-upload duplicates: keep the last row per fastq_name.
+    dupes = matched[matched.duplicated(subset='fastq_name', keep=False)]
+    if not dupes.empty:
+        for name, group in dupes.groupby('fastq_name'):
+            ids = group['ica_id'].tolist()
+            logger.warning(
+                f'FASTQ name {name!r} appears {len(ids)} times in {fastq_ids_path}; '
+                f'keeping most recent (last) ICA ID, discarding {ids[:-1]}.',
+            )
+    matched = matched.drop_duplicates(subset='fastq_name', keep='last')
+
     fastq_ica_ids = matched['ica_id'].tolist()
     if len(fastq_ica_ids) != len(sg_fastq_names):
         missing = set(sg_fastq_names) - set(matched['fastq_name'])

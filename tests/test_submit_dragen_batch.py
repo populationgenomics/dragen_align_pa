@@ -1,3 +1,6 @@
+from unittest.mock import MagicMock
+
+import pandas as pd
 import pytest
 
 from dragen_align_pa.batches import Batch
@@ -182,3 +185,65 @@ def test_build_common_data_inputs_accepts_max_coverage_beds(monkeypatch):
     )
     # Just confirm no exception — list shape is covered by downstream tests.
     submit_dragen_batch._build_common_data_inputs()
+
+
+def _make_fastq_ids_path(content: str, tmp_path):
+    p = tmp_path / 'COH0001_fastq_ids.txt'
+    p.write_text(content)
+    return p
+
+
+def _make_per_sg_fastq_csv(tmp_path, sg_name: str, read1: list[str], read2: list[str]):
+    p = tmp_path / f'{sg_name}_fastq_list.csv'
+    df = pd.DataFrame({
+        'RGID': [f'rg{i}' for i in range(len(read1))],
+        'RGSM': [sg_name] * len(read1),
+        'RGLB': ['lib1'] * len(read1),
+        'Lane': list(range(1, len(read1) + 1)),
+        'Read1File': read1,
+        'Read2File': read2,
+    })
+    df.to_csv(p, index=False)
+    return p
+
+
+def test_build_fastq_data_inputs_handles_duplicate_fastq_rows(tmp_path, monkeypatch):
+    """A re-uploaded FASTQ may appear in {cohort}_fastq_ids.txt twice (old
+    + new ICA file IDs). The submitter must deterministically pick the
+    most recent (last) ID and not silently send both — and must not
+    spuriously fail the count check."""
+    fastq_ids_path = _make_fastq_ids_path(
+        'fil.OLD_R1   CPG_A_R1.fastq.gz\n'
+        'fil.OLD_R2   CPG_A_R2.fastq.gz\n'
+        'fil.NEW_R1   CPG_A_R1.fastq.gz\n'  # re-upload duplicate
+        'fil.NEW_R2   CPG_A_R2.fastq.gz\n',  # re-upload duplicate
+        tmp_path,
+    )
+    per_sg_csv = _make_per_sg_fastq_csv(
+        tmp_path, 'CPG_A',
+        read1=['CPG_A_R1.fastq.gz'], read2=['CPG_A_R2.fastq.gz'],
+    )
+    monkeypatch.setattr(
+        submit_dragen_batch, 'config_retrieve',
+        lambda key, default=None: {('ica', 'data_prep', 'output_folder'): 'test/'}.get(tuple(key), default),
+    )
+    monkeypatch.setattr(submit_dragen_batch, 'BUCKET_NAME', 'test-bucket')
+    # Stub the upload helper — duplicate detection happens before upload.
+    monkeypatch.setattr(
+        submit_dragen_batch, '_upload_per_batch_fastq_list',
+        lambda **kwargs: 'fil.uploaded_csv',
+    )
+
+    batch = Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
+    data_inputs, _fastq_list_fid = submit_dragen_batch._build_fastq_data_inputs(
+        api_instance=MagicMock(),
+        project_id='proj',
+        batch=batch,
+        fastq_ids_path=fastq_ids_path,
+        per_sg_fastq_list_paths={'CPG_A': per_sg_csv},
+    )
+    fastq_input = next(di for di in data_inputs if di['parameterCode'] == 'fastqs')
+    ica_ids = list(fastq_input['dataIds'])
+    # Most-recent-wins: NEW IDs preserved, OLD discarded.
+    assert sorted(ica_ids) == ['fil.NEW_R1', 'fil.NEW_R2']
+    assert len(set(ica_ids)) == len(ica_ids), 'duplicate ICA IDs leaked into dataIds'
