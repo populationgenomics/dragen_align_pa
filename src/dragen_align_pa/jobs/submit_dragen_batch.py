@@ -375,6 +375,28 @@ def run(
        projections of batches.json) → `batches.json` (the commit point).
        See Task 15 for the rationale.
     """
+    # Fail-fast input-mode validation, BEFORE any GCS / ICA / secrets IO,
+    # so misuse surfaces cheaply at the orchestrator layer. Exactly one of
+    # CRAM mode (cram_state_paths) or FASTQ mode (fastq_ids_path +
+    # per_sg_fastq_list_paths) must be populated.
+    cram_mode = cram_state_paths is not None
+    fastq_mode = fastq_ids_path is not None or per_sg_fastq_list_paths is not None
+    if cram_mode and fastq_mode:
+        raise ValueError(
+            f'submit_dragen_batch: batch {batch.name} received both CRAM and FASTQ inputs; '
+            f'pass exactly one of (cram_state_paths) or (fastq_ids_path + per_sg_fastq_list_paths).',
+        )
+    if not cram_mode and not fastq_mode:
+        raise ValueError(
+            f'submit_dragen_batch: batch {batch.name} received no valid input mode; '
+            f'pass exactly one of (cram_state_paths) or (fastq_ids_path + per_sg_fastq_list_paths).',
+        )
+    if fastq_mode and (fastq_ids_path is None or per_sg_fastq_list_paths is None):
+        raise ValueError(
+            f'submit_dragen_batch: batch {batch.name} FASTQ mode requires BOTH '
+            f'fastq_ids_path and per_sg_fastq_list_paths.',
+        )
+
     secrets = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
 
@@ -419,7 +441,10 @@ def run(
             specific_data_inputs, cram_fids = _build_cram_data_inputs(
                 batch=batch, per_sg_state_paths=cram_state_paths,
             )
-        elif fastq_ids_path is not None and per_sg_fastq_list_paths is not None:
+        else:
+            # FASTQ mode: both paths are guaranteed non-None by the
+            # top-of-function validation.
+            assert fastq_ids_path is not None and per_sg_fastq_list_paths is not None
             specific_data_inputs, fastq_list_fid = _build_fastq_data_inputs(
                 api_instance=data_api,
                 project_id=project_id,
@@ -427,8 +452,6 @@ def run(
                 fastq_ids_path=fastq_ids_path,
                 per_sg_fastq_list_paths=per_sg_fastq_list_paths,
             )
-        else:
-            raise ValueError(f'submit_dragen_batch: no valid input mode for batch {batch.name}')
 
         body = CreateNextflowAnalysis(
             userReference=user_reference,

@@ -1,5 +1,6 @@
 import pytest
 
+from dragen_align_pa.batches import Batch
 from dragen_align_pa.jobs import submit_dragen_batch
 
 
@@ -84,3 +85,39 @@ def test_build_additional_args_rejects_invalid_sequencing_type(monkeypatch):
     monkeypatch.setattr(submit_dragen_batch, 'config_retrieve', lambda key, default=None: 'transcriptome')
     with pytest.raises(ValueError, match='must be'):
         submit_dragen_batch._build_additional_args()
+
+
+def test_run_rejects_no_input_mode_before_any_io():
+    """Calling run() with both CRAM and FASTQ paths None must raise BEFORE
+    any GCS read. We verify by passing an analysis_output_fid_path that
+    would raise on open() — if validation runs first, the ValueError is
+    about input mode, not about the unreadable path."""
+    class _BoomPath:
+        def open(self, _mode='r'):
+            raise AssertionError('analysis_output_fid_path was opened before input-mode validation')
+    batch = Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
+    with pytest.raises(ValueError, match='no valid input mode'):
+        submit_dragen_batch.run(
+            batch=batch,
+            analysis_output_fid_path=_BoomPath(),  # type: ignore[arg-type]
+            cram_state_paths=None,
+            fastq_ids_path=None,
+            per_sg_fastq_list_paths=None,
+        )
+
+
+def test_run_rejects_mixed_cram_and_fastq_inputs():
+    """Passing both modes' paths is programmer error; the current code
+    silently runs CRAM mode and ignores FASTQ args. Must raise instead."""
+    class _BoomPath:
+        def open(self, _mode='r'):
+            raise AssertionError('analysis_output_fid_path was opened before mixed-input rejection')
+    batch = Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
+    with pytest.raises(ValueError, match='exactly one of'):
+        submit_dragen_batch.run(
+            batch=batch,
+            analysis_output_fid_path=_BoomPath(),  # type: ignore[arg-type]
+            cram_state_paths={'CPG_A': _BoomPath()},  # type: ignore[dict-item]
+            fastq_ids_path=_BoomPath(),  # type: ignore[arg-type]
+            per_sg_fastq_list_paths={'CPG_A': _BoomPath()},  # type: ignore[dict-item]
+        )
