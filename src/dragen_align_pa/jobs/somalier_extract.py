@@ -74,14 +74,26 @@ def somalier_extract(
         -f {b_ref_fasta} \\
         {b_cram['cram']}
 
-        # Find the output file somalier created
-        CRAM_BASENAME=$(basename {b_cram['cram']})
-        SOMALIER_OUTPUT_NAME=${{CRAM_BASENAME%.cram}}.somalier
-        CREATED_FILE_PATH=$TMP_OUT_DIR/$SOMALIER_OUTPUT_NAME
+        # somalier names its output `<SM>.somalier` where <SM> is the @RG SM
+        # tag from the CRAM header (see brentp/somalier@v0.3.1:src/somalier.nim
+        # `let fname = opts.outdir & "/" & cnts.sample_name & ".somalier"`),
+        # NOT the input filename. Discover the actual file by globbing
+        # instead of deriving the name from the CRAM basename — `somalier
+        # extract` writes exactly one `.somalier` per single-sample CRAM
+        # into the output dir, so the glob is unambiguous.
+        shopt -s nullglob
+        CREATED_FILES=("$TMP_OUT_DIR"/*.somalier)
+        shopt -u nullglob
+        if [[ ${{#CREATED_FILES[@]}} -ne 1 ]]; then
+            echo "Expected exactly 1 .somalier file in $TMP_OUT_DIR; found ${{#CREATED_FILES[@]}}" >&2
+            ls -la "$TMP_OUT_DIR" >&2
+            exit 1
+        fi
+        CREATED_FILE_PATH="${{CREATED_FILES[0]}}"
 
         # Move the created file to the *path* of the declared resource.
         # {declared_output_file} interpolates as a string path.
-        mv $CREATED_FILE_PATH {declared_output_file}
+        mv "$CREATED_FILE_PATH" {declared_output_file}
         """
     )
 
