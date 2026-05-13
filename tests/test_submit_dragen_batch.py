@@ -72,6 +72,22 @@ def test_build_additional_args_rejects_placeholder(monkeypatch):
         submit_dragen_batch._build_additional_args()
 
 
+def test_build_additional_args_does_not_flag_common_args_with_future_lt_tokens(monkeypatch):
+    """If _COMMON_ADDITIONAL_ARGS ever grows a `<token>` substring (e.g. a
+    DRAGEN tag name after a `<`), it must NOT be flagged as an unfilled
+    preset placeholder — placeholders are a property of preset/user args,
+    not the hardcoded common block. Simulate by monkey-patching
+    _COMMON_ADDITIONAL_ARGS with a future-compatible value."""
+    monkeypatch.setattr(
+        submit_dragen_batch,
+        '_COMMON_ADDITIONAL_ARGS',
+        submit_dragen_batch._COMMON_ADDITIONAL_ARGS + ' --some-future-flag <somerule>',
+    )
+    monkeypatch.setattr(submit_dragen_batch, 'config_retrieve', _config_factory())
+    # Should succeed: the `<somerule>` came from the common block, not a preset.
+    submit_dragen_batch._build_additional_args()
+
+
 def test_build_additional_args_rejects_missing_preset(monkeypatch):
     monkeypatch.setattr(
         submit_dragen_batch, 'config_retrieve',

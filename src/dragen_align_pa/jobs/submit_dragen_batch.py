@@ -57,8 +57,11 @@ _MAX_COVERAGE_REGION_BEDS = 3
 def _build_additional_args() -> str:
     """Concatenate common + sequencing-type preset + user override into one args string.
 
-    Raises if any `<placeholder>` sentinel survives in the final string (e.g. the
-    WES preset shipping `<bed-name>` defaults that weren't filled in for this run).
+    Raises if any `<placeholder>` sentinel survives in the preset or user
+    args (e.g. the WES preset shipping `<bed-name>` defaults that weren't
+    filled in for this run). Placeholders are a property of fill-in-the-blank
+    preset/user strings — NOT the hardcoded common block — so we scan
+    each source individually rather than the assembled output.
     """
     sequencing_type = config_retrieve(['workflow', 'sequencing_type'])
     if sequencing_type not in {'genome', 'exome'}:
@@ -79,24 +82,32 @@ def _build_additional_args() -> str:
         default={'additional_args': '', 'additional_files': []},
     )
 
-    # Join with explicit spaces. Empty parts are filtered out before the join so
-    # we don't end up with double spaces when a preset or user override is "".
+    preset_args = preset.get('additional_args', '').strip()
+    user_args = user.get('additional_args', '').strip()
+
+    # Scan preset and user args individually — these are the only strings
+    # where `<placeholder>` sentinels are legitimate inputs that must be
+    # filled before submission. _COMMON_ADDITIONAL_ARGS is hardcoded and
+    # may contain `<token>` substrings now or in the future without that
+    # implying an unfilled placeholder.
+    for source_name, source in (('preset', preset_args), ('user', user_args)):
+        placeholders = _PRESET_PLACEHOLDER_RE.findall(source)
+        if placeholders:
+            raise ValueError(
+                f'DRAGEN additional_args {source_name} string contains unfilled placeholders '
+                f'{placeholders} (config path: '
+                f'[dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}] / '
+                f'[dragen_align_pa.manage_dragen_pipeline.user]). '
+                f'Fill them in your config before running.',
+            )
+
     parts = [
         _COMMON_ADDITIONAL_ARGS.strip(),
         f"--cnv-segmentation-mode {preset['cnv_segmentation_mode']}",
-        preset.get('additional_args', '').strip(),
-        user.get('additional_args', '').strip(),
+        preset_args,
+        user_args,
     ]
-    assembled = ' '.join(part for part in parts if part)
-
-    placeholders = _PRESET_PLACEHOLDER_RE.findall(assembled)
-    if placeholders:
-        raise ValueError(
-            f'DRAGEN additional_args contains unfilled placeholders {placeholders} from '
-            f'[dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}]. '
-            f'Fill them in your config before running.',
-        )
-    return assembled
+    return ' '.join(part for part in parts if part)
 
 
 def _build_top_level_parameters(error_strategy: str = 'auto') -> list[AnalysisParameterInput]:
