@@ -139,8 +139,19 @@ class BatchesFile:
         self.batches: list[dict[str, Any]] = []
 
     def initialise(self, batch_size: int, batches: list[Batch]) -> None:
+        # Mirror add_retry_batch's heuristic: DRAGEN's `auto` strategy
+        # terminates single-sample runs before passfail.json is written,
+        # so any 1-SG batch (initial cohort of 1, or trailing batch when
+        # len(sgs) % batch_size == 1) must use 'continue'.
         self.batch_size = batch_size
-        self.batches = [self._new_batch_entry(b, retry_generation=0) for b in batches]
+        self.batches = [
+            self._new_batch_entry(
+                b,
+                retry_generation=0,
+                error_strategy='continue' if len(b.sg_names) == 1 else 'auto',
+            )
+            for b in batches
+        ]
 
     @staticmethod
     def _new_batch_entry(b: Batch, *, retry_generation: int, error_strategy: str = 'auto') -> dict[str, Any]:

@@ -239,3 +239,40 @@ def test_find_batch_for_sg_prefers_latest_generation(tmp_path: Path):
     assert found is not None
     assert found['retry_generation'] == 1
     assert found['batch_index'] == 1
+
+
+def test_initialise_single_sample_batch_uses_continue(tmp_path: Path):
+    """DRAGEN's `auto` error_strategy aborts single-sample runs before
+    passfail.json is written. `initialise()` must mirror `add_retry_batch`'s
+    heuristic so an initial cohort with 1 SG — or a trailing single-SG batch —
+    gets `continue` and produces a passfail."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(batch_size=5, batches=[
+        Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A']),
+    ])
+    assert bf.batches[0]['error_strategy'] == 'continue'
+
+
+def test_initialise_multi_sample_batch_uses_auto(tmp_path: Path):
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(batch_size=5, batches=[
+        Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
+    ])
+    assert bf.batches[0]['error_strategy'] == 'auto'
+
+
+def test_initialise_mixed_batch_sizes_apply_strategy_per_batch(tmp_path: Path):
+    """Trailing single-SG batch (e.g. cohort of 6 with batch_size 5) is the
+    realistic regression path — the trailing batch silently aborts unless
+    initialise applies the per-batch heuristic."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(batch_size=5, batches=[
+        Batch(cohort_name='COH0001', batch_index=0,
+              sg_names=['CPG_A', 'CPG_B', 'CPG_C', 'CPG_D', 'CPG_E']),
+        Batch(cohort_name='COH0001', batch_index=1, sg_names=['CPG_F']),
+    ])
+    assert bf.batches[0]['error_strategy'] == 'auto'
+    assert bf.batches[1]['error_strategy'] == 'continue'
