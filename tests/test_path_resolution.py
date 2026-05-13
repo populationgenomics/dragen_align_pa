@@ -57,6 +57,23 @@ def test_get_ica_sample_folder_raises_on_missing_state(tmp_path: Path):
         get_ica_sample_folder(tmp_path / 'does-not-exist.json', sg_name='CPG00001')
 
 
+def test_get_ica_sample_folder_raises_keyerror_on_missing_batch_index(tmp_path: Path):
+    """Per-SG state schema v1 requires batch_index — downstream resume /
+    reconciliation paths read it. A v1 file missing that key should raise
+    KeyError naming the missing field, matching the validation contract
+    the docstring promises."""
+    state_path = tmp_path / 'CPG00001_pipeline_id_and_arguid.json'
+    state_path.write_text(json.dumps({
+        'schema_version': PER_SG_STATE_SCHEMA_VERSION,
+        'pipeline_id': '00000000-1111-2222-3333-444444444444',
+        'ar_guid': 'test-guid',
+        'user_reference': 'COH0001-batch0000_test-guid_',
+        # missing batch_index
+    }))
+    with pytest.raises(KeyError, match='batch_index'):
+        get_ica_sample_folder(state_path, sg_name='CPG00001')
+
+
 def test_get_batch_artefacts_path(monkeypatch):
     monkeypatch.setattr('dragen_align_pa.utils.DRAGEN_VERSION', 'dragen_3_7_8')
 

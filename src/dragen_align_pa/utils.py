@@ -198,7 +198,7 @@ def get_ica_sample_folder(pipeline_id_arguid_path: cpg_utils.Path, sg_name: str)
             f'force_resubmit=true (or manually delete the file) to rewrite it under '
             f'the new schema.',
         )
-    for required in ('user_reference', 'pipeline_id'):
+    for required in ('user_reference', 'pipeline_id', 'batch_index'):
         if required not in state:
             raise KeyError(
                 f'Per-SG state file {pipeline_id_arguid_path} missing required key {required!r}.',
