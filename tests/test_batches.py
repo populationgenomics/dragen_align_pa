@@ -292,3 +292,25 @@ def test_successful_sg_names_excludes_cancelled_batches(tmp_path: Path):
     bf.record_status(0, 'CANCELLED')
     assert bf.successful_sg_names() == []
     assert sorted(bf.cancelled_sg_names()) == ['CPG_A', 'CPG_B']
+
+
+def test_find_batch_for_sg_robust_to_out_of_order_storage(tmp_path: Path):
+    """Defend the documented contract ('most recent batch wins') against an
+    out-of-order self.batches list. The current implementation iterates and
+    overwrites — correct only if batches are in ascending batch_index order.
+    A future refactor or hand-edit could break that silently."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(batch_size=5, batches=[
+        Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A']),
+    ])
+    # Simulate a corrupt/reordered file: prepend the retry batch.
+    retry_entry = bf._new_batch_entry(
+        Batch(cohort_name='', batch_index=1, sg_names=['CPG_A']),
+        retry_generation=1,
+    )
+    bf.batches.insert(0, retry_entry)  # now order is [batch_index=1, batch_index=0]
+    found = bf.find_batch_for_sg('CPG_A')
+    assert found is not None
+    assert found['batch_index'] == 1  # the highest, regardless of list position
+    assert found['retry_generation'] == 1

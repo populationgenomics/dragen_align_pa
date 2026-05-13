@@ -357,9 +357,13 @@ class BatchesFile:
         retry batch (`retry_generation=1`). The retry batch is the source of
         truth for path resolution because its `pipeline_id` / `user_reference`
         are what the per-SG state file points at after the retry write.
+
+        Selects by explicit max(batch_index) rather than relying on
+        self.batches being stored in ascending order — that invariant is
+        not enforced by read() and a future refactor / hand-edit could
+        silently return the wrong entry.
         """
-        match: dict[str, Any] | None = None
-        for b in self.batches:
-            if sg_name in b['sg_names']:
-                match = b  # keep iterating; later entries override earlier
-        return match
+        candidates = [b for b in self.batches if sg_name in b['sg_names']]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda b: b['batch_index'])
