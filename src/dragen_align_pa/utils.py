@@ -101,31 +101,31 @@ def run_subprocess_with_log(
 def _resolve_sg_canonical_design(sg: SequencingGroup) -> str:
     """Resolve a SequencingGroup's canonical exome design from its assay metadata.
 
-    Looks up assay.meta['library_type'] across the SG's assays, maps each through
-    DESIGN_TO_CANONICAL (substring match -- metamist values are not normalised), and
-    requires exactly one canonical design across the SG.
+    Looks up assay.meta['sequencing_library'] across the SG's assays, maps each through
+    DESIGN_TO_CANONICAL (exact match -- metamist values are clean, single-token codes),
+    and requires exactly one canonical design across the SG.
     """
     raw_values: set[str] = set()
     for assay in sg.assays or ():
-        library_type = assay.meta.get('library_type')
-        if library_type:
-            raw_values.add(str(library_type))
+        sequencing_library = assay.meta.get('sequencing_library')
+        if sequencing_library:
+            raw_values.add(str(sequencing_library))
     if not raw_values:
         raise RuntimeError(
-            f"Sequencing group {sg.id} has no assay.meta['library_type']; cannot resolve exome design.",
+            f"Sequencing group {sg.id} has no assay.meta['sequencing_library']; cannot resolve exome design.",
         )
 
     canonical: set[str] = set()
     unmapped: set[str] = set()
     for raw in raw_values:
-        match = next((c for key, c in DESIGN_TO_CANONICAL.items() if key in raw), None)
+        match = DESIGN_TO_CANONICAL.get(raw)
         if match is None:
             unmapped.add(raw)
         else:
             canonical.add(match)
     if unmapped:
         raise RuntimeError(
-            f'Sequencing group {sg.id} has unmapped library_type value(s): {sorted(unmapped)}. '
+            f'Sequencing group {sg.id} has unmapped sequencing_library value(s): {sorted(unmapped)}. '
             f'Add these to DESIGN_TO_CANONICAL in constants.py.',
         )
     if len(canonical) != 1:
