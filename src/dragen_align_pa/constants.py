@@ -18,9 +18,10 @@ CANONICAL_DESIGN_CREV2: Final = 'CREv2'
 CANONICAL_DESIGN_TWIST: Final = 'TWIST'
 CANONICAL_DESIGNS: Final = frozenset({CANONICAL_DESIGN_CRE, CANONICAL_DESIGN_CREV2, CANONICAL_DESIGN_TWIST})
 
-# Map raw metamist library_type / capture-kit values to canonical designs. Populate as new
-# values are encountered in metamist (the assay.meta['library_type'] field is the source).
-# Codes encountered at CPG to date appear as substrings of read filenames or library_type.
+# Map raw metamist sequencing_library / capture-kit values to canonical designs. Populate
+# as new values are encountered in metamist (the assay.meta['sequencing_library'] field is
+# the source). Codes encountered at CPG to date appear as substrings of read filenames or
+# sequencing_library.
 DESIGN_TO_CANONICAL: Final[dict[str, str]] = {
     'SSXTLICRE': CANONICAL_DESIGN_CRE,
     'SSQXTCREV2': CANONICAL_DESIGN_CREV2,
