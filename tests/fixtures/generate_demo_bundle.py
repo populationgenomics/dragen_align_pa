@@ -16,7 +16,7 @@ from pathlib import Path
 # in utils.py (production), so the bundle layout is a faithful fixture.
 DEFAULT_USER_REFERENCE = 'COH0001-batch0000_test-guid_'
 DEFAULT_PIPELINE_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
-DEFAULT_SAMPLES = ('CPG00001', 'CPG00002')
+DEFAULT_SAMPLES = ('SYN00001', 'SYN00002')
 
 PER_SAMPLE_FILES = (
     '{sample}.cram',

@@ -9,12 +9,12 @@ from dragen_align_pa.jobs.parse_passfail import fetch_passfail_from_ica, parse_p
 
 def test_parse_passfail_all_success(demo_bundle: Path):
     result = parse_passfail_file(demo_bundle / 'passfail.json')
-    assert result == {'CPG00001': 'Success', 'CPG00002': 'Success'}
+    assert result == {'SYN00001': 'Success', 'SYN00002': 'Success'}
 
 
 def test_parse_passfail_with_failure(demo_bundle_with_failure: Path):
     result = parse_passfail_file(demo_bundle_with_failure / 'passfail.json')
-    assert result == {'CPG00001': 'Success', 'CPG00002': 'Fail'}
+    assert result == {'SYN00001': 'Success', 'SYN00002': 'Fail'}
 
 
 _PATH_PARAMS = {'projectId': 'proj-123'}
@@ -29,7 +29,7 @@ def _api_instance_with_download_url(url: str = 'https://example.com/passfail.jso
 
 def test_fetch_passfail_returns_parsed_payload_on_happy_path():
     api = _api_instance_with_download_url()
-    payload = {'CPG00001': 'Success', 'CPG00002': 'Fail'}
+    payload = {'SYN00001': 'Success', 'SYN00002': 'Fail'}
     fake_response = MagicMock(status_code=200)
     fake_response.json.return_value = payload
     fake_response.raise_for_status.return_value = None
@@ -87,7 +87,7 @@ def test_fetch_passfail_retries_once_on_403_then_succeeds():
     """First fetch returns 403 (presigned URL expired between mint and GET);
     code mints a fresh URL and retries once. Second response succeeds."""
     api = _api_instance_with_download_url()
-    payload = {'CPG00001': 'Success'}
+    payload = {'SYN00001': 'Success'}
     first_response = MagicMock(status_code=403)
     second_response = MagicMock(status_code=200)
     second_response.json.return_value = payload
