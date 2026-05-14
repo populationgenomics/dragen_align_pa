@@ -15,6 +15,8 @@ from metamist.graphql import gql, query
 
 from dragen_align_pa.constants import BUCKET_NAME, DRAGEN_VERSION
 
+PER_SG_STATE_SCHEMA_VERSION = 1
+
 if TYPE_CHECKING:
     from graphql import DocumentNode
 
@@ -147,9 +149,6 @@ def get_batch_artefacts_path(cohort_name: str, batch_index: int) -> cpg_utils.Pa
     Both forms zero-pad `batch_index` to width 4.
     """
     return get_batch_artefacts_root() / f'{cohort_name}_batch{batch_index:04d}'
-
-
-PER_SG_STATE_SCHEMA_VERSION = 1
 
 
 def get_ica_sample_folder(pipeline_id_arguid_path: cpg_utils.Path, sg_name: str) -> str:
