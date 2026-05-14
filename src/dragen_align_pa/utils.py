@@ -139,7 +139,7 @@ def get_batch_artefacts_root() -> cpg_utils.Path:
 
 
 def get_batch_artefacts_path(cohort_name: str, batch_index: int) -> cpg_utils.Path:
-    """ "GCS folder for this cohort's outputs. Each batch gets a subfolder containing
+    """GCS folder for this cohort's outputs. Each batch gets a subfolder containing
     `passfail.json`, `summary.json`, and a `reports/` directory.
 
     Note: the GCS subdirectory uses **underscore** (`{cohort}_batch{NN}`) — distinct
