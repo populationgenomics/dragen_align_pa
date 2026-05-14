@@ -144,7 +144,7 @@ def get_batch_artefacts_path(cohort_name: str, batch_index: int) -> cpg_utils.Pa
     Note: the GCS subdirectory uses **underscore** (`{cohort}_batch{NN}`) — distinct
     from `Batch.name`, which uses **hyphen** (`{cohort}-batch{NN}`) as the
     cpg-flow target identifier. The two are deliberately split: hyphen for the
-    in-process target name (matches the `user_reference` pattern), underscore
+    in-process target name (cpg-flow Stage identifier convention), underscore
     for the GCS path (filesystem-friendly, won't be confused with the cohort name).
     Both forms zero-pad `batch_index` to width 4.
     """
