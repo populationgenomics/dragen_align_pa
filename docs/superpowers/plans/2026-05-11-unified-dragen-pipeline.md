@@ -2874,6 +2874,14 @@ git commit -m "Add unit tests for manage_dragen_pipeline orchestration (retry, f
 
 This is the biggest single change in the migration. Read the existing file before editing — most of it gets replaced.
 
+> **Segment B resilience follow-up — fix `get_ica_secrets()` while you're rewriting this path.**
+> Production has hit `google.api_core.exceptions.DeadlineExceeded` (gRPC 504) from `SecretManagerServiceClient.access_secret_version` inside `ica_api_utils.get_ica_secrets()`, tearing down a monitor job mid-run. The current code calls `get_ica_secrets()` fresh on every monitor poll and every batch submission, so a single transient Secret Manager slow-response is enough to crash the job. The secret payload doesn't change during a run.
+>
+> **Fix shape (land in `src/dragen_align_pa/ica_api_utils.py`, alongside the Task 15 orchestrator rewrite since both new `submit_dragen_batch.run` and the reused monitor loop call this code):**
+> 1. Cache the result on first fetch — `functools.lru_cache` on a thin wrapper that returns the `{'projectID': ..., 'apiKey': ...}` dict (mirrors the lazy `config_retrieve` PR pattern).
+> 2. Wrap the underlying `SECRET_CLIENT.access_secret_version(...)` call in a `tenacity`-style retry-with-backoff on `google.api_core.exceptions.DeadlineExceeded` and `ServiceUnavailable` (the GAPIC default retry policy doesn't cover `DeadlineExceeded`).
+> 3. Add a unit test in `tests/test_ica_api_utils.py` (new file) that mocks `SECRET_CLIENT` to raise `DeadlineExceeded` once, asserts the retry succeeds, AND mocks two consecutive callers to assert the second call uses the cached value (no second RPC).
+
 - [ ] **Step 1: Replace the whole file**
 
 Open `src/dragen_align_pa/jobs/manage_dragen_pipeline.py`. Replace the entire contents with:
