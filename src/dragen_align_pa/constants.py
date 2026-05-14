@@ -23,10 +23,12 @@ CANONICAL_DESIGNS: Final = frozenset({CANONICAL_DESIGN_CRE, CANONICAL_DESIGN_CRE
 # the source). Codes encountered at CPG to date appear as substrings of read filenames or
 # sequencing_library.
 DESIGN_TO_CANONICAL: Final[dict[str, str]] = {
+    'SSQXTCRE': CANONICAL_DESIGN_CRE,
     'SSXTLICRE': CANONICAL_DESIGN_CRE,
     'SSQXTCREV2': CANONICAL_DESIGN_CREV2,
     'SSXTLICREV2': CANONICAL_DESIGN_CREV2,
     'TwistWES1VCGS1': CANONICAL_DESIGN_TWIST,
+    'AgilentCREv2WES': CANONICAL_DESIGN_CREV2,
 }
 
 # Canonical design -> ICA file ID for the (unpadded) target bed used for vc_target,
