@@ -143,14 +143,25 @@ def test_run_rejects_mixed_cram_and_fastq_inputs():
         )
 
 
+def _stub_registry(monkeypatch, mapping: dict[str, str]) -> None:
+    """Replace constants.ICA_FILE_IDS for the duration of one test so we don't
+    couple the test to the production registry's current contents.
+
+    resolve_ica_file_id() reads ICA_FILE_IDS from its own module at call time,
+    so patching the name on `dragen_align_pa.constants` is enough — no matter
+    how submit_dragen_batch imports the resolver."""
+    monkeypatch.setattr('dragen_align_pa.constants.ICA_FILE_IDS', mapping)
+
+
 def test_build_common_data_inputs_rejects_too_many_coverage_beds(monkeypatch):
     """Design spec §3 caps qc_coverage_region_beds at 3 entries. A
     misconfigured TOML with 4+ would silently send them all to ICA.
     Mock just enough config_retrieve to drive the validation path."""
-    bed_ids = [f'fil.{i:07d}' for i in range(_MAX_COVERAGE_REGION_BEDS + 1)]
+    bed_names = [f'bed{i}.bed' for i in range(_MAX_COVERAGE_REGION_BEDS + 1)]
+    _stub_registry(monkeypatch, {name: f'fil.{i:07d}' for i, name in enumerate(bed_names)})
     cfg = {
         ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
-        ('ica', 'qc', 'coverage_region_beds'): bed_ids,
+        ('ica', 'qc', 'coverage_region_beds'): bed_names,
         ('ica', 'qc', 'cross_cont_vcf'): None,
         ('workflow', 'sequencing_type'): 'genome',
         ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
@@ -166,11 +177,15 @@ def test_build_common_data_inputs_rejects_too_many_coverage_beds(monkeypatch):
 
 
 def test_build_common_data_inputs_accepts_max_coverage_beds(monkeypatch):
-    """3 entries is the documented maximum — must not raise."""
-    bed_ids = [f'fil.{i:07d}' for i in range(_MAX_COVERAGE_REGION_BEDS)]
+    """3 entries is the documented maximum — must not raise. Basenames in
+    config are resolved to ICA file IDs via constants.ICA_FILE_IDS before
+    being passed to ICA."""
+    bed_names = [f'bed{i}.bed' for i in range(_MAX_COVERAGE_REGION_BEDS)]
+    registry = {name: f'fil.{i:07d}' for i, name in enumerate(bed_names)}
+    _stub_registry(monkeypatch, registry)
     cfg = {
         ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
-        ('ica', 'qc', 'coverage_region_beds'): bed_ids,
+        ('ica', 'qc', 'coverage_region_beds'): bed_names,
         ('ica', 'qc', 'cross_cont_vcf'): None,
         ('workflow', 'sequencing_type'): 'genome',
         ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
@@ -184,7 +199,29 @@ def test_build_common_data_inputs_accepts_max_coverage_beds(monkeypatch):
     inputs = submit_dragen_batch._build_common_data_inputs()
     coverage_inputs = [i for i in inputs if i['parameterCode'] == 'qc_coverage_region_beds']
     assert len(coverage_inputs) == 1
-    assert list(coverage_inputs[0]['dataIds']) == bed_ids
+    # dataIds must be the resolved ICA file IDs, not the basenames from config.
+    assert list(coverage_inputs[0]['dataIds']) == [registry[n] for n in bed_names]
+
+
+def test_build_common_data_inputs_rejects_unregistered_bed_name(monkeypatch):
+    """A typo or unstaged BED in coverage_region_beds must fail fast at
+    submitter startup, not surface mid-run as an opaque ICA error."""
+    _stub_registry(monkeypatch, {'registered.bed': 'fil.0000001'})
+    cfg = {
+        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
+        ('ica', 'qc', 'coverage_region_beds'): ['registered.bed', 'typo_or_missing.bed'],
+        ('ica', 'qc', 'cross_cont_vcf'): None,
+        ('workflow', 'sequencing_type'): 'genome',
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
+    }
+    monkeypatch.setattr(
+        submit_dragen_batch,
+        'config_retrieve',
+        lambda key, default=None: cfg.get(tuple(key), default),
+    )
+    with pytest.raises(KeyError, match=r'typo_or_missing\.bed'):
+        submit_dragen_batch._build_common_data_inputs()
 
 
 def _make_fastq_ids_path(content: str, tmp_path):
