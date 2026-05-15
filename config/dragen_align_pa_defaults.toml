@@ -62,10 +62,12 @@ batch_size = 30
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]
 dragen_version = 'dragen_3_7_8'
-# F2 instance CRAM pipeline
+# F2 instance CRAM pipeline. Read by the legacy run_align_genotype_with_dragen.py
+# submitter; kept until Segment B deletes that file.
 cram = 'cbac3d1f-737f-44f2-9a40-f7f2589b5fad'
 
-# F2 instance Fastq pipeline
+# F2 instance Fastq pipeline. Read by the legacy run_align_genotype_with_dragen.py
+# submitter; kept until Segment B deletes that file.
 fastq = '393e2423-3c0d-42f2-aa83-910a48a9c32c'
 # Dragen hash table for 3.7.8
 dragen_ht_id = 'fil.854d49a151a24edae5d708da2935b1b0'
@@ -76,6 +78,28 @@ md5_pipeline_id = "e767f290-bc60-4281-b11d-6a65c9791253"
 # Chunk size for the new streaming MD5 pipeline
 [ica.pipelines.md5]
 chunk_size = "100"
+
+# Unified DRAGEN378 pipeline (single pipeline for CRAM/FASTQ, WGS/WES)
+[dragen_align_pa.manage_dragen_pipeline]
+pipeline_id = "18a4baab-a12f-415d-ba8e-10b5bf6834d0"
+batch_size = 5
+
+# WGS-only flags. Empty preset is fine; cnv_segmentation_mode is divergent vs WES.
+[dragen_align_pa.manage_dragen_pipeline.presets.genome]
+cnv_segmentation_mode = "SLM"
+additional_args = "--cnv-enable-self-normalization true"
+additional_files = []
+
+# WES-only flags. Fill in WES BED + PoN file IDs per cohort.
+[dragen_align_pa.manage_dragen_pipeline.presets.exome]
+cnv_segmentation_mode = "HSLM"
+additional_args = "--sv-exome true --sv-call-regions-bed <bed-name> --vc-target-bed <bed-name> --cnv-target-bed <bed-name> --cnv-target-factor-threshold 5 --cnv-enable-self-normalization false"
+additional_files = []
+
+# Per-run user override hooks. Appended after the preset values.
+[dragen_align_pa.manage_dragen_pipeline.user]
+additional_args = ""
+additional_files = []
 
 # IDs for all CRAM references that were previously used to generate the CRAM files that are to be realigned
 [ica.cram_references]
@@ -95,8 +119,18 @@ gatk = ''
 
 [ica.qc]
 cross_cont_vcf = 'fil.1a7a2d0442854127e5d608da2935b1b0'
+# Legacy per-channel coverage region BED IDs. Read by run_align_genotype_with_dragen.py;
+# kept until Segment B deletes that submitter. The unified pipeline reads
+# `coverage_region_beds` below instead.
 coverage_region_1 = 'fil.ad60897bc97e4646f28c08da33ba0a20'
 coverage_region_2 = 'fil.c4ade57f5ffe4baff28d08da33ba0a20'
+# BED file basenames — resolved to ICA file IDs at submission time via
+# `dragen_align_pa.constants.ICA_FILE_IDS`. Add a basename here only if it
+# is registered there; an unregistered name raises at submitter startup.
+coverage_region_beds = [
+    'Twist_VCGS_Exome_Covered_Targets_hg38.bed',
+    'S30409818_Regions.bed',
+]
 
 [ica.mlr]
 config_json = "fil.91c3e63114fc43dc31ed08dde927d6b4"

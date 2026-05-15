@@ -31,7 +31,7 @@
 
 - `.gitignore` — ignore real and synthetic demo-bundle dirs
 - `pyproject.toml` — `testpaths` from `['test']` → `['tests']`
-- `config/dragen_align_pa_defaults.toml` — add `[ica.dragen]`, drop deprecated keys
+- `config/dragen_align_pa_defaults.toml` — add `[dragen_align_pa.manage_dragen_pipeline]`, drop deprecated keys
 - `src/dragen_align_pa/utils.py` — add `get_ica_sample_folder`, `get_batch_artefacts_path`
 - `src/dragen_align_pa/jobs/ica_pipeline_manager.py` — widen `ProcessingTarget`, add `on_succeeded` callback
 - `src/dragen_align_pa/jobs/manage_dragen_pipeline.py` — full rewrite (batching, retry, threshold over SGs)
@@ -45,7 +45,7 @@
 - `src/dragen_align_pa/jobs/upload_fastq_file_list.py` (upload moved into submitter)
 
 **PR-checkpoint markers** (where a working-state commit could be tagged for review)
-- After **Task 14c** — core data types, helpers, config, loop generalization, submitter + passfail + orchestration tests (no stage rewiring yet — old pipeline still runnable)
+- After **Task 14b** — core data types, helpers, config, loop generalization, submitter + passfail + their tests (no stage rewiring yet — old pipeline still runnable). Task 14c is deferred to land alongside Task 15 (it tests `_build_retry_batches` which Task 15 introduces).
 - After **Task 23** — new pipeline end-to-end runnable, old stages removed
 - After **Task 24** — docs + DAG refreshed
 
@@ -1276,7 +1276,7 @@ git commit -m "Add get_batch_artefacts_path GCS helper for per-batch outputs"
 **Files:**
 - Modify: `config/dragen_align_pa_defaults.toml`
 
-- [ ] **Step 1: Replace the `[ica.pipelines]`, `[ica.qc]` sections and add `[ica.dragen]`**
+- [ ] **Step 1: Replace the `[ica.pipelines]`, `[ica.qc]` sections and add `[dragen_align_pa.manage_dragen_pipeline]`**
 
 Open `config/dragen_align_pa_defaults.toml`. Apply these surgical edits:
 
@@ -1339,24 +1339,24 @@ md5_pipeline_id = "e767f290-bc60-4281-b11d-6a65c9791253"
 chunk_size = "100"
 
 # Unified DRAGEN378 pipeline (single pipeline for CRAM/FASTQ, WGS/WES)
-[ica.dragen]
+[dragen_align_pa.manage_dragen_pipeline]
 pipeline_id = "18a4baab-a12f-415d-ba8e-10b5bf6834d0"
 batch_size = 5
 
 # WGS-only flags. Empty preset is fine; cnv_segmentation_mode is divergent vs WES.
-[ica.dragen.presets.genome]
+[dragen_align_pa.manage_dragen_pipeline.presets.genome]
 cnv_segmentation_mode = "SLM"
 additional_args = "--cnv-enable-self-normalization true"
 additional_files = []
 
 # WES-only flags. Fill in WES BED + PoN file IDs per cohort.
-[ica.dragen.presets.exome]
+[dragen_align_pa.manage_dragen_pipeline.presets.exome]
 cnv_segmentation_mode = "HSLM"
 additional_args = "--sv-exome true --sv-call-regions-bed <bed-name> --vc-target-bed <bed-name> --cnv-target-bed <bed-name> --cnv-target-factor-threshold 5 --cnv-enable-self-normalization false"
 additional_files = []
 
 # Per-run user override hooks. Appended after the preset values.
-[ica.dragen.user]
+[dragen_align_pa.manage_dragen_pipeline.user]
 additional_args = ""
 additional_files = []
 ```
@@ -1781,7 +1781,7 @@ from dragen_align_pa.constants import BUCKET_NAME
 
 # DRAGEN flags that don't depend on input type (CRAM vs FASTQ) or sequencing type (WGS vs WES).
 # Sourced from the production CRAM-mode preset in the legacy submitter — anything WGS/WES-divergent
-# is instead carried in [ica.dragen.presets.{genome,exome}] in config.
+# is instead carried in [dragen_align_pa.manage_dragen_pipeline.presets.{genome,exome}] in config.
 _COMMON_ADDITIONAL_ARGS = (
     "--read-trimmers polyg "
     "--soft-read-trimmers none "
@@ -1816,12 +1816,12 @@ def _build_additional_args() -> str:
         raise ValueError(
             f"workflow.sequencing_type must be 'genome' or 'exome', got {sequencing_type!r}",
         )
-    preset = config_retrieve(['ica', 'dragen', 'presets', sequencing_type], default=None)
+    preset = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type], default=None)
     if preset is None:
         raise ValueError(
-            f'Missing config section [ica.dragen.presets.{sequencing_type}]; add it to your TOML.',
+            f'Missing config section [dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}]; add it to your TOML.',
         )
-    user = config_retrieve(['ica', 'dragen', 'user'], default={'additional_args': '', 'additional_files': []})
+    user = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'user'], default={'additional_args': '', 'additional_files': []})
 
     # Join with explicit spaces. Empty parts are filtered out before the join so
     # we don't end up with double spaces when a preset or user override is "".
@@ -1837,7 +1837,7 @@ def _build_additional_args() -> str:
     if placeholders:
         raise ValueError(
             f"DRAGEN additional_args contains unfilled placeholders {placeholders} from "
-            f"[ica.dragen.presets.{sequencing_type}]. Fill them in your config before running.",
+            f"[dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}]. Fill them in your config before running.",
         )
     return assembled
 
@@ -2117,10 +2117,10 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     cross_cont_vcf: str | None = config_retrieve(['ica', 'qc', 'cross_cont_vcf'], default=None)
 
     preset_files = config_retrieve(
-        ['ica', 'dragen', 'presets', config_retrieve(['workflow', 'sequencing_type']), 'additional_files'],
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'presets', config_retrieve(['workflow', 'sequencing_type']), 'additional_files'],
         default=[],
     )
-    user_files = config_retrieve(['ica', 'dragen', 'user', 'additional_files'], default=[])
+    user_files = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'], default=[])
     additional_files = list(preset_files) + list(user_files)
 
     inputs: list[AnalysisDataInput] = [AnalysisDataInput(parameterCode='ref_tar', dataIds=[dragen_ht_id])]
@@ -2199,7 +2199,7 @@ def run(
             )
     user_reference = f'{batch.name}_{ar_guid}_'
 
-    pipeline_id_config: str = config_retrieve(['ica', 'dragen', 'pipeline_id'])
+    pipeline_id_config: str = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'pipeline_id'])
     user_tags: list[str] = config_retrieve(['ica', 'tags', 'user_tags'])
     technical_tags: list[str] = config_retrieve(['ica', 'tags', 'technical_tags'])
     reference_tags: list[str] = config_retrieve(['ica', 'tags', 'reference_tags'])
@@ -2441,12 +2441,12 @@ def _config_factory(sequencing_type='genome', preset_args='', user_args=''):
     """Returns a fake `config_retrieve` that exposes the bits `_build_additional_args` needs."""
     cfg = {
         ('workflow', 'sequencing_type'): sequencing_type,
-        ('ica', 'dragen', 'presets', sequencing_type): {
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type): {
             'cnv_segmentation_mode': 'SLM' if sequencing_type == 'genome' else 'HSLM',
             'additional_args': preset_args,
             'additional_files': [],
         },
-        ('ica', 'dragen', 'user'): {'additional_args': user_args, 'additional_files': []},
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'user'): {'additional_args': user_args, 'additional_files': []},
     }
 
     def fake_retrieve(key, default=None):
@@ -2535,6 +2535,8 @@ git commit -m "Add unit tests for submit_dragen_batch additional_args assembly +
 ---
 
 ## Task 14c: Unit tests for retry-batch orchestration
+
+> **Ordering note:** Task 14c depends on Task 15 (it imports `_build_retry_batches` from `manage_dragen_pipeline.py`, which Task 15 introduces). The Segment A / Segment B PR split therefore runs Task 14c **immediately after Task 15** in Segment B, not in Segment A. The plan keeps it numbered "14c" for continuity with the design-review discussion.
 
 **Files:**
 - Create: `tests/test_manage_dragen_pipeline.py`
@@ -2871,6 +2873,14 @@ git commit -m "Add unit tests for manage_dragen_pipeline orchestration (retry, f
 - Modify: `src/dragen_align_pa/jobs/manage_dragen_pipeline.py` (full rewrite)
 
 This is the biggest single change in the migration. Read the existing file before editing — most of it gets replaced.
+
+> **Segment B resilience follow-up — fix `get_ica_secrets()` while you're rewriting this path.**
+> Production has hit `google.api_core.exceptions.DeadlineExceeded` (gRPC 504) from `SecretManagerServiceClient.access_secret_version` inside `ica_api_utils.get_ica_secrets()`, tearing down a monitor job mid-run. The current code calls `get_ica_secrets()` fresh on every monitor poll and every batch submission, so a single transient Secret Manager slow-response is enough to crash the job. The secret payload doesn't change during a run.
+>
+> **Fix shape (land in `src/dragen_align_pa/ica_api_utils.py`, alongside the Task 15 orchestrator rewrite since both new `submit_dragen_batch.run` and the reused monitor loop call this code):**
+> 1. Cache the result on first fetch — `functools.lru_cache` on a thin wrapper that returns the `{'projectID': ..., 'apiKey': ...}` dict (mirrors the lazy `config_retrieve` PR pattern).
+> 2. Wrap the underlying `SECRET_CLIENT.access_secret_version(...)` call in a `tenacity`-style retry-with-backoff on `google.api_core.exceptions.DeadlineExceeded` and `ServiceUnavailable` (the GAPIC default retry policy doesn't cover `DeadlineExceeded`).
+> 3. Add a unit test in `tests/test_ica_api_utils.py` (new file) that mocks `SECRET_CLIENT` to raise `DeadlineExceeded` once, asserts the retry succeeds, AND mocks two consecutive callers to assert the second call uses the cached value (no second RPC).
 
 - [ ] **Step 1: Replace the whole file**
 
@@ -3516,7 +3526,7 @@ def run(
     analysis_output_fid_path: cpg_utils.Path,
 ) -> None:
     """Build batches, submit them, retry per-sample failures once, enforce 5% threshold."""
-    batch_size: int = config_retrieve(['ica', 'dragen', 'batch_size'], default=5)
+    batch_size: int = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'batch_size'], default=5)
     sg_names = [sg.name for sg in cohort.get_sequencing_groups()]
     if not sg_names:
         raise ValueError(f'Cohort {cohort.name} has no sequencing groups.')
@@ -3772,7 +3782,7 @@ class ManageDragenPipeline(CohortStage):
         # Batch count isn't known until submission, so generate enough keys for
         # twice the cohort size (initial + retry batches with batch_size>=1).
         sg_names = cohort.get_sequencing_group_ids()
-        batch_size = config_retrieve(['ica', 'dragen', 'batch_size'], default=5)
+        batch_size = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'batch_size'], default=5)
         max_batches = 2 * ((len(sg_names) + batch_size - 1) // batch_size)
         for i in range(max_batches):
             name = f'{cohort.name}-batch{i:04d}'
@@ -4123,6 +4133,8 @@ git add src/dragen_align_pa/stages.py  # stage but don't commit yet
 ## Task 19b: Update `manage_dragen_mlr.py` to write outputs into the parent batch folder
 
 Under the legacy per-SG layout, MLR wrote outputs to its own per-SG analysis folder. Under the new batched layout, MLR writes into the **per-SG subfolder of the parent DRAGEN batch's analysis folder** so all outputs for an SG (CRAM, base gVCF, recal gVCF, metrics) live together — making future cleanup and audit far simpler.
+
+> **Also in this task (config-namespacing follow-through):** rename the `[ica.mlr]` TOML section to `[dragen_align_pa.manage_dragen_mlr]` in `config/dragen_align_pa_defaults.toml`, and update the three call sites in `src/dragen_align_pa/jobs/manage_dragen_mlr.py` that read `config_retrieve(['ica', 'mlr', ...])` to read `config_retrieve(['dragen_align_pa', 'manage_dragen_mlr', ...])` instead. The convention is established in design doc §2 ("Namespacing convention"); this task is the natural place to apply it for MLR since the file is already being edited.
 
 > **Ordering invariant (relied on by both MLR and the per-SG downloads):**
 > When an SG is included in a retry batch, `ManageDragenPipeline` overwrites
@@ -4654,10 +4666,10 @@ git commit -m "Delete obsolete run_align_genotype_with_dragen.py (replaced by su
 
 Update the "Pipeline Overview" section to describe:
 - The unified pipeline (single ID), CRAM+FASTQ, WGS+WES
-- Batching (`ica.dragen.batch_size`, default 5)
+- Batching (`dragen_align_pa.manage_dragen_pipeline.batch_size`, default 5)
 - Per-sample retry behaviour via `passfail.json`
 - The new `DownloadBatchArtefactsFromIca` stage and its `dragen_batch_metrics/` GCS path
-- New config sections (`[ica.dragen]`, presets) — note that the WES preset needs PoN/BED file IDs filled in per cohort
+- New config sections (`[dragen_align_pa.manage_dragen_pipeline]`, presets) — note that the WES preset needs PoN/BED file IDs filled in per cohort
 
 - [ ] **Step 2: Edit `README_developer.md`**
 
@@ -4667,7 +4679,7 @@ Update the stages list to reflect:
 - `DownloadBatchArtefactsFromIca` added
 - All downloads now resolve via `get_ica_sample_folder`
 
-Also update the config section to document the new keys (`[ica.dragen]`, `[ica.dragen.presets.genome|exome]`, `[ica.dragen.user]`, `[ica.qc].coverage_region_beds`).
+Also update the config section to document the new keys (`[dragen_align_pa.manage_dragen_pipeline]`, `[dragen_align_pa.manage_dragen_pipeline.presets.genome|exome]`, `[dragen_align_pa.manage_dragen_pipeline.user]`, `[ica.qc].coverage_region_beds`).
 
 - [ ] **Step 3: Edit `README_lead.md`**
 
@@ -4706,7 +4718,7 @@ Mirrors Section 7 of the design doc. These steps are NOT executed during the imp
   - Expected: all green.
 
 - [ ] **V2. Dry-run a small cohort**
-  - Author a new `local_test/<dataset>-unified-test.toml` with the new `[ica.dragen]` schema (the existing `local_test/*.toml` files reference removed keys — create fresh ones).
+  - Author a new `local_test/<dataset>-unified-test.toml` with the new `[dragen_align_pa.manage_dragen_pipeline]` schema (the existing `local_test/*.toml` files reference removed keys — create fresh ones).
   - Run with `--dry_run`. Verify stage-graph construction does not fail on import or `expected_outputs` errors.
 
 - [ ] **V3. Small real cohort (2 SGs, single batch, FASTQ mode)**
