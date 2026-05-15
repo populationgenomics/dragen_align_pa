@@ -16,6 +16,14 @@ SCHEMA_VERSION = 1
 # opaque message; we validate locally so misuse fails fast with a clear error.
 ALLOWED_ERROR_STRATEGIES = frozenset({'auto', 'continue', 'terminate'})
 
+# Per-batch status values written into batches.json. Downstream consumers
+# (`failed_sg_names`, `cancelled_sg_names`, `successful_sg_names`) compare
+# against these literals — a typo here silently produces a batch that is
+# neither successful nor failed nor cancelled. The orchestrator's in-memory
+# `PipelineStatus` enum is finer-grained (FAILED_RETRYING / FAILED_FINAL);
+# the persistence layer collapses both to `'FAILED'`.
+ALLOWED_BATCH_STATUSES = frozenset({'PENDING', 'INPROGRESS', 'SUCCEEDED', 'FAILED', 'CANCELLED'})
+
 
 def validate_error_strategy(value: str, *, context: str) -> None:
     if value not in ALLOWED_ERROR_STRATEGIES:
@@ -235,6 +243,13 @@ class BatchesFile:
         b['status'] = 'INPROGRESS'
 
     def record_status(self, batch_index: int, status: str) -> None:
+        if status not in ALLOWED_BATCH_STATUSES:
+            raise ValueError(
+                f'record_status(batch_index={batch_index}): status must be one of '
+                f'{sorted(ALLOWED_BATCH_STATUSES)}, got {status!r}. '
+                f'The orchestrator enum is finer-grained — collapse FAILED_RETRYING/'
+                f"FAILED_FINAL to 'FAILED' at the persistence boundary.",
+            )
         self.batches[batch_index]['status'] = status
 
     def record_passfail(self, batch_index: int, passfail: dict[str, str]) -> None:

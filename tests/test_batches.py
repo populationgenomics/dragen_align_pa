@@ -195,6 +195,21 @@ def test_record_error_strategy_rejects_invalid_value(tmp_path: Path):
         bf.record_error_strategy(batch_index=0, error_strategy='continue ')  # trailing whitespace
 
 
+def test_record_status_rejects_invalid_status(tmp_path: Path):
+    """`failed_sg_names`, `cancelled_sg_names`, `successful_sg_names` compare
+    against literal status strings. A typo from a future caller (e.g. the
+    orchestrator's `FAILED_FINAL` leaking through unmapped) would silently
+    produce a batch that is neither successful, failed, nor cancelled —
+    breaking the 5%-threshold check and the resume-after-cancel guard."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(batch_size=5, batches=[
+        Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A']),
+    ])
+    with pytest.raises(ValueError, match='FAILED_FINAL'):
+        bf.record_status(batch_index=0, status='FAILED_FINAL')
+
+
 def test_mark_sgs_retried_tracks_per_sg(tmp_path: Path):
     path = tmp_path / 'COH0001_batches.json'
     bf = BatchesFile(path=path)
