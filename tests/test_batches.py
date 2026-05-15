@@ -133,6 +133,30 @@ def test_batches_file_rejects_missing_top_level_keys(tmp_path: Path):
         bf.read()
 
 
+def test_batches_file_rejects_missing_per_batch_keys(tmp_path: Path):
+    """A truncated / hand-edited per-batch entry must surface at read() with
+    a clear message naming the missing key, not as a bare KeyError much
+    later from `failed_sg_names()` / `find_batch_for_sg()` etc."""
+    import json as _json
+    path = tmp_path / 'COH0001_batches.json'
+    payload = {
+        'schema_version': 1,
+        'batch_size': 5,
+        'batches': [
+            {
+                'batch_index': 0,
+                'retry_generation': 0,
+                'sg_names': ['CPG_A'],
+                # missing 'status', 'passfail', 'passfail_seen', etc.
+            },
+        ],
+    }
+    path.write_text(_json.dumps(payload))
+    bf = BatchesFile(path=path)
+    with pytest.raises(ValueError, match='status'):
+        bf.read()
+
+
 def test_batches_file_write_persists(tmp_path: Path):
     """Single-PUT atomic write — GCS object PUT is atomic per object."""
     path = tmp_path / 'COH0001_batches.json'

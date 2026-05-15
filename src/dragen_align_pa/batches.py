@@ -195,6 +195,29 @@ class BatchesFile:
             'error_strategy': error_strategy,
         }
 
+    # Required keys on every per-batch entry. Kept in sync with `_new_batch_entry`
+    # — anything written there at construction time is required to be present
+    # on read, so a truncated / hand-edited file fails fast at load with a
+    # clear message naming the missing field rather than as a bare KeyError
+    # much later from `failed_sg_names()` / `find_batch_for_sg()` etc.
+    _REQUIRED_BATCH_KEYS = frozenset({
+        'batch_index',
+        'retry_generation',
+        'sg_names',
+        'retried_sgs',
+        'user_reference',
+        'pipeline_id',
+        'ar_guid',
+        'analysis_output_folder_fid',
+        'fastq_list_fid',
+        'cram_fids',
+        'status',
+        'passfail',
+        'passfail_seen',
+        'has_been_retried',
+        'error_strategy',
+    })
+
     def read(self) -> None:
         with self.path.open('r') as fh:
             data = json.load(fh)
@@ -208,6 +231,14 @@ class BatchesFile:
             if required not in data:
                 raise ValueError(
                     f'BatchesFile {self.path} missing required key {required!r}; file is corrupt.',
+                )
+        for i, entry in enumerate(data['batches']):
+            missing = sorted(self._REQUIRED_BATCH_KEYS - entry.keys())
+            if missing:
+                raise ValueError(
+                    f'BatchesFile {self.path}: per-batch entry at index {i} '
+                    f'is missing required keys {missing}; file is corrupt or '
+                    f'was written by an incompatible code version.',
                 )
         self.batch_size = data['batch_size']
         self.batches = data['batches']
