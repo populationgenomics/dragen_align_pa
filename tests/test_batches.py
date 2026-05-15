@@ -195,6 +195,29 @@ def test_record_error_strategy_rejects_invalid_value(tmp_path: Path):
         bf.record_error_strategy(batch_index=0, error_strategy='continue ')  # trailing whitespace
 
 
+def test_failed_sg_names_dedupes_across_retry_generations(tmp_path: Path):
+    """An SG that fails in gen=0 (initial) AND gen=1 (retry) must appear
+    once in failed_sg_names(). The 5%-threshold check in the orchestrator
+    uses `len(failed_sg_names())`; double-counting would artificially trip
+    the threshold on cohorts with retries."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(batch_size=5, batches=[
+        Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
+    ])
+    # Gen 0 fails CPG_A.
+    bf.record_passfail(0, {'CPG_A': 'Fail', 'CPG_B': 'Success'})
+    bf.record_status(0, 'FAILED')
+    # Retry batch (gen 1) re-runs CPG_A and it fails again.
+    bf.add_retry_batch(sg_names=['CPG_A'])
+    bf.record_passfail(1, {'CPG_A': 'Fail'})
+    bf.record_status(1, 'FAILED')
+
+    assert bf.failed_sg_names() == ['CPG_A'], (
+        f'CPG_A should appear once; got {bf.failed_sg_names()}'
+    )
+
+
 def test_record_status_rejects_invalid_status(tmp_path: Path):
     """`failed_sg_names`, `cancelled_sg_names`, `successful_sg_names` compare
     against literal status strings. A typo from a future caller (e.g. the
