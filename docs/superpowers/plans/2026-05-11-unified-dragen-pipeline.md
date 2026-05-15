@@ -159,7 +159,7 @@ from pathlib import Path
 # in utils.py (production), so the bundle layout is a faithful fixture.
 DEFAULT_USER_REFERENCE = 'COH0001-batch0000_test-guid_'
 DEFAULT_PIPELINE_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
-DEFAULT_SAMPLES = ('CPG00001', 'CPG00002')
+DEFAULT_SAMPLES = ('CPG_00001', 'CPG_00002')
 
 PER_SAMPLE_FILES = (
     '{sample}.cram',
@@ -297,7 +297,7 @@ from tests.fixtures.generate_demo_bundle import generate_demo_bundle
 
 DEMO_USER_REFERENCE = 'COH0001-batch0000_test-guid_'
 DEMO_PIPELINE_ID = '00000000-1111-2222-3333-444444444444'
-DEMO_SAMPLES = ('CPG00001', 'CPG00002')
+DEMO_SAMPLES = ('CPG_00001', 'CPG_00002')
 
 
 @pytest.fixture
@@ -313,13 +313,13 @@ def demo_bundle(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def demo_bundle_with_failure(tmp_path: Path) -> Path:
-    """Materialise a synthetic bundle where CPG00002 is marked Fail."""
+    """Materialise a synthetic bundle where CPG_00002 is marked Fail."""
     return generate_demo_bundle(
         output_root=tmp_path,
         samples=DEMO_SAMPLES,
         user_reference=DEMO_USER_REFERENCE,
         pipeline_id=DEMO_PIPELINE_ID,
-        failed_samples=('CPG00002',),
+        failed_samples=('CPG_00002',),
     )
 ```
 
@@ -331,7 +331,7 @@ Create a temporary test in `tests/test_smoke.py`:
 def test_demo_bundle_materialises(demo_bundle):
     assert demo_bundle.is_dir()
     assert (demo_bundle / 'passfail.json').is_file()
-    assert (demo_bundle / 'CPG00001' / 'CPG00001.cram').is_file()
+    assert (demo_bundle / 'CPG_00001' / 'CPG_00001.cram').is_file()
 ```
 
 Run: `pytest tests/test_smoke.py -v`
@@ -1047,7 +1047,7 @@ def _write_state(path: Path, **fields) -> None:
 
 
 def test_get_ica_sample_folder_renders_expected_path(tmp_path: Path, monkeypatch):
-    state_path = tmp_path / 'CPG00001_pipeline_id_and_arguid.json'
+    state_path = tmp_path / 'CPG_00001_pipeline_id_and_arguid.json'
     _write_state(state_path)
 
     def fake_config_retrieve(key, default=None):
@@ -1058,15 +1058,15 @@ def test_get_ica_sample_folder_renders_expected_path(tmp_path: Path, monkeypatch
     monkeypatch.setattr('dragen_align_pa.utils.config_retrieve', fake_config_retrieve)
     monkeypatch.setattr('dragen_align_pa.utils.BUCKET_NAME', 'cpg-test-dataset-test')
 
-    result = get_ica_sample_folder(state_path, sg_name='CPG00001')
-    assert result == '/cpg-test-dataset-test/test-dragen-378/COH0001-batch0000_test-guid_-00000000-1111-2222-3333-444444444444/CPG00001/'
+    result = get_ica_sample_folder(state_path, sg_name='CPG_00001')
+    assert result == '/cpg-test-dataset-test/test-dragen-378/COH0001-batch0000_test-guid_-00000000-1111-2222-3333-444444444444/CPG_00001/'
 
 
 def test_get_ica_sample_folder_rejects_old_schema(tmp_path: Path):
     """Per-SG state files written by older code (no `schema_version`) must
     raise a friendly error so a resume after a deploy doesn't silently
     misresolve paths."""
-    state_path = tmp_path / 'CPG00001_pipeline_id_and_arguid.json'
+    state_path = tmp_path / 'CPG_00001_pipeline_id_and_arguid.json'
     state_path.write_text(json.dumps({
         'pipeline_id': 'abc',
         'ar_guid': 'xyz',
@@ -1074,13 +1074,13 @@ def test_get_ica_sample_folder_rejects_old_schema(tmp_path: Path):
     }))
     import pytest
     with pytest.raises(ValueError, match='schema_version'):
-        get_ica_sample_folder(state_path, sg_name='CPG00001')
+        get_ica_sample_folder(state_path, sg_name='CPG_00001')
 
 
 def test_get_ica_sample_folder_raises_on_missing_state(tmp_path: Path):
     import pytest
     with pytest.raises(FileNotFoundError):
-        get_ica_sample_folder(tmp_path / 'does-not-exist.json', sg_name='CPG00001')
+        get_ica_sample_folder(tmp_path / 'does-not-exist.json', sg_name='CPG_00001')
 ```
 
 Note: the leading `-` between `user_reference` and `pipeline_id` follows the existing convention because `user_reference` ends with `_` (see Section 4 of the design doc).
@@ -2294,12 +2294,12 @@ from dragen_align_pa.jobs.parse_passfail import parse_passfail_file
 
 def test_parse_passfail_all_success(demo_bundle: Path):
     result = parse_passfail_file(demo_bundle / 'passfail.json')
-    assert result == {'CPG00001': 'Success', 'CPG00002': 'Success'}
+    assert result == {'CPG_00001': 'Success', 'CPG_00002': 'Success'}
 
 
 def test_parse_passfail_with_failure(demo_bundle_with_failure: Path):
     result = parse_passfail_file(demo_bundle_with_failure / 'passfail.json')
-    assert result == {'CPG00001': 'Success', 'CPG00002': 'Fail'}
+    assert result == {'CPG_00001': 'Success', 'CPG_00002': 'Fail'}
 ```
 
 - [ ] **Step 2: Run to confirm failure**

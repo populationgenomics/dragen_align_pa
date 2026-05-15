@@ -188,10 +188,10 @@ Downstream per-SG stages continue to look this up via `inputs.as_dict(stage=Mana
       "analysis_output_folder_fid": "fol.…",
       "fastq_list_fid": "fil.…",
       "cram_fids": null,
-      "sg_names": ["CPG00001", "CPG00002", "CPG00003", "CPG00004", "CPG00005"],
+      "sg_names": ["CPG_00001", "CPG_00002", "CPG_00003", "CPG_00004", "CPG_00005"],
       "status": "SUCCEEDED",
       "passfail_seen": true,
-      "passfail": {"CPG00001": "Success", "CPG00002": "Fail", …},
+      "passfail": {"CPG_00001": "Success", "CPG_00002": "Fail", …},
       "has_been_retried": false,
       "error_strategy": "auto"
     }
@@ -389,7 +389,7 @@ OUTPUT_ROOT="${1:-./tests/fixtures/ica-demo-bundle}"
 shift || true
 SAMPLES=("$@")
 if [[ ${#SAMPLES[@]} -eq 0 ]]; then
-    SAMPLES=("CPG00001" "CPG00002")
+    SAMPLES=("CPG_00001" "CPG_00002")
 fi
 
 USER_REFERENCE="${USER_REFERENCE:-COH0001-batch0000_test-guid_}"
@@ -483,7 +483,7 @@ def demo_bundle(tmp_path: Path) -> Path:
     Returns the path to the synthesised analysis directory.
     """
     subprocess.run(
-        [str(FIXTURE_SCRIPT), str(tmp_path), "CPG00001", "CPG00002"],
+        [str(FIXTURE_SCRIPT), str(tmp_path), "CPG_00001", "CPG_00002"],
         check=True,
         env={
             "USER_REFERENCE": "COH0001-batch00_test-guid_",
