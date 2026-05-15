@@ -142,15 +142,18 @@ def _persist_per_sg_state_for_batch(
     for sg_name in batch.sg_names:
         key = f'{sg_name}_pipeline_id_and_arguid'
         if key not in outputs:
-            # `expected_outputs` undercount — downstream per-SG download stages
-            # will fail to resolve the path. Surface this loudly rather than
-            # silently dropping the SG's state file.
-            logger.warning(
+            # `run()` pre-validates per-SG state output keys before any
+            # submission, so reaching this branch means the cohort SG list
+            # changed mid-run (or the pre-check was bypassed). Raise loudly
+            # rather than orphan the submission with no per-SG state file —
+            # downstream Download* stages would otherwise fail later with a
+            # less actionable error.
+            raise KeyError(
                 f'Per-SG state output {key!r} not declared in outputs for batch '
-                f'{batch.name}; downstream download stages for this SG will fail. '
-                f'Check ManageDragenPipeline.expected_outputs.',
+                f"{batch.name}. run()'s pre-check should have caught this — "
+                f'cohort SG list likely changed mid-run, or ManageDragenPipeline.'
+                f'expected_outputs is undercounting.',
             )
-            continue
         with outputs[key].open('w') as fh:
             json.dump(
                 {
@@ -648,6 +651,23 @@ def run(
     sg_names = [sg.name for sg in cohort.get_sequencing_groups()]
     if not sg_names:
         raise ValueError(f'Cohort {cohort.name} has no sequencing groups.')
+
+    # Pre-validate per-SG state output keys BEFORE any ICA submission, so a
+    # missing `expected_outputs` entry doesn't surface as an orphaned ICA
+    # analysis with no on-disk state file. Catching this at startup means
+    # the operator sees a single actionable error and zero leaked ICA work.
+    missing_state_keys = [
+        f'{sg}_pipeline_id_and_arguid'
+        for sg in sg_names
+        if f'{sg}_pipeline_id_and_arguid' not in outputs
+    ]
+    if missing_state_keys:
+        raise KeyError(
+            f'Cohort {cohort.name}: expected_outputs missing per-SG state file entries '
+            f'{missing_state_keys}. Downstream per-SG download stages need these to '
+            f'resolve ICA folder paths. Check ManageDragenPipeline.expected_outputs.',
+        )
+
     batches_file_path: cpg_utils.Path = outputs[f'{cohort.name}_batches']
 
     # `_handle_management_flags` raises CohortCancelled on `cancel_cohort_run=true`;
