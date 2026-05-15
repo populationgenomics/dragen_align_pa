@@ -37,6 +37,15 @@ class PipelineStatus(Enum):
     CANCELLED = auto()
 
 
+# Cap on consecutive `on_succeeded` callback failures for a single target.
+# A persistently broken callback (e.g. permanent IAM error fetching passfail.json)
+# would otherwise spin the polling loop forever, hammering ICA on every pass
+# with no escalation. After the cap, the helper transitions the target to
+# FAILED_FINAL and fires on_status_change so the orchestrator surfaces it as
+# a real failure.
+MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES = 5
+
+
 class MonitoredTarget:
     """Class to hold the state of a monitored target's ICA pipeline."""
 
@@ -47,6 +56,9 @@ class MonitoredTarget:
         self.ar_guid: str | None = None  # Initialise to None
         self.has_been_retried: bool = False
         self.allow_retry: bool = allow_retry
+        # Counter for consecutive on_succeeded callback failures; reset to 0
+        # on the first successful callback. See _process_succeeded_transition.
+        self.on_succeeded_failure_count: int = 0
 
     @property
     def name(self) -> str:
@@ -55,6 +67,58 @@ class MonitoredTarget:
     def set_status(self, new_status: PipelineStatus) -> None:
         logger.info(f'Target {self.name} status moving from {self.status.name} to {new_status.name}')
         self.status = new_status
+
+
+def _process_succeeded_transition(
+    target: MonitoredTarget,
+    on_succeeded: Callable[[MonitoredTarget], None] | None,
+    on_status_change: Callable[[MonitoredTarget, PipelineStatus], None] | None,
+    max_failures: int = MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES,
+) -> bool:
+    """Run the transactional on_succeeded callback with a per-target failure cap.
+
+    Returns True if the caller should proceed to mark the target SUCCEEDED
+    (callback succeeded, or no callback configured). Returns False if the
+    caller should leave the target as-is for the next poll cycle — either
+    because the callback raised below the cap, or because it tripped the
+    cap and has already been transitioned to FAILED_FINAL.
+
+    Without a cap, a persistently broken callback (e.g. permanent IAM error
+    on passfail.json fetch) would spin the polling loop forever, re-firing
+    on every iteration and never escalating.
+    """
+    if on_succeeded is None:
+        return True
+    try:
+        on_succeeded(target)
+    except Exception as exc:  # noqa: BLE001
+        target.on_succeeded_failure_count += 1
+        if target.on_succeeded_failure_count >= max_failures:
+            logger.error(
+                f'on_succeeded callback failed {target.on_succeeded_failure_count} consecutive times '
+                f'for {target.name} (pipeline {target.pipeline_id}): {exc}. '
+                f'Escalating to FAILED_FINAL — the underlying callback error is persistent '
+                f'and must be investigated before re-running.',
+            )
+            target.set_status(PipelineStatus.FAILED_FINAL)
+            # Mirror _fire_status_change semantics: best-effort, swallow exceptions.
+            if on_status_change is not None:
+                try:
+                    on_status_change(target, PipelineStatus.FAILED_FINAL)
+                except Exception as cb_exc:  # noqa: BLE001
+                    logger.error(
+                        f'on_status_change callback failed for {target.name} during '
+                        f'on_succeeded cap escalation: {cb_exc}. In-memory transition stands.',
+                    )
+            return False
+        logger.error(
+            f'on_succeeded callback failed ({target.on_succeeded_failure_count}/{max_failures}) for '
+            f'{target.name} (pipeline {target.pipeline_id}): {exc}. '
+            f'Leaving status INPROGRESS so the next poll re-fires.',
+        )
+        return False
+    target.on_succeeded_failure_count = 0
+    return True
 
 
 def manage_ica_pipeline_loop(  # noqa: PLR0915
@@ -268,16 +332,12 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                     # as INPROGRESS so the next poll cycle re-fires it — this prevents
                     # divergent state where the loop has set SUCCEEDED but the caller's
                     # side-state (e.g. batches.json) was not updated.
-                    if on_succeeded is not None:
-                        try:
-                            on_succeeded(target)
-                        except Exception as exc:  # noqa: BLE001
-                            logger.error(
-                                f'on_succeeded callback failed for {target_name} '
-                                f'(pipeline {target.pipeline_id}): {exc}. '
-                                f'Leaving status INPROGRESS so the next poll re-fires.',
-                            )
-                            continue
+                    #
+                    # Capped at MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES per target: a
+                    # persistently failing callback (e.g. permanent IAM error) escalates
+                    # to FAILED_FINAL rather than spinning the loop forever.
+                    if not _process_succeeded_transition(target, on_succeeded, on_status_change):
+                        continue
                     target.set_status(new_status=PipelineStatus.SUCCEEDED)
                     logger.info(f'{pipeline_name} pipeline {target.pipeline_id} has succeeded for {target_name}')
                     pipeline_success_file = outputs[
