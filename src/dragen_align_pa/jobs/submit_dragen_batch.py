@@ -215,8 +215,15 @@ def _load_per_sg_fastq_lists(
         ValueError: if a SG's CSV has zero data rows — the batch would silently
                     omit that SG's reads and surface only as a passfail Fail
                     much later.
+        ValueError: if two SGs in the same batch reference the same FASTQ
+                    filename — same physical file as R1/R2 for distinct
+                    samples is a programmer error. Silently dedup-via-set
+                    would pass the downstream count-mismatch check while
+                    DRAGEN sees more rows in the fastq_list CSV than the
+                    matched dataIds, a hidden corruption mode.
     """
-    fastq_filenames: set[str] = set()
+    fastq_filenames: list[str] = []
+    fastq_filename_owner: dict[str, str] = {}
     frames: list[pd.DataFrame] = []
     expected_columns: list[str] | None = None
     required_columns = {'Read1File', 'Read2File'}
@@ -248,10 +255,22 @@ def _load_per_sg_fastq_lists(
                 f'the combined batch CSV would silently omit this SG.',
             )
         frames.append(sg_fastq_df)
-        fastq_filenames.update(sg_fastq_df['Read1File'].tolist())
-        fastq_filenames.update(sg_fastq_df['Read2File'].tolist())
+        for filename in (*sg_fastq_df['Read1File'].tolist(), *sg_fastq_df['Read2File'].tolist()):
+            prior_owner = fastq_filename_owner.get(filename)
+            if prior_owner is None:
+                fastq_filename_owner[filename] = sg_name
+                fastq_filenames.append(filename)
+            elif prior_owner != sg_name:
+                raise ValueError(
+                    f'FASTQ filename collision in batch: {filename!r} is referenced by '
+                    f'both SG {prior_owner!r} and SG {sg_name!r}. The same physical FASTQ '
+                    f"shouldn't be R1/R2 for two distinct samples — check MakeFastqFileList "
+                    f'outputs.',
+                )
+            # Same-SG repeat (e.g. multi-lane referencing the same file) is
+            # allowed — drop into the count check downstream.
     combined = pd.concat(frames, ignore_index=True)
-    return sorted(fastq_filenames), combined
+    return sorted(set(fastq_filenames)), combined
 
 
 def _upload_per_batch_fastq_list(

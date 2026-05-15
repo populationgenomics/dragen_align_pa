@@ -284,6 +284,25 @@ def _make_per_sg_fastq_csv(tmp_path, sg_name: str, read1: list[str], read2: list
     return p
 
 
+def test_load_per_sg_fastq_lists_rejects_filename_collision(tmp_path):
+    """Two different SGs referencing the same FASTQ filename is a programmer
+    error: same physical file shouldn't be R1 for two distinct samples.
+    Silently dedup-via-set would pass the count-mismatch check downstream
+    while DRAGEN sees a longer fastq_list CSV than the dataIds it was given —
+    a hidden corruption mode. Detect explicitly and raise."""
+    per_sg_csv_a = _make_per_sg_fastq_csv(
+        tmp_path, 'CPG_A', read1=['shared_R1.fastq.gz'], read2=['CPG_A_R2.fastq.gz'],
+    )
+    per_sg_csv_b = _make_per_sg_fastq_csv(
+        tmp_path, 'CPG_B', read1=['shared_R1.fastq.gz'], read2=['CPG_B_R2.fastq.gz'],
+    )
+    with pytest.raises(ValueError, match=r'shared_R1\.fastq\.gz'):
+        submit_dragen_batch._load_per_sg_fastq_lists(
+            sg_names=['CPG_A', 'CPG_B'],
+            per_sg_fastq_list_paths={'CPG_A': per_sg_csv_a, 'CPG_B': per_sg_csv_b},
+        )
+
+
 def test_build_fastq_data_inputs_handles_duplicate_fastq_rows(tmp_path, monkeypatch):
     """A re-uploaded FASTQ may appear in {cohort}_fastq_ids.txt twice (old
     + new ICA file IDs). The submitter must deterministically pick the
