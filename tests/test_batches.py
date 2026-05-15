@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -137,7 +138,6 @@ def test_batches_file_rejects_missing_per_batch_keys(tmp_path: Path):
     """A truncated / hand-edited per-batch entry must surface at read() with
     a clear message naming the missing key, not as a bare KeyError much
     later from `failed_sg_names()` / `find_batch_for_sg()` etc."""
-    import json as _json
     path = tmp_path / 'COH0001_batches.json'
     payload = {
         'schema_version': 1,
@@ -151,7 +151,7 @@ def test_batches_file_rejects_missing_per_batch_keys(tmp_path: Path):
             },
         ],
     }
-    path.write_text(_json.dumps(payload))
+    path.write_text(json.dumps(payload))
     bf = BatchesFile(path=path)
     with pytest.raises(ValueError, match='status'):
         bf.read()
