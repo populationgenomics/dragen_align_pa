@@ -77,6 +77,12 @@ def _build_additional_args() -> str:
             f'Missing config section [dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}]; '
             f'add it to your TOML.',
         )
+    if 'cnv_segmentation_mode' not in preset:
+        raise ValueError(
+            f"Preset [dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}] is "
+            f"missing required key 'cnv_segmentation_mode' "
+            f"(typical values: 'SLM' for genome, 'HSLM' for exome).",
+        )
     user = config_retrieve(
         ['dragen_align_pa', 'manage_dragen_pipeline', 'user'],
         default={'additional_args': '', 'additional_files': []},

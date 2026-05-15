@@ -107,6 +107,27 @@ def test_build_additional_args_rejects_invalid_sequencing_type(monkeypatch):
         submit_dragen_batch._build_additional_args()
 
 
+def test_build_additional_args_rejects_preset_missing_cnv_segmentation_mode(monkeypatch):
+    """A hand-edited preset missing `cnv_segmentation_mode` must produce a
+    friendly ValueError naming the missing key, not a bare KeyError —
+    matches the error style for missing-sequencing_type / missing-preset."""
+    cfg = {
+        ('workflow', 'sequencing_type'): 'genome',
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome'): {
+            # cnv_segmentation_mode missing on purpose
+            'additional_args': '',
+            'additional_files': [],
+        },
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'user'): {'additional_args': '', 'additional_files': []},
+    }
+    monkeypatch.setattr(
+        submit_dragen_batch, 'config_retrieve',
+        lambda key, default=None: cfg.get(tuple(key), default),
+    )
+    with pytest.raises(ValueError, match='cnv_segmentation_mode'):
+        submit_dragen_batch._build_additional_args()
+
+
 def test_run_rejects_no_input_mode_before_any_io():
     """Calling run() with both CRAM and FASTQ paths None must raise BEFORE
     any GCS read. We verify by passing an analysis_output_fid_path that
