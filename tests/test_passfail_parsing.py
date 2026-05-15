@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -103,6 +104,25 @@ def test_fetch_passfail_retries_once_on_403_then_succeeds():
     assert mock_get.call_count == 2
     # Both URLs were minted (initial + retry).
     assert api.create_download_url_for_data.call_count == 2
+
+
+def test_fetch_passfail_returns_none_on_json_decode_error():
+    """The presigned URL can occasionally serve an HTML error page with 200
+    (e.g. an upstream proxy returning a maintenance notice). raise_for_status
+    passes, then response.json() raises JSONDecodeError. Per the docstring's
+    'any transient ICA/network error → None' contract, this must NOT
+    propagate out and tear down the polling loop's on_succeeded callback."""
+    api = _api_instance_with_download_url()
+    fake_response = MagicMock(status_code=200)
+    fake_response.raise_for_status.return_value = None
+    fake_response.json.side_effect = json.JSONDecodeError('bad', '<html>', 0)
+
+    with patch('dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
+               return_value='fil.passfail'), \
+         patch('dragen_align_pa.jobs.parse_passfail.requests.get',
+               return_value=fake_response):
+        result = fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
+    assert result is None
 
 
 def test_fetch_passfail_returns_none_on_repeated_403():

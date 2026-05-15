@@ -53,6 +53,10 @@ def fetch_passfail_from_ica(
     - `requests.HTTPError` with 403 → presigned URL expired between
       minting and reading; mint a fresh URL once and retry. Any second
       403 → log and return None.
+    - `json.JSONDecodeError` on `response.json()` → the presigned URL
+      occasionally serves a non-JSON body (e.g. an upstream proxy
+      returning a maintenance HTML page with status 200, slipping past
+      `raise_for_status`). Treated as transient: log and return None.
     """
     try:
         file_id = ica_api_utils.find_file_id_by_name(
@@ -91,4 +95,11 @@ def fetch_passfail_from_ica(
         return None
 
     logger.info(f'Fetched passfail.json from {ica_folder_path}')
-    return response.json()
+    try:
+        return response.json()
+    except json.JSONDecodeError as e:
+        logger.warning(
+            f'passfail.json at {ica_folder_path} returned non-JSON body '
+            f'(status={response.status_code}): {e}. Treating as transient.',
+        )
+        return None
