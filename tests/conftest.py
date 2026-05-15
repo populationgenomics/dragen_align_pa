@@ -36,7 +36,12 @@ def _test_config_retrieve(key, default=None):
     return _TEST_CONFIG.get(tuple(key), default)
 
 
-def _test_output_path(suffix: str = '') -> str:
+def _test_output_path(suffix: str = '', category: str | None = None) -> str:
+    # `category` mirrors the real `cpg_utils.config.output_path` signature
+    # (which selects between test/main/analysis buckets). For tests we don't
+    # care about category-driven bucket selection; the stub returns a stable
+    # path so callers can build deterministic assertions on the suffix.
+    del category
     return f'gs://cpg-test-dataset-test/{suffix}'
 
 

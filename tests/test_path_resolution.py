@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import cpg_utils.config
 import pytest
 
 from dragen_align_pa.utils import PER_SG_STATE_SCHEMA_VERSION, get_batch_artefacts_path, get_ica_sample_folder
@@ -72,6 +73,16 @@ def test_get_ica_sample_folder_raises_keyerror_on_missing_batch_index(tmp_path: 
     }))
     with pytest.raises(KeyError, match='batch_index'):
         get_ica_sample_folder(state_path, sg_name='SYN00001')
+
+
+def test_conftest_output_path_stub_accepts_category_kwarg():
+    """The real `cpg_utils.config.output_path` accepts a `category` kwarg
+    (and `dragen_align_pa.utils.get_output_path` passes it through). The
+    conftest in-memory stub must accept the same kwarg, or any future test
+    that triggers `output_path(..., category=...)` against the stub will
+    blow up with TypeError instead of producing a stable path."""
+    result = cpg_utils.config.output_path('foo/bar', category='analysis')
+    assert isinstance(result, str)
 
 
 def test_get_batch_artefacts_path(monkeypatch):
