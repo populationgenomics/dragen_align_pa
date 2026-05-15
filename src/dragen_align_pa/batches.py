@@ -11,6 +11,19 @@ if TYPE_CHECKING:
 
 SCHEMA_VERSION = 1
 
+# DRAGEN/ICA accepts exactly these three values for the `error_strategy`
+# pipeline parameter. Anything else is rejected at the API boundary with an
+# opaque message; we validate locally so misuse fails fast with a clear error.
+ALLOWED_ERROR_STRATEGIES = frozenset({'auto', 'continue', 'terminate'})
+
+
+def validate_error_strategy(value: str, *, context: str) -> None:
+    if value not in ALLOWED_ERROR_STRATEGIES:
+        raise ValueError(
+            f"{context}: error_strategy must be one of {sorted(ALLOWED_ERROR_STRATEGIES)}, "
+            f"got {value!r}.",
+        )
+
 
 @dataclass
 class Batch:
@@ -238,6 +251,7 @@ class BatchesFile:
         self.batches[batch_index]['cram_fids'] = list(fids)
 
     def record_error_strategy(self, batch_index: int, error_strategy: str) -> None:
+        validate_error_strategy(error_strategy, context=f'record_error_strategy(batch_index={batch_index})')
         self.batches[batch_index]['error_strategy'] = error_strategy
 
     def mark_sgs_retried(self, source_batch_idx: int, sg_names: list[str]) -> None:
@@ -283,6 +297,7 @@ class BatchesFile:
             raise ValueError('add_retry_batch: sg_names must be non-empty')
         if error_strategy is None:
             error_strategy = 'continue' if len(sg_names) == 1 else 'auto'
+        validate_error_strategy(error_strategy, context='add_retry_batch')
         new_index = len(self.batches)
         # The cohort_name on Batch is not written into the entry; the entry only
         # carries batch_index + sg_names. Pass an empty string to keep `_new_batch_entry`

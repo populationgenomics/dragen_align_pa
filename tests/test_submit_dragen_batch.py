@@ -147,6 +147,25 @@ def test_run_rejects_no_input_mode_before_any_io():
         )
 
 
+def test_run_rejects_invalid_error_strategy_before_any_io():
+    """A typo in error_strategy (e.g. 'CONTINUE', 'continue ', 'auto-retry') must
+    raise BEFORE any GCS / secrets IO, so orchestrator-level misuse surfaces
+    cheaply rather than as an obscure ICA pipeline-parameter rejection."""
+    class _BoomPath:
+        def open(self, _mode='r'):
+            raise AssertionError('analysis_output_fid_path was opened before error_strategy validation')
+    batch = Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
+    with pytest.raises(ValueError, match='error_strategy'):
+        submit_dragen_batch.run(
+            batch=batch,
+            analysis_output_fid_path=_BoomPath(),  # type: ignore[arg-type]
+            cram_state_paths={'CPG_A': _BoomPath()},  # type: ignore[dict-item]
+            fastq_ids_path=None,
+            per_sg_fastq_list_paths=None,
+            error_strategy='continue ',  # trailing whitespace
+        )
+
+
 def test_run_rejects_mixed_cram_and_fastq_inputs():
     """Passing both modes' paths is programmer error; the current code
     silently runs CRAM mode and ignores FASTQ args. Must raise instead."""

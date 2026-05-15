@@ -170,6 +170,31 @@ def test_add_retry_batch_multi_sample_uses_auto(tmp_path: Path):
     assert bf.batches[1]['error_strategy'] == 'auto'
 
 
+def test_add_retry_batch_rejects_invalid_error_strategy(tmp_path: Path):
+    """ICA only accepts {auto, continue, terminate}. A typo (e.g. trailing
+    whitespace, wrong case) must surface here as a clear ValueError, not as
+    an obscure ICA pipeline-parameter rejection at submission time."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(batch_size=5, batches=[
+        Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A']),
+    ])
+    with pytest.raises(ValueError, match='error_strategy'):
+        bf.add_retry_batch(sg_names=['CPG_A'], error_strategy='CONTINUE')
+
+
+def test_record_error_strategy_rejects_invalid_value(tmp_path: Path):
+    """record_error_strategy() writes the value verbatim into batches.json
+    and downstream submission. Reject anything outside the allowed set."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(batch_size=5, batches=[
+        Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A']),
+    ])
+    with pytest.raises(ValueError, match='error_strategy'):
+        bf.record_error_strategy(batch_index=0, error_strategy='continue ')  # trailing whitespace
+
+
 def test_mark_sgs_retried_tracks_per_sg(tmp_path: Path):
     path = tmp_path / 'COH0001_batches.json'
     bf = BatchesFile(path=path)

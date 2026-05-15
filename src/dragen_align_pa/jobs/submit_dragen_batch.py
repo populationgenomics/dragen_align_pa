@@ -23,7 +23,7 @@ from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
-from dragen_align_pa.batches import Batch
+from dragen_align_pa.batches import Batch, validate_error_strategy
 from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_file_id
 
 # DRAGEN flags that don't depend on input type (CRAM vs FASTQ) or sequencing type (WGS vs WES).
@@ -430,6 +430,7 @@ def run(
     # so misuse surfaces cheaply at the orchestrator layer. Exactly one of
     # CRAM mode (cram_state_paths) or FASTQ mode (fastq_ids_path +
     # per_sg_fastq_list_paths) must be populated.
+    validate_error_strategy(error_strategy, context=f'submit_dragen_batch.run(batch={batch.name})')
     cram_mode = cram_state_paths is not None
     fastq_mode = fastq_ids_path is not None or per_sg_fastq_list_paths is not None
     if cram_mode and fastq_mode:
