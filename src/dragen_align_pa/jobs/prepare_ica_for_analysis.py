@@ -11,43 +11,28 @@ from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.constants import BUCKET_NAME
 
 
-def run(
-    cohort: Cohort,
-    outputs: dict[str, cpg_utils.Path],
-) -> None:
-    """Prepare ICA pipeline runs by generating a folder ID for the
-    outputs of the Dragen pipeline.
+def run(cohort: Cohort, output: cpg_utils.Path) -> None:
+    """Create (or find) a single ICA folder for the cohort's pipeline outputs.
 
-    Args:
-        cohort (Cohort): The Cohort being aligned and genotyped
-        outputs (dict): Dictionary specifying ICA output folder IDs per sequencing group.
-
-    Returns:
-        dict [str, str] noting the analysis ID.
+    The new unified pipeline writes per-batch analysis folders directly under
+    this parent folder, so we no longer need per-SG parent folders.
     """
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
-
-    path_parameters: dict[str, str] = {'projectId': project_id}
-
-    ica_analysis_output_folder: str = config_retrieve(
-        ['ica', 'data_prep', 'output_folder'],
-    )
+    output_folder: str = config_retrieve(['ica', 'data_prep', 'output_folder'])
+    folder_path: str = f'/{BUCKET_NAME}/{output_folder}'
 
     with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
-        folder_path: str = f'/{BUCKET_NAME}/{ica_analysis_output_folder}'
-        for sg_name in cohort.get_sequencing_group_ids():
-            object_id, _ = ica_utils.create_upload_object_id(
-                api_instance=api_instance,
-                path_params=path_parameters,
-                sg_name=sg_name,
-                file_name=sg_name,
-                folder_path=folder_path,
-                object_type='FOLDER',
-            )
-            logger.info(
-                f'Created folder ID {object_id} for analysis outputs for sequencing group {sg_name}',
-            )
-            with outputs[sg_name].open('w') as opath:
-                opath.write(json.dumps({'analysis_output_fid': object_id}))
+        folder_id, status = ica_utils.create_upload_object_id(
+            api_instance=api_instance,
+            path_params={'projectId': project_id},
+            sg_name=cohort.name,
+            file_name=cohort.name,
+            folder_path=folder_path,
+            object_type='FOLDER',
+        )
+    logger.info(f'Cohort output folder for {cohort.name} (status {status}): {folder_id}')
+
+    with output.open('w') as fh:
+        json.dump({'analysis_output_fid': folder_id}, fh)

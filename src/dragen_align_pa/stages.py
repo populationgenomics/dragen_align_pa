@@ -55,22 +55,13 @@ logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
 # No need to register this stage in Metamist I think, just ICA prep
 @stage()
 class PrepareIcaForDragenAnalysis(CohortStage):
-    """Set up ICA for a single realignment run.
+    """Create a single cohort-level analysis output folder on ICA."""
 
-    Creates a folder ID on the ICA platform for the Dragen output to be written into.
-    """
-
-    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
-        results: dict[str, cpg_utils.Path] = {
-            **{
-                sg_name: get_prep_path(filename=f'{sg_name}_output_fid.json')
-                for sg_name in cohort.get_sequencing_group_ids()
-            }
-        }
-        return results
+    def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:  # pyright: ignore[reportIncompatibleMethodOverride]
+        return get_prep_path(filename=f'{cohort.name}_analysis_output_fid.json')
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:  # noqa: ARG002
-        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
+        output: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
         job: PythonJob = initialise_python_job(
             job_name='PrepareIcaForDragenAnalysis',
@@ -78,18 +69,9 @@ class PrepareIcaForDragenAnalysis(CohortStage):
             tool_name='ICA',
         )
         job.image(image=get_driver_image())
+        job.call(prepare_ica_for_analysis.run, cohort=cohort, output=output)
 
-        job.call(
-            prepare_ica_for_analysis.run,
-            cohort=cohort,
-            outputs=outputs,
-        )
-
-        return self.make_outputs(
-            target=cohort,
-            data=outputs,  # pyright: ignore[reportArgumentType]
-            jobs=job,
-        )
+        return self.make_outputs(target=cohort, data=output, jobs=job)
 
 
 @stage(required_stages=[PrepareIcaForDragenAnalysis])
@@ -301,58 +283,53 @@ class UploadFastqFileList(CohortStage):
     required_stages=[
         PrepareIcaForDragenAnalysis,
         UploadDataToIca,
-        UploadFastqFileList,
         MakeFastqFileList,
         FastqIntakeQc,
     ],
 )
 class ManageDragenPipeline(CohortStage):
-    """
-    Due to the nature of the Dragen pipeline and stage dependencies, we need to run, monitor and cancel the pipeline in the same stage.
+    """Submit cohort batches to the unified DRAGEN pipeline and monitor them."""
 
-    This stage handles the following tasks:
-    1. Cancels a previous pipeline running on ICA if requested.
-        - Set the `cancel_cohort_run` flag to `true` in the config and the stage will read the pipeline ID from the JSON file and cancel it.
-    2. Resumes monitoring a previous pipeline run if it was interrupted.
-        - Set the `monitor_previous` flag to `true` in the config. This will read the pipeline ID from the JSON file and monitor it.
-    3. Initiates a new Dragen pipeline run if no previous run is found or if resuming is not requested.
-    4. Monitors the progress of the Dragen pipeline run.
-    """  # noqa: E501
-
-    def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self,
-        cohort: Cohort,
-    ) -> dict[str, cpg_utils.Path]:
+    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
         results: dict[str, cpg_utils.Path] = {
-            f'{cohort.name}_errors': get_pipeline_path(filename=f'{cohort.name}_errors.log')
+            f'{cohort.name}_errors': get_pipeline_path(filename=f'{cohort.name}_errors.log'),
+            f'{cohort.name}_batches': get_pipeline_path(filename=f'{cohort.name}_batches.json'),
         }
-        for sequencing_group in cohort.get_sequencing_groups():
-            sg_name: str = sequencing_group.name
-            results |= {f'{sg_name}_success': get_pipeline_path(filename=f'{sg_name}_pipeline_success.json')}
-            results |= {
-                f'{sg_name}_pipeline_id_and_arguid': get_pipeline_path(
-                    filename=f'{sg_name}_pipeline_id_and_arguid.json'
-                )
-            }
+
+        # Per-SG state files (extended schema; consumed by download stages).
+        for sg in cohort.get_sequencing_groups():
+            results[f'{sg.name}_pipeline_id_and_arguid'] = get_pipeline_path(
+                filename=f'{sg.name}_pipeline_id_and_arguid.json',
+            )
+
+        # Per-batch success + pipeline-id files used by the shared loop.
+        # Batch count isn't known until submission, so generate enough keys for
+        # twice the cohort size (initial + retry batches with batch_size>=1).
+        sg_names = cohort.get_sequencing_group_ids()
+        batch_size = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'batch_size'], default=5)
+        max_batches = 2 * ((len(sg_names) + batch_size - 1) // batch_size)
+        for i in range(max_batches):
+            name = f'{cohort.name}-batch{i:04d}'
+            results[f'{name}_success'] = get_pipeline_path(filename=f'{name}_pipeline_success.json')
+            results[f'{name}_pipeline_id'] = get_pipeline_path(filename=f'{name}_pipeline_id.json')
 
         return results
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:
-        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
+        outputs = self.expected_outputs(cohort=cohort)
 
-        cram_ica_fids_path: dict[str, cpg_utils.Path] | None = None
+        cram_state_paths: dict[str, cpg_utils.Path] | None = None
         fastq_ids_path: cpg_utils.Path | None = None
-        fastq_list_fid_and_filenames_path: dict[str, cpg_utils.Path] | None = None
+        per_sg_fastq_list_paths: dict[str, cpg_utils.Path] | None = None
 
-        # Inputs from previous stages
         if READS_TYPE == 'cram':
-            cram_ica_fids_path = inputs.as_path_by_target(stage=UploadDataToIca)
+            cram_state_paths = inputs.as_path_by_target(stage=UploadDataToIca)
         elif READS_TYPE == 'fastq':
             fastq_ids_path = inputs.as_path(target=cohort, stage=FastqIntakeQc, key='fastq_ids_outpath')
-            fastq_list_fid_and_filenames_path = inputs.as_dict(target=cohort, stage=UploadFastqFileList)
+            per_sg_fastq_list_paths = inputs.as_dict(target=cohort, stage=MakeFastqFileList)
 
-        analysis_output_fids_path: dict[str, cpg_utils.Path] = inputs.as_dict(
-            target=cohort, stage=PrepareIcaForDragenAnalysis
+        analysis_output_fid_path: cpg_utils.Path = inputs.as_path(
+            target=cohort, stage=PrepareIcaForDragenAnalysis,
         )
 
         job: PythonJob = initialise_python_job(
@@ -366,17 +343,13 @@ class ManageDragenPipeline(CohortStage):
             manage_dragen_pipeline.run,
             cohort=cohort,
             outputs=outputs,
-            cram_ica_fids_path=cram_ica_fids_path,
+            cram_state_paths=cram_state_paths,
             fastq_ids_path=fastq_ids_path,
-            fastq_list_fid_and_filenames_path=fastq_list_fid_and_filenames_path,
-            analysis_output_fids_path=analysis_output_fids_path,
+            per_sg_fastq_list_paths=per_sg_fastq_list_paths,
+            analysis_output_fid_path=analysis_output_fid_path,
         )
 
-        return self.make_outputs(
-            target=cohort,
-            data=outputs,  # pyright: ignore[reportArgumentType]
-            jobs=job,
-        )
+        return self.make_outputs(target=cohort, data=outputs, jobs=job)  # pyright: ignore[reportArgumentType]
 
 
 @stage(required_stages=[ManageDragenPipeline])
