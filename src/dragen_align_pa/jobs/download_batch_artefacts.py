@@ -107,8 +107,12 @@ def run(
             if not batch_entry.get('pipeline_id'):
                 continue
 
+            # PrepareIcaForDragenAnalysis creates one folder named `cohort_name`
+            # under `output_folder/`; ICA writes each batch's analysis run inside
+            # it. Path layout mirrors `utils.get_ica_sample_folder` minus the
+            # trailing `/{sg_name}/` (this stage operates at the batch root).
             ica_folder = (
-                f'/{BUCKET_NAME}/{output_folder}/'
+                f'/{BUCKET_NAME}/{output_folder}/{cohort_name}/'
                 f'{batch_entry["user_reference"]}-{batch_entry["pipeline_id"]}/'
             )
             batch_name = f'{cohort_name}_batch{batch_entry["batch_index"]:04d}'

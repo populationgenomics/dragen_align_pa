@@ -621,10 +621,13 @@ class DownloadDataFromIca(SequencingGroupStage):
         ica_download_job.spot(is_spot=False)
         ica_download_job.memory(memory='8Gi')
 
+        cohort_name: str = get_multicohort().get_cohorts()[0].name
+
         ica_download_job.call(
             _resolve_then_download_bulk,
             sequencing_group=sequencing_group,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
+            cohort_name=cohort_name,
         )
 
         return self.make_outputs(
@@ -637,10 +640,15 @@ class DownloadDataFromIca(SequencingGroupStage):
 def _resolve_then_download_bulk(
     sequencing_group: SequencingGroup,
     pipeline_id_arguid_path: cpg_utils.Path,
+    cohort_name: str,
 ) -> None:
     from dragen_align_pa.utils import get_ica_sample_folder  # noqa: PLC0415
 
-    ica_folder = get_ica_sample_folder(pipeline_id_arguid_path, sequencing_group.name)
+    ica_folder = get_ica_sample_folder(
+        pipeline_id_arguid_path,
+        sg_name=sequencing_group.name,
+        cohort_name=cohort_name,
+    )
     download_ica_pipeline_outputs.run(
         sequencing_group=sequencing_group,
         ica_folder_path=ica_folder,
