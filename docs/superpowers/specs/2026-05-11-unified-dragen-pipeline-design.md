@@ -208,10 +208,12 @@ Authoritative cohort-level view used by the submitter loop, retry logic, and `Do
 ICA output path for an SG (used by every per-SG download stage):
 
 ```
-/{BUCKET_NAME}/{ica.data_prep.output_folder}/{user_reference}-{pipeline_id}/{sg_name}/
+/{BUCKET_NAME}/{ica.data_prep.output_folder}/{cohort.name}/{user_reference}-{pipeline_id}/{sg_name}/
 ```
 
 Note: ICA names the analysis folder `<user_reference>-<pipeline_id>` — i.e. it inserts a single `-` between the submitted `user_reference` and the analysis `pipeline_id`. Because our `user_reference` ends with `_` (per Task 13 of the implementation plan: `f'{batch.name}_{ar_guid}_'`), the rendered folder name is `…_-<pipeline_id>`, which matches the convention in today's code. The explicit hyphen in the path-construction template above (and in `get_ica_sample_folder`, in `_on_succeeded`'s `analysis_folder_name`, and in the demo-bundle fixture) all reflect this single, consistent rule.
+
+The `{cohort.name}/` segment sits between `{output_folder}/` and the analysis folder because `PrepareIcaForDragenAnalysis` creates exactly one cohort-level folder under `{output_folder}/` and passes that folder's fid to ICA as `outputParentFolderId` on every batch submission. ICA then writes each batch's analysis run INSIDE the cohort folder, mirroring the existing MD5 pipeline layout (`download_md5_results.run`).
 
 ### Management flag semantics under batching
 
@@ -228,11 +230,15 @@ In addition, the shared `manage_ica_pipeline_loop` mirrors its in-memory `FAILED
 New helper:
 
 ```python
-def get_ica_sample_folder(pipeline_id_arguid_path: cpg_utils.Path, sg_name: str) -> str:
+def get_ica_sample_folder(
+    pipeline_id_arguid_path: cpg_utils.Path,
+    sg_name: str,
+    cohort_name: str,
+) -> str:
     """Resolve the ICA folder containing a single SG's batch output.
 
     Reads the per-SG state file (extended schema) and constructs:
-        /{bucket}/{output_folder}/{user_reference}-{pipeline_id}/{sg_name}/
+        /{bucket}/{output_folder}/{cohort_name}/{user_reference}-{pipeline_id}/{sg_name}/
     """
 ```
 
@@ -400,7 +406,8 @@ FAILED_SAMPLES="${FAILED_SAMPLES:-}"
 # required (user_reference ends with `_` so the folder is `…_-{pipeline_id}`).
 # Matches `get_ica_sample_folder` in `utils.py` so the synthetic bundle is a
 # faithful production-layout fixture.
-ANALYSIS_DIR="${OUTPUT_ROOT}/analysis/${USER_REFERENCE}-${PIPELINE_ID}"
+COHORT_NAME="${COHORT_NAME:-COH0001}"
+ANALYSIS_DIR="${OUTPUT_ROOT}/${COHORT_NAME}/${USER_REFERENCE}-${PIPELINE_ID}"
 
 mkdir -p "${ANALYSIS_DIR}/reports/report_files/samples"
 mkdir -p "${ANALYSIS_DIR}/ica_logs/analysis"

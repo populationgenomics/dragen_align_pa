@@ -245,7 +245,15 @@ def _on_succeeded_factory(
         # required: user_reference ends in `_`, so the resulting folder name
         # is `…_-{pipeline_id}/`.
         analysis_folder_name = f'{batch_entry["user_reference"]}-{batch_entry["pipeline_id"]}'
-        ica_parent = f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}/'
+        # ICA writes each batch's analysis folder INSIDE the cohort-level
+        # parent folder (`PrepareIcaForDragenAnalysis` creates one folder
+        # named `cohort.name`, and its fid is passed to ICA as
+        # `outputParentFolderId`). The `batch.cohort_name` segment below
+        # mirrors the layout described in `utils.get_ica_sample_folder`.
+        ica_parent = (
+            f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}/'
+            f'{batch.cohort_name}/'
+        )
         ica_folder = f'{ica_parent}{analysis_folder_name}/'
 
         secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
