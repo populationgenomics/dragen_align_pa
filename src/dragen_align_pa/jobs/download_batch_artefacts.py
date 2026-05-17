@@ -10,13 +10,48 @@ from typing import Literal
 
 import cpg_utils
 import icasdk
+import requests
 from cpg_utils.config import config_retrieve
+from google.cloud import exceptions as gcs_exceptions
 from google.cloud import storage
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.constants import BUCKET_NAME
+
+
+def _stream_silently(
+    api_instance: project_data_api.ProjectDataApi,
+    path_parameters: dict[str, str],
+    file_id: str,
+    file_name: str,
+    gcs_bucket: storage.Bucket,
+    gcs_prefix: str,
+    context: str,
+) -> None:
+    """Stream one file to GCS; warn-and-skip on transient ICA / HTTP / GCS errors.
+
+    Wraps `ica_utils.stream_ica_file_to_gcs` so a single transient blip on
+    one file does not abort the whole cohort's batch-artefacts run mid-loop
+    and leave partial GCS state with no marker file. Missed files are
+    observable via the absence of GCS objects and can be re-fetched by
+    re-running the stage. `context` is included in the warning log to make
+    the source location of the failure traceable (typically the batch name
+    plus what the file is).
+    """
+    try:
+        ica_utils.stream_ica_file_to_gcs(
+            api_instance=api_instance,
+            path_parameters=path_parameters,
+            file_id=file_id,
+            file_name=file_name,
+            gcs_bucket=gcs_bucket,
+            gcs_prefix=gcs_prefix,
+            expected_md5_hash=None,
+        )
+    except (icasdk.ApiException, requests.RequestException, gcs_exceptions.GoogleCloudError) as e:
+        logger.warning(f'{context}: streaming {file_name} failed ({e}); skipping.')
 
 
 def _stream_named_file(
@@ -29,14 +64,10 @@ def _stream_named_file(
 ) -> None:
     """Find one named file in `parent_folder` and stream it to `gcs_prefix/file_name`.
 
-    Logs and returns silently if the file is not present (passfail.json/summary.json
-    may legitimately be absent on a catastrophically-failed batch).
-
-    Tolerates transient `icasdk.ApiException` from the lookup — symmetric with the
-    `reports/` enumeration's try/except below. We don't want a single transient API
-    error to abort the whole batch-artefacts run mid-loop after partial GCS writes;
-    missed files are observable via the absence of GCS objects and can be re-fetched
-    by re-running the stage.
+    Logs and returns silently if the file is not present (passfail.json /
+    summary.json may legitimately be absent on a catastrophically-failed
+    batch). Tolerates transient ICA / HTTP / GCS errors at both the lookup
+    AND the stream step so a single blip doesn't abort the cohort run.
     """
     try:
         file_id = ica_api_utils.find_file_id_by_name(
@@ -54,14 +85,14 @@ def _stream_named_file(
         )
         return
 
-    ica_utils.stream_ica_file_to_gcs(
+    _stream_silently(
         api_instance=api_instance,
         path_parameters=path_parameters,
         file_id=file_id,
         file_name=file_name,
         gcs_bucket=gcs_bucket,
         gcs_prefix=gcs_prefix,
-        expected_md5_hash=None,
+        context=f'lookup={parent_folder}',
     )
 
 
@@ -128,15 +159,20 @@ def run(
                     gcs_prefix=gcs_prefix,
                 )
 
-            # `reports/` — enumerate every file under the subfolder and stream each.
-            # The folder may be absent on a catastrophically-failed batch
-            # (e.g. single-sample retry that aborted before producing reports);
-            # treat that as a non-fatal warning so the rest of the batches continue.
-            # `list_and_filter_ica_files` filters CRAM/gVCF endings only, which
-            # never appear in DRAGEN's reports/ tree — safe to reuse here.
+            # `reports/` — recursively enumerate every file under the subfolder
+            # and stream each. DRAGEN's reports/ tree has nested subdirectories
+            # (e.g. report_files/samples/), so the non-recursive
+            # `list_and_filter_ica_files` would silently drop the nested files;
+            # `list_ica_files_recursive` walks the whole tree and returns
+            # relative paths that preserve the nested layout when reassembled
+            # under the GCS `reports/` prefix.
+            #
+            # The folder may be absent on a catastrophically-failed batch (e.g.
+            # single-sample retry that aborted before producing reports); treat
+            # that as a non-fatal warning so the rest of the batches continue.
             reports_folder = f'{ica_folder}reports/'
             try:
-                report_files = ica_utils.list_and_filter_ica_files(
+                report_files = ica_utils.list_ica_files_recursive(
                     api_instance=api_instance,
                     path_parameters=path_parameters,
                     base_ica_folder_path=reports_folder,
@@ -148,15 +184,15 @@ def run(
                 )
                 report_files = []
 
-            for report_name, report_id in report_files:
-                ica_utils.stream_ica_file_to_gcs(
+            for report_relative_path, report_id in report_files:
+                _stream_silently(
                     api_instance=api_instance,
                     path_parameters=path_parameters,
                     file_id=report_id,
-                    file_name=report_name,
+                    file_name=report_relative_path,
                     gcs_bucket=gcs_bucket,
                     gcs_prefix=f'{gcs_prefix}/reports',
-                    expected_md5_hash=None,
+                    context=f'batch {batch_name} reports/',
                 )
 
     with marker_path.open('w') as fh:
