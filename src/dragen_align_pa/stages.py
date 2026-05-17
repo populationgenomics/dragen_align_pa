@@ -605,7 +605,6 @@ class DownloadDataFromIca(SequencingGroupStage):
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
         outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
 
-        # Inputs from previous stage
         pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
             target=get_multicohort().get_cohorts()[0],
             stage=ManageDragenPipeline,
@@ -621,7 +620,7 @@ class DownloadDataFromIca(SequencingGroupStage):
         ica_download_job.memory(memory='8Gi')
 
         ica_download_job.call(
-            download_ica_pipeline_outputs.run,
+            _resolve_then_download_bulk,
             sequencing_group=sequencing_group,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
         )
@@ -631,6 +630,19 @@ class DownloadDataFromIca(SequencingGroupStage):
             data=outputs,
             jobs=ica_download_job,
         )
+
+
+def _resolve_then_download_bulk(
+    sequencing_group: SequencingGroup,
+    pipeline_id_arguid_path: cpg_utils.Path,
+) -> None:
+    from dragen_align_pa.utils import get_ica_sample_folder  # noqa: PLC0415
+
+    ica_folder = get_ica_sample_folder(pipeline_id_arguid_path, sequencing_group.name)
+    download_ica_pipeline_outputs.run(
+        sequencing_group=sequencing_group,
+        ica_folder_path=ica_folder,
+    )
 
 
 @stage(required_stages=[DownloadCramFromIca])  # Depends on CRAM being downloaded
