@@ -267,6 +267,89 @@ def list_and_filter_ica_files(
     return files_to_download
 
 
+def list_ica_files_recursive(
+    api_instance: 'project_data_api.ProjectDataApi',
+    path_parameters: dict[str, str],
+    base_ica_folder_path: str,
+) -> list[tuple[str, str]]:
+    """Recursively list every file under `base_ica_folder_path`.
+
+    Returns ``(relative_path, file_id)`` tuples, where ``relative_path`` is
+    the file's path component relative to ``base_ica_folder_path`` (e.g.
+    ``'foo.html'`` or ``'report_files/samples/CPG_00001.csv'``). The relative
+    path can be passed directly to ``stream_ica_file_to_gcs`` as ``file_name``;
+    the resulting GCS object key preserves the nested layout.
+
+    Walks subfolders via separate ``type=FOLDER`` queries — the ICA SDK's
+    ``get_project_data_list`` does not expose a recursive flag. The
+    non-recursive sibling ``list_and_filter_ica_files`` only sees files at
+    the top level of the requested folder, so it silently drops files in
+    nested subdirectories. Use this helper for DRAGEN's ``reports/`` tree
+    (which contains ``report_files/samples/``) and any other case where the
+    folder tree may have arbitrary depth.
+
+    No extension filtering — the recursive use case is ``reports/``, which
+    doesn't contain CRAM/gVCF, and callers can filter the return themselves.
+
+    Raises ``icasdk.ApiException`` on any API failure mid-walk. The walk is
+    not transactional: if a subfolder's list call fails after some files
+    have been collected, those collected entries are discarded and the
+    exception propagates. Callers should re-run on failure.
+    """
+    base = base_ica_folder_path.rstrip('/') + '/'
+
+    def _list_children(parent: str, type_: str) -> list[dict]:
+        items: list[dict] = []
+        page_token: str | None = None
+        while True:
+            query_params: dict[str, object] = {
+                'parentFolderPath': parent,
+                'type': type_,
+                'pageSize': '1000',
+            }
+            if page_token:
+                query_params['pageToken'] = page_token
+            try:
+                api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
+                    path_params=path_parameters,  # pyright: ignore[reportArgumentType]
+                    query_params=query_params,  # type: ignore[reportArgumentType]
+                )
+            except icasdk.ApiException as e:
+                logger.error(
+                    f'Exception listing {type_} children under {parent}: {e}',
+                )
+                raise
+            items.extend(api_response.body.get('items', []))  # pyright: ignore[reportUnknownArgumentType]
+            page_token = api_response.body.get('nextPageToken')  # pyright: ignore[reportUnknownVariableType]
+            if not page_token:
+                break
+        return items
+
+    files: list[tuple[str, str]] = []
+
+    def _walk(parent: str, relative_prefix: str) -> None:
+        for item in _list_children(parent, 'FILE'):
+            details = item['data'].get('details', {})  # pyright: ignore[reportUnknownVariableType]
+            name = details.get('name')  # pyright: ignore[reportUnknownVariableType]
+            fid = item['data'].get('id')  # pyright: ignore[reportUnknownVariableType]
+            if not name or not fid:
+                logger.warning(f'Skipping item with missing name or id under {parent}: {item}')
+                continue
+            rel = f'{relative_prefix}{name}'
+            files.append((rel, fid))  # pyright: ignore[reportUnknownArgumentType]
+
+        for item in _list_children(parent, 'FOLDER'):
+            details = item['data'].get('details', {})  # pyright: ignore[reportUnknownVariableType]
+            name = details.get('name')  # pyright: ignore[reportUnknownVariableType]
+            if not name:
+                continue
+            _walk(f'{parent}{name}/', f'{relative_prefix}{name}/')
+
+    _walk(base, '')
+    logger.info(f'Recursive list under {base} found {len(files)} files.')
+    return files
+
+
 def check_file_existence(
     api_instance: 'project_data_api.ProjectDataApi',
     path_params: dict[str, str],
