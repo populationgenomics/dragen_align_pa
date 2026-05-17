@@ -21,6 +21,7 @@ from dragen_align_pa.constants import (
 from dragen_align_pa.file_types import FileTypeSpec
 from dragen_align_pa.jobs import (
     delete_data_in_ica,
+    download_batch_artefacts,
     download_ica_pipeline_outputs,
     download_md5_results,
     download_specific_files_from_ica,
@@ -37,6 +38,7 @@ from dragen_align_pa.jobs import (
 )
 from dragen_align_pa.utils import (
     calculate_needed_storage,
+    get_batch_artefacts_root,
     get_manifest_path_for_cohort,
     get_output_path,
     get_pipeline_path,
@@ -643,6 +645,41 @@ def _resolve_then_download_bulk(
         sequencing_group=sequencing_group,
         ica_folder_path=ica_folder,
     )
+
+
+@stage(required_stages=[ManageDragenPipeline, DownloadDataFromIca])
+class DownloadBatchArtefactsFromIca(CohortStage):
+    """One-shot per-batch download of passfail.json / summary.json / reports/."""
+
+    def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:  # pyright: ignore[reportIncompatibleMethodOverride]
+        # Sibling marker in the dragen_batch_metrics/ root. `get_batch_artefacts_root`
+        # builds the `ica/{DRAGEN_VERSION}/output/dragen_batch_metrics` prefix in
+        # exactly one place; cohort scoping is at the leaf via the filename.
+        return get_batch_artefacts_root() / f'{cohort.name}_artefacts_done.txt'
+
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:
+        batches_file_path: cpg_utils.Path = inputs.as_dict(target=cohort, stage=ManageDragenPipeline)[
+            f'{cohort.name}_batches'
+        ]
+        gcs_output_root = get_batch_artefacts_root()
+        marker_path = self.expected_outputs(cohort=cohort)
+
+        job: PythonJob = initialise_python_job(
+            job_name='DownloadBatchArtefactsFromIca',
+            target=cohort,
+            tool_name='ICA-Python',
+        )
+        job.image(image=get_driver_image())
+        job.memory('4Gi')
+        job.spot(is_spot=False)
+        job.call(
+            download_batch_artefacts.run,
+            batches_file_path=batches_file_path,
+            gcs_output_root=gcs_output_root,
+            marker_path=marker_path,
+        )
+
+        return self.make_outputs(target=cohort, data=marker_path, jobs=job)
 
 
 @stage(required_stages=[DownloadCramFromIca])  # Depends on CRAM being downloaded
