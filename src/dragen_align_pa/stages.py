@@ -356,6 +356,17 @@ class ManageDragenPipeline(CohortStage):
 
 @stage(required_stages=[ManageDragenPipeline])
 class ManageDragenMlr(CohortStage):
+    """**TEMPORARILY BROKEN on this branch (Task 19b deferred to PR#4).**
+
+    `manage_dragen_mlr._submit_mlr_run` still constructs the legacy per-SG
+    ICA path (`{output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/`)
+    instead of the new batched
+    `{output_folder}/{cohort.name}/{user_reference}-{pipeline_id}/` layout
+    written by the unified orchestrator. Running this stage on top of the
+    new orchestrator output will fail at the ICA file-lookup step. Fix
+    lands in PR#4 (Task 19b — `manage_dragen_mlr` path-construction rewrite).
+    """
+
     def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         cohort: Cohort,
@@ -407,6 +418,13 @@ class DownloadCramFromIca(SequencingGroupStage):
     Download cram and crai files from ICA separately. This is to allow registrations of the cram files
     in metamist to be done via stage decorators. The pipeline ID needs to be read within the Hail BashJob to get the current
     pipeline ID. If read outside the job, it will get the pipeline ID from the previous pipeline run.
+
+    **TEMPORARILY BROKEN on this branch (Task 18 deferred to PR#4).**
+    `download_specific_files_from_ica.run` still builds the legacy per-SG
+    ICA path (`{output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/`)
+    instead of resolving via `get_ica_sample_folder` against the new per-SG
+    state schema. Running this stage on the new orchestrator output will
+    fail at the ICA file-lookup step. Fix lands in PR#4 (Task 18).
     """  # noqa: E501
 
     def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -465,6 +483,13 @@ class DownloadCramFromIca(SequencingGroupStage):
     required_stages=[ManageDragenPipeline],
 )
 class DownloadGvcfFromIca(SequencingGroupStage):
+    """**TEMPORARILY BROKEN on this branch (Task 19 deferred to PR#4).**
+
+    Shares `download_specific_files_from_ica.run` with `DownloadCramFromIca`,
+    which still uses the legacy per-SG ICA path layout. Will fail at the
+    ICA file-lookup step on the new orchestrator output. Fix lands in PR#4.
+    """
+
     def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         sequencing_group: SequencingGroup,
@@ -524,6 +549,14 @@ class DownloadGvcfFromIca(SequencingGroupStage):
     required_stages=[DownloadGvcfFromIca, ManageDragenMlr, ManageDragenPipeline],
 )
 class DownloadMlrGvcfFromIca(SequencingGroupStage):
+    """**TEMPORARILY BROKEN on this branch (Tasks 19 + 19b deferred to PR#4).**
+
+    Shares `download_specific_files_from_ica.run` with the other download
+    stages (legacy per-SG ICA path layout), and depends on
+    `ManageDragenMlr`'s output, which is itself runtime-broken on this
+    branch. Fix lands in PR#4 once Tasks 19 and 19b are applied together.
+    """
+
     def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         sequencing_group: SequencingGroup,
