@@ -34,5 +34,19 @@ def run(cohort: Cohort, output: cpg_utils.Path) -> None:
         )
     logger.info(f'Cohort output folder for {cohort.name} (status {status}): {folder_id}')
 
+    # ICA folder statuses are documented as `PARTIAL`, `AVAILABLE`, `ARCHIVING`,
+    # `ARCHIVED`, `UNARCHIVING`, `DELETING`. Anything other than `AVAILABLE`
+    # means the folder is in a state where the orchestrator's subsequent
+    # writes (analysis output / FASTQ list uploads) will fail with an opaque
+    # error — surface the issue at the prep step so operators can clean up
+    # (manually unarchive, abort and re-create, etc.) before any pipeline
+    # is submitted.
+    if status != 'AVAILABLE':
+        logger.warning(
+            f'Cohort output folder for {cohort.name} has non-AVAILABLE status '
+            f'{status!r} (folder_id={folder_id}). Subsequent pipeline submissions '
+            f"may fail; verify the folder's state in ICA before proceeding.",
+        )
+
     with output.open('w') as fh:
         json.dump({'analysis_output_fid': folder_id}, fh)

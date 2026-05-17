@@ -308,7 +308,10 @@ class ManageDragenPipeline(CohortStage):
         # Batch count isn't known until submission, so generate enough keys for
         # twice the cohort size (initial + retry batches with batch_size>=1).
         sg_names = cohort.get_sequencing_group_ids()
-        batch_size = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'batch_size'], default=5)
+        batch_size = config_retrieve(
+            ['dragen_align_pa', 'manage_dragen_pipeline', 'batch_size'],
+            default=manage_dragen_pipeline.DEFAULT_BATCH_SIZE,
+        )
         max_batches = 2 * ((len(sg_names) + batch_size - 1) // batch_size)
         for i in range(max_batches):
             name = f'{cohort.name}-batch{i:04d}'
@@ -688,9 +691,16 @@ def _resolve_then_download_bulk(
     )
 
 
-@stage(required_stages=[ManageDragenPipeline, DownloadDataFromIca])
+@stage(required_stages=[ManageDragenPipeline])
 class DownloadBatchArtefactsFromIca(CohortStage):
-    """One-shot per-batch download of passfail.json / summary.json / reports/."""
+    """One-shot per-batch download of passfail.json / summary.json / reports/.
+
+    Only depends on `ManageDragenPipeline`, not on `DownloadDataFromIca`:
+    the batch-root artefacts (passfail / summary / reports/) are valuable
+    for diagnosing per-SG download failures, and intentionally decoupling
+    them means a failed `DownloadDataFromIca` for one SG doesn't block
+    the cohort-level diagnostics.
+    """
 
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:  # pyright: ignore[reportIncompatibleMethodOverride]
         # Sibling marker in the dragen_batch_metrics/ root. `get_batch_artefacts_root`
@@ -718,6 +728,7 @@ class DownloadBatchArtefactsFromIca(CohortStage):
             batches_file_path=batches_file_path,
             gcs_output_root=gcs_output_root,
             marker_path=marker_path,
+            cohort_name=cohort.name,
         )
 
         return self.make_outputs(target=cohort, data=marker_path, jobs=job)

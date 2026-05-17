@@ -5,7 +5,6 @@ batches file. Files are streamed directly from ICA to GCS via the existing
 `ica_utils.stream_ica_file_to_gcs` helper — no local staging, no icav2 CLI.
 """
 
-import json
 from typing import Literal
 
 import cpg_utils
@@ -18,6 +17,7 @@ from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
+from dragen_align_pa.batches import BatchesFile
 from dragen_align_pa.constants import BUCKET_NAME
 
 
@@ -100,16 +100,23 @@ def run(
     batches_file_path: cpg_utils.Path,
     gcs_output_root: cpg_utils.Path,
     marker_path: cpg_utils.Path,
+    cohort_name: str,
 ) -> None:
     """For each successfully-submitted batch, mirror passfail.json/summary.json/reports/.
 
-    Writes `marker_path` on completion so the stage has a deterministic expected_output.
+    Writes `marker_path` on completion so the stage has a deterministic
+    expected_output. `cohort_name` is passed explicitly from the stage
+    (rather than parsed out of the filename) so the job is decoupled from
+    `ManageDragenPipeline.expected_outputs`'s filename convention.
+
+    Schema validation: uses `BatchesFile.read()` to enforce schema_version
+    + every required per-batch key — a malformed batches file raises
+    `ValueError` here instead of a bare `KeyError` deep in the loop.
     """
-    with batches_file_path.open('r') as fh:
-        data = json.load(fh)
+    batches_file = BatchesFile(path=batches_file_path)
+    batches_file.read()
 
     output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
-    cohort_name = batches_file_path.name.replace('_batches.json', '')
 
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
@@ -132,11 +139,29 @@ def run(
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     path_parameters = {'projectId': secrets['projectID']}
 
+    seen_batch_indices: set[int] = set()
+
     with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
-        for batch_entry in data['batches']:
+        for batch_entry in batches_file.batches:
             if not batch_entry.get('pipeline_id'):
+                logger.info(
+                    f'Batch index {batch_entry["batch_index"]} has no '
+                    f'pipeline_id (status={batch_entry.get("status")!r}); '
+                    f'skipping artefact download.',
+                )
                 continue
+
+            batch_index = batch_entry['batch_index']
+            if batch_index in seen_batch_indices:
+                # Two entries with the same batch_index would write to the same
+                # GCS prefix and silently clobber each other. The BatchesFile
+                # schema doesn't enforce uniqueness, so guard here.
+                raise ValueError(
+                    f'Duplicate batch_index {batch_index} in {batches_file_path}; '
+                    f'refusing to overwrite GCS artefacts.',
+                )
+            seen_batch_indices.add(batch_index)
 
             # PrepareIcaForDragenAnalysis creates one folder named `cohort_name`
             # under `output_folder/`; ICA writes each batch's analysis run inside
@@ -146,7 +171,7 @@ def run(
                 f'/{BUCKET_NAME}/{output_folder}/{cohort_name}/'
                 f'{batch_entry["user_reference"]}-{batch_entry["pipeline_id"]}/'
             )
-            batch_name = f'{cohort_name}_batch{batch_entry["batch_index"]:04d}'
+            batch_name = f'{cohort_name}_batch{batch_index:04d}'
             gcs_prefix = f'{base_prefix}/{batch_name}'
 
             for name in ('passfail.json', 'summary.json'):
