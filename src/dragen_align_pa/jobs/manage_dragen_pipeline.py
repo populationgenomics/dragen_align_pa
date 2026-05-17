@@ -32,6 +32,14 @@ from dragen_align_pa.jobs.ica_pipeline_manager import (
 )
 from dragen_align_pa.jobs.parse_passfail import fetch_passfail_from_ica
 
+# Single source of truth for the default batch chunking width. Used both by
+# this orchestrator (to chunk SGs at submit time) and by `ManageDragenPipeline.
+# expected_outputs` (to declare enough per-batch output keys for the loop to
+# resolve). Both readers MUST use this constant — divergence between the two
+# defaults would cause `_build_loop_outputs_for_batches` to raise with a stale
+# "force_resubmit" message even when no user override is in play.
+DEFAULT_BATCH_SIZE = 5
+
 
 class CohortCancelled(RuntimeError):  # noqa: N818
     """Raised when `cancel_cohort_run=true` has terminated the cohort.
@@ -655,7 +663,9 @@ def run(
     analysis_output_fid_path: cpg_utils.Path,
 ) -> None:
     """Build batches, submit them, retry per-sample failures once, enforce 5% threshold."""
-    batch_size: int = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'batch_size'], default=5)
+    batch_size: int = config_retrieve(
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'batch_size'], default=DEFAULT_BATCH_SIZE,
+    )
     sg_names = [sg.name for sg in cohort.get_sequencing_groups()]
     if not sg_names:
         raise ValueError(f'Cohort {cohort.name} has no sequencing groups.')
