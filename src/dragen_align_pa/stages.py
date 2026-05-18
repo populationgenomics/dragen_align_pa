@@ -33,7 +33,6 @@ from dragen_align_pa.jobs import (
     reheader_mlr_gvcf,
     somalier_extract,
     upload_data_to_ica,
-    upload_fastq_file_list,
     validate_md5_sums,
 )
 from dragen_align_pa.utils import (
@@ -243,41 +242,6 @@ class UploadDataToIca(SequencingGroupStage):
                 data=output,
                 jobs=job,
             )
-        return None
-
-
-@stage(required_stages=[MakeFastqFileList, PrepareIcaForDragenAnalysis])
-class UploadFastqFileList(CohortStage):
-    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
-        results: dict[str, cpg_utils.Path] = {
-            f'{sg_name}': get_prep_path(filename=f'{sg_name}_fastq_list_fid.json')
-            for sg_name in cohort.get_sequencing_group_ids()
-        }
-        return results
-
-    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
-        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
-        if READS_TYPE == 'fastq':
-            fastq_list_file_path_dict: dict[str, cpg_utils.Path] = inputs.as_dict(
-                target=cohort,
-                stage=MakeFastqFileList,
-            )
-
-            job: PythonJob = initialise_python_job(
-                job_name='UploadFastqFileList',
-                target=cohort,
-                tool_name='ICA',
-            )
-            job.image(image=get_driver_image())
-            job.call(
-                upload_fastq_file_list.run,
-                cohort=cohort,
-                outputs=outputs,
-                fastq_list_file_path_dict=fastq_list_file_path_dict,
-            )
-
-            return self.make_outputs(target=cohort, data=outputs, jobs=job)  # pyright: ignore[reportArgumentType]
-
         return None
 
 
