@@ -143,7 +143,7 @@ def get_batch_artefacts_path(cohort_name: str, batch_index: int) -> cpg_utils.Pa
     `passfail.json`, `summary.json`, and a `reports/` directory.
 
     Note: the GCS subdirectory uses **underscore** (`{cohort}_batch{NN}`) — distinct
-    from `Batch.name`, which uses **hyphen** (`{cohort}-batch{NN}`) as the
+    from `IcaBatch.name`, which uses **hyphen** (`{cohort}-batch{NN}`) as the
     cpg-flow target identifier. The two are deliberately split: hyphen for the
     in-process target name (cpg-flow Stage identifier convention), underscore
     for the GCS path (filesystem-friendly, won't be confused with the cohort name).
@@ -152,12 +152,26 @@ def get_batch_artefacts_path(cohort_name: str, batch_index: int) -> cpg_utils.Pa
     return get_batch_artefacts_root() / f'{cohort_name}_batch{batch_index:04d}'
 
 
-def get_ica_sample_folder(pipeline_id_arguid_path: cpg_utils.Path, sg_name: str) -> str:
+def get_ica_sample_folder(
+    pipeline_id_arguid_path: cpg_utils.Path,
+    sg_name: str,
+    cohort_name: str,
+) -> str:
     """Resolve the ICA folder containing a single SG's batch output.
 
     Reads the per-SG state file (extended schema with `schema_version`,
     `user_reference`, `pipeline_id`, `batch_index`) and constructs:
-        /{bucket}/{output_folder}/{user_reference}-{pipeline_id}/{sg_name}/
+        /{bucket}/{output_folder}/{cohort_name}/{user_reference}-{pipeline_id}/{sg_name}/
+
+    The `{cohort_name}/` segment is the cohort-level analysis output folder
+    created once by `PrepareIcaForDragenAnalysis` and passed to ICA as
+    `outputParentFolderId` when the pipeline is submitted. ICA writes each
+    batch's analysis run as `{user_reference}-{pipeline_id}/` inside that
+    folder. `cohort_name` is supplied by the caller (every cpg-flow stage
+    has it via `cohort.name` or `batch.cohort_name`) rather than stored in
+    the state file, because the state file's `user_reference` already
+    encodes `{cohort_name}-batch{NN}_{ar_guid}_` and we prefer the caller
+    pass the unambiguous value.
 
     Failure modes:
     - State file missing → `FileNotFoundError` (resume the orchestrator with
@@ -184,7 +198,7 @@ def get_ica_sample_folder(pipeline_id_arguid_path: cpg_utils.Path, sg_name: str)
       subsequent ICA call would fail with "analysis not found".
 
     Note: per-SG state files are derived projections of `{cohort}_batches.json`
-    (see Task 6 BatchesFile docstring for the recovery contract).
+    (see `BatchesFile`'s docstring for the recovery contract).
     """
     with pipeline_id_arguid_path.open('r') as fh:
         state = json.load(fh)
@@ -204,7 +218,7 @@ def get_ica_sample_folder(pipeline_id_arguid_path: cpg_utils.Path, sg_name: str)
     user_reference = state['user_reference']
     pipeline_id = state['pipeline_id']
     output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
-    return f'/{BUCKET_NAME}/{output_folder}/{user_reference}-{pipeline_id}/{sg_name}/'
+    return f'/{BUCKET_NAME}/{output_folder}/{cohort_name}/{user_reference}-{pipeline_id}/{sg_name}/'
 
 
 def get_manifest_path_for_cohort(cohort: Cohort) -> cpg_utils.Path:

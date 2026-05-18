@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import icasdk
+import pytest
 import requests
 
 from dragen_align_pa.jobs.parse_passfail import fetch_passfail_from_ica, parse_passfail_file
@@ -54,34 +55,50 @@ def test_fetch_passfail_returns_none_when_file_missing():
     assert result is None
 
 
-def test_fetch_passfail_returns_none_on_lookup_api_exception():
-    """Any icasdk.ApiException at the lookup stage -> log + None (caller retries next poll)."""
+def test_fetch_passfail_raises_on_lookup_api_exception():
+    """Any icasdk.ApiException at the lookup stage is transient — re-raise so
+    on_succeeded leaves the batch INPROGRESS and the next poll re-fires
+    (eventually escalating via the on_succeeded failure cap)."""
     api = MagicMock()
-    with patch('dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
-               side_effect=icasdk.ApiException(status=500, reason='kaboom')):
-        result = fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
-    assert result is None
+    with (
+        patch(
+            'dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
+            side_effect=icasdk.ApiException(status=500, reason='kaboom'),
+        ),
+        pytest.raises(icasdk.ApiException),
+    ):
+        fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
 
 
-def test_fetch_passfail_returns_none_on_mint_api_exception():
-    """ApiException from create_download_url_for_data -> log + None."""
+def test_fetch_passfail_raises_on_mint_api_exception():
+    """ApiException from create_download_url_for_data is transient — re-raise."""
     api = MagicMock()
     api.create_download_url_for_data.side_effect = icasdk.ApiException(status=500, reason='kaboom')
-    with patch('dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
-               return_value='fil.passfail'):
-        result = fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
-    assert result is None
+    with (
+        patch(
+            'dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
+            return_value='fil.passfail',
+        ),
+        pytest.raises(icasdk.ApiException),
+    ):
+        fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
 
 
-def test_fetch_passfail_returns_none_on_network_error():
-    """requests.RequestException -> log + None."""
+def test_fetch_passfail_raises_on_network_error():
+    """requests.RequestException -> re-raise."""
     api = _api_instance_with_download_url()
-    with patch('dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
-               return_value='fil.passfail'), \
-         patch('dragen_align_pa.jobs.parse_passfail.requests.get',
-               side_effect=requests.ConnectionError('timeout')):
-        result = fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
-    assert result is None
+    with (
+        patch(
+            'dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
+            return_value='fil.passfail',
+        ),
+        patch(
+            'dragen_align_pa.jobs.parse_passfail.requests.get',
+            side_effect=requests.ConnectionError('timeout'),
+        ),
+        pytest.raises(requests.ConnectionError),
+    ):
+        fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
 
 
 def test_fetch_passfail_retries_once_on_403_then_succeeds():
@@ -106,35 +123,46 @@ def test_fetch_passfail_retries_once_on_403_then_succeeds():
     assert api.create_download_url_for_data.call_count == 2
 
 
-def test_fetch_passfail_returns_none_on_json_decode_error():
+def test_fetch_passfail_raises_on_json_decode_error():
     """The presigned URL can occasionally serve an HTML error page with 200
     (e.g. an upstream proxy returning a maintenance notice). raise_for_status
-    passes, then response.json() raises JSONDecodeError. Per the docstring's
-    'any transient ICA/network error → None' contract, this must NOT
-    propagate out and tear down the polling loop's on_succeeded callback."""
+    passes, then response.json() raises JSONDecodeError. Treated as transient
+    — re-raise so the next poll re-fires."""
     api = _api_instance_with_download_url()
     fake_response = MagicMock(status_code=200)
     fake_response.raise_for_status.return_value = None
     fake_response.json.side_effect = json.JSONDecodeError('bad', '<html>', 0)
 
-    with patch('dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
-               return_value='fil.passfail'), \
-         patch('dragen_align_pa.jobs.parse_passfail.requests.get',
-               return_value=fake_response):
-        result = fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
-    assert result is None
+    with (
+        patch(
+            'dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
+            return_value='fil.passfail',
+        ),
+        patch(
+            'dragen_align_pa.jobs.parse_passfail.requests.get',
+            return_value=fake_response,
+        ),
+        pytest.raises(json.JSONDecodeError),
+    ):
+        fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
 
 
-def test_fetch_passfail_returns_none_on_repeated_403():
-    """Two consecutive 403s -> no further retry; return None."""
+def test_fetch_passfail_raises_on_repeated_403():
+    """Two consecutive 403s -> no further retry; raise via raise_for_status."""
     api = _api_instance_with_download_url()
     first_response = MagicMock(status_code=403)
     second_response = MagicMock(status_code=403)
     second_response.raise_for_status.side_effect = requests.HTTPError('403 still')
 
-    with patch('dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
-               return_value='fil.passfail'), \
-         patch('dragen_align_pa.jobs.parse_passfail.requests.get',
-               side_effect=[first_response, second_response]):
-        result = fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
-    assert result is None
+    with (
+        patch(
+            'dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
+            return_value='fil.passfail',
+        ),
+        patch(
+            'dragen_align_pa.jobs.parse_passfail.requests.get',
+            side_effect=[first_response, second_response],
+        ),
+        pytest.raises(requests.HTTPError),
+    ):
+        fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)

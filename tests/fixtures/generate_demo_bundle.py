@@ -12,8 +12,10 @@ from pathlib import Path
 
 # Defaults match the production user_reference convention from Task 13:
 # `f'{batch.name}_{ar_guid}_'` — ends with `_`. The analysis-folder path
-# below uses `{user_reference}-{pipeline_id}` to match `get_ica_sample_folder`
-# in utils.py (production), so the bundle layout is a faithful fixture.
+# below uses `{cohort_name}/{user_reference}-{pipeline_id}` to match
+# `get_ica_sample_folder` in utils.py (production), so the bundle layout
+# is a faithful fixture.
+DEFAULT_COHORT_NAME = 'COH0001'
 DEFAULT_USER_REFERENCE = 'COH0001-batch0000_test-guid_'
 DEFAULT_PIPELINE_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 DEFAULT_SAMPLES = ('SYN00001', 'SYN00002')
@@ -44,13 +46,16 @@ def generate_demo_bundle(
     user_reference: str = DEFAULT_USER_REFERENCE,
     pipeline_id: str = DEFAULT_PIPELINE_ID,
     failed_samples: tuple[str, ...] = (),
+    cohort_name: str = DEFAULT_COHORT_NAME,
 ) -> Path:
     """Materialise the synthetic bundle. Returns the analysis directory path."""
     failed_set = set(failed_samples)
     # Production convention (matches `get_ica_sample_folder` in utils.py):
-    # `{user_reference}-{pipeline_id}`. Because `user_reference` ends with `_`,
-    # the resulting folder name is `…_-{pipeline_id}/`.
-    analysis_dir = output_root / 'analysis' / f'{user_reference}-{pipeline_id}'
+    # `{cohort_name}/{user_reference}-{pipeline_id}`. The `{cohort_name}/`
+    # segment is the cohort-level folder created by `PrepareIcaForDragenAnalysis`
+    # — ICA writes each batch's analysis run inside it. Because `user_reference`
+    # ends with `_`, the inner folder name renders as `…_-{pipeline_id}/`.
+    analysis_dir = output_root / cohort_name / f'{user_reference}-{pipeline_id}'
 
     (analysis_dir / 'reports' / 'report_files' / 'samples').mkdir(parents=True, exist_ok=True)
     (analysis_dir / 'ica_logs' / 'analysis').mkdir(parents=True, exist_ok=True)
@@ -92,6 +97,7 @@ def _cli() -> None:
     parser.add_argument('--failed', nargs='+', default=[])
     parser.add_argument('--user-reference', default=DEFAULT_USER_REFERENCE)
     parser.add_argument('--pipeline-id', default=DEFAULT_PIPELINE_ID)
+    parser.add_argument('--cohort-name', default=DEFAULT_COHORT_NAME)
     args = parser.parse_args()
 
     path = generate_demo_bundle(
@@ -100,6 +106,7 @@ def _cli() -> None:
         user_reference=args.user_reference,
         pipeline_id=args.pipeline_id,
         failed_samples=tuple(args.failed),
+        cohort_name=args.cohort_name,
     )
     print(f'Generated: {path}')
 

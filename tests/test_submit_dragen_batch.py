@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from dragen_align_pa.batches import Batch
+from dragen_align_pa.batches import IcaBatch
 from dragen_align_pa.jobs import submit_dragen_batch
 from dragen_align_pa.jobs.submit_dragen_batch import _MAX_COVERAGE_REGION_BEDS
 
@@ -136,7 +136,7 @@ def test_run_rejects_no_input_mode_before_any_io():
     class _BoomPath:
         def open(self, _mode='r'):
             raise AssertionError('analysis_output_fid_path was opened before input-mode validation')
-    batch = Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
+    batch = IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
     with pytest.raises(ValueError, match='no valid input mode'):
         submit_dragen_batch.run(
             batch=batch,
@@ -154,7 +154,7 @@ def test_run_rejects_invalid_error_strategy_before_any_io():
     class _BoomPath:
         def open(self, _mode='r'):
             raise AssertionError('analysis_output_fid_path was opened before error_strategy validation')
-    batch = Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
+    batch = IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
     with pytest.raises(ValueError, match='error_strategy'):
         submit_dragen_batch.run(
             batch=batch,
@@ -172,7 +172,7 @@ def test_run_rejects_mixed_cram_and_fastq_inputs():
     class _BoomPath:
         def open(self, _mode='r'):
             raise AssertionError('analysis_output_fid_path was opened before mixed-input rejection')
-    batch = Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
+    batch = IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
     with pytest.raises(ValueError, match='exactly one of'):
         submit_dragen_batch.run(
             batch=batch,
@@ -330,7 +330,7 @@ def test_build_fastq_data_inputs_handles_duplicate_fastq_rows(tmp_path, monkeypa
         lambda **kwargs: 'fil.uploaded_csv',
     )
 
-    batch = Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
+    batch = IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
     data_inputs, _fastq_list_fid = submit_dragen_batch._build_fastq_data_inputs(
         api_instance=MagicMock(),
         project_id='proj',

@@ -19,11 +19,11 @@ from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import config_retrieve, try_get_ar_guid
 from loguru import logger
 
-from dragen_align_pa.batches import Batch
+from dragen_align_pa.batches import IcaBatch
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline
 from dragen_align_pa.utils import delete_pipeline_id_file
 
-ProcessingTarget: TypeAlias = Cohort | SequencingGroup | Batch
+ProcessingTarget: TypeAlias = Cohort | SequencingGroup | IcaBatch
 
 
 class PipelineStatus(Enum):
@@ -139,7 +139,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
     Generic loop to manage ICA pipeline execution for a cohort.
 
     Args:
-        targets_to_process: The list of targets (Cohort, SequencingGroup, or Batch) to process.
+        targets_to_process: The list of targets (Cohort, SequencingGroup, or IcaBatch) to process.
         outputs: The outputs dictionary for the stage.
         api_root: The ICA API root endpoint.
         pipeline_name: Name of the pipeline (e.g., "Dragen", "MLR") for logging.
@@ -175,8 +175,8 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                       signature. MLR's factory ignores this dimension entirely.
 
                       Note: `on_succeeded` receives the `MonitoredTarget` wrapper,
-                      not the wrapped `Batch` / `SequencingGroup`. Access
-                      `monitored.target.sg_names` (for `Batch`) to reach the
+                      not the wrapped `IcaBatch` / `SequencingGroup`. Access
+                      `monitored.target.sg_names` (for `IcaBatch`) to reach the
                       underlying domain object.
 
                       MLR omits `on_succeeded` — its behaviour is unchanged.
@@ -295,10 +295,24 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
             # Cancel a pipeline if requested
             if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False) and target.pipeline_id:
                 logger.info(f'Cancelling {pipeline_name} pipeline run: {target.pipeline_id} for {target_name}')
-                cancel_ica_pipeline_run.run(
-                    ica_pipeline_id=target.pipeline_id,
-                    is_mlr=is_mlr_pipeline,
-                )
+                # Match `_handle_management_flags`'s pre-loop cancel behaviour:
+                # if the ICA abort API fails, log it but still mark the target
+                # CANCELLED locally. User intent (cancel_cohort_run=true) takes
+                # precedence over the API result — without this catch, an ICA
+                # blip during cancel would propagate out of the loop as a
+                # generic exception, bypassing the orchestrator's CohortCancelled
+                # translation at the end of run().
+                try:
+                    cancel_ica_pipeline_run.run(
+                        ica_pipeline_id=target.pipeline_id,
+                        is_mlr=is_mlr_pipeline,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.error(
+                        f'ICA abort API call failed for {target_name} '
+                        f'(pipeline {target.pipeline_id}): {e}. '
+                        f'Marking CANCELLED locally anyway — user intent overrides the API result.',
+                    )
                 delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
                 target.set_status(PipelineStatus.CANCELLED)
                 _fire_status_change(target, PipelineStatus.CANCELLED)

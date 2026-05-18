@@ -23,7 +23,7 @@ from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
-from dragen_align_pa.batches import Batch, validate_error_strategy
+from dragen_align_pa.batches import IcaBatch, validate_error_strategy
 from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_file_id
 
 # DRAGEN flags that don't depend on input type (CRAM vs FASTQ) or sequencing type (WGS vs WES).
@@ -138,7 +138,7 @@ def _build_top_level_parameters(error_strategy: str = 'auto') -> list[AnalysisPa
 
 
 def _build_cram_data_inputs(
-    batch: Batch,
+    batch: IcaBatch,
     per_sg_state_paths: dict[str, cpg_utils.Path],
 ) -> tuple[list[AnalysisDataInput], list[str]]:
     """Construct ICA data inputs for a CRAM-mode batch.
@@ -318,7 +318,7 @@ def _upload_per_batch_fastq_list(
 def _build_fastq_data_inputs(
     api_instance: project_data_api.ProjectDataApi,
     project_id: str,
-    batch: Batch,
+    batch: IcaBatch,
     fastq_ids_path: cpg_utils.Path,
     per_sg_fastq_list_paths: dict[str, cpg_utils.Path],
 ) -> tuple[list[AnalysisDataInput], str]:
@@ -379,7 +379,7 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     if len(coverage_region_bed_names) > _MAX_COVERAGE_REGION_BEDS:
         raise ValueError(
             f'ica.qc.coverage_region_beds has {len(coverage_region_bed_names)} entries; '
-            f'DRAGEN supports at most {_MAX_COVERAGE_REGION_BEDS} (design spec §3). '
+            f'DRAGEN supports at most {_MAX_COVERAGE_REGION_BEDS}. '
             f'Trim the list in your TOML.',
         )
     # Resolve human-readable BED basenames to ICA file IDs. Doing this at the
@@ -407,13 +407,12 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
 
 
 def run(
-    batch: Batch,
+    batch: IcaBatch,
     analysis_output_fid_path: cpg_utils.Path,
     cram_state_paths: dict[str, cpg_utils.Path] | None,
     fastq_ids_path: cpg_utils.Path | None,
     per_sg_fastq_list_paths: dict[str, cpg_utils.Path] | None,
     error_strategy: str = 'auto',
-    ar_guid_override: str | None = None,
 ) -> dict[str, str | list[str]]:
     """Submit one batch to the unified DRAGEN pipeline.
 
@@ -443,7 +442,11 @@ def run(
     3. The caller (`manage_dragen_pipeline.py::_build_submit_callable`)
        persists in this order: per-SG state files first (best-effort
        projections of batches.json) → `batches.json` (the commit point).
-       See Task 15 for the rationale.
+       The order is intentional: if we crash between the two writes,
+       batches.json still shows the batch as PENDING, the next pass
+       re-submits, and per-SG state gets overwritten — reconverging
+       cleanly rather than presenting downstream readers with a state
+       file referencing an unacknowledged batch.
     """
     # Fail-fast input-mode validation, BEFORE any GCS / ICA / secrets IO,
     # so misuse surfaces cheaply at the orchestrator layer. Exactly one of
@@ -474,25 +477,12 @@ def run(
     with analysis_output_fid_path.open('r') as fh:
         analysis_output_fid: str = json.load(fh)['analysis_output_fid']
 
-    if ar_guid_override is not None:
-        # `force_resubmit` lifts the prior batch's AR GUID out of per-SG state
-        # so the new submission keeps the same ICA folder identity (spec §4 line 213).
-        # `is not None` (not truthiness) so an empty-string override raises clearly
-        # rather than silently falling through to the env GUID.
-        if not ar_guid_override:
-            raise ValueError(
-                f'ar_guid_override was empty string for batch {batch.name}; '
-                f'callers should pass None to use the env GUID.',
-            )
-        ar_guid = ar_guid_override
-        logger.info(f'Reusing preserved AR GUID for batch {batch.name}: {ar_guid}')
-    else:
-        ar_guid = try_get_ar_guid()
-        if not ar_guid:
-            raise RuntimeError(
-                'try_get_ar_guid() returned None/empty — analysis-runner GUID is missing from env. '
-                'This breaks ICA folder naming and per-SG state files. Refusing to submit.',
-            )
+    ar_guid = try_get_ar_guid()
+    if not ar_guid:
+        raise RuntimeError(
+            'try_get_ar_guid() returned None/empty — analysis-runner GUID is missing from env. '
+            'This breaks ICA folder naming and per-SG state files. Refusing to submit.',
+        )
     user_reference = f'{batch.name}_{ar_guid}_'
 
     pipeline_id_config: str = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'pipeline_id'])

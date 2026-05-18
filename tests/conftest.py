@@ -59,6 +59,7 @@ import pytest  # noqa: E402
 
 from tests.fixtures.generate_demo_bundle import generate_demo_bundle  # noqa: E402
 
+DEMO_COHORT_NAME = 'COH0001'
 DEMO_USER_REFERENCE = 'COH0001-batch0000_test-guid_'
 DEMO_PIPELINE_ID = '00000000-1111-2222-3333-444444444444'
 DEMO_SAMPLES = ('SYN00001', 'SYN00002')
@@ -72,6 +73,7 @@ def demo_bundle(tmp_path: Path) -> Path:
         samples=DEMO_SAMPLES,
         user_reference=DEMO_USER_REFERENCE,
         pipeline_id=DEMO_PIPELINE_ID,
+        cohort_name=DEMO_COHORT_NAME,
     )
 
 
@@ -84,6 +86,7 @@ def demo_bundle_with_failure(tmp_path: Path) -> Path:
         user_reference=DEMO_USER_REFERENCE,
         pipeline_id=DEMO_PIPELINE_ID,
         failed_samples=('SYN00002',),
+        cohort_name=DEMO_COHORT_NAME,
     )
 
 
