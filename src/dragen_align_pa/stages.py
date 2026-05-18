@@ -427,13 +427,6 @@ class DownloadCramFromIca(SequencingGroupStage):
     Download cram and crai files from ICA separately. This is to allow registrations of the cram files
     in metamist to be done via stage decorators. The pipeline ID needs to be read within the Hail BashJob to get the current
     pipeline ID. If read outside the job, it will get the pipeline ID from the previous pipeline run.
-
-    **TEMPORARILY BROKEN on this branch (Task 18 deferred to PR#4).**
-    `download_specific_files_from_ica.run` still builds the legacy per-SG
-    ICA path (`{output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/`)
-    instead of resolving via `get_ica_sample_folder` against the new per-SG
-    state schema. Running this stage on the new orchestrator output will
-    fail at the ICA file-lookup step. Fix lands in PR#4 (Task 18).
     """  # noqa: E501
 
     def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -449,8 +442,9 @@ class DownloadCramFromIca(SequencingGroupStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
 
         # Inputs from previous stage
+        cohort = get_multicohort().get_cohorts()[0]
         pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
-            target=get_multicohort().get_cohorts()[0],
+            target=cohort,
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
@@ -472,10 +466,11 @@ class DownloadCramFromIca(SequencingGroupStage):
         )
 
         ica_download_job.call(
-            download_specific_files_from_ica.run,
+            download_specific_files_from_ica.resolve_and_run,
             sequencing_group=sequencing_group,
             file_spec=cram_spec,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
+            cohort_name=cohort.name,
             gcs_output_dir=outputs['cram'].parent,
         )
 
