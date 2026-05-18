@@ -198,7 +198,7 @@ def get_ica_sample_folder(
       subsequent ICA call would fail with "analysis not found".
 
     Note: per-SG state files are derived projections of `{cohort}_batches.json`
-    (see Task 6 BatchesFile docstring for the recovery contract).
+    (see `BatchesFile`'s docstring for the recovery contract).
     """
     with pipeline_id_arguid_path.open('r') as fh:
         state = json.load(fh)

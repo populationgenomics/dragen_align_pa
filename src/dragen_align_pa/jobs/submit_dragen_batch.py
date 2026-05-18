@@ -379,7 +379,7 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     if len(coverage_region_bed_names) > _MAX_COVERAGE_REGION_BEDS:
         raise ValueError(
             f'ica.qc.coverage_region_beds has {len(coverage_region_bed_names)} entries; '
-            f'DRAGEN supports at most {_MAX_COVERAGE_REGION_BEDS} (design spec §3). '
+            f'DRAGEN supports at most {_MAX_COVERAGE_REGION_BEDS}. '
             f'Trim the list in your TOML.',
         )
     # Resolve human-readable BED basenames to ICA file IDs. Doing this at the
@@ -442,7 +442,11 @@ def run(
     3. The caller (`manage_dragen_pipeline.py::_build_submit_callable`)
        persists in this order: per-SG state files first (best-effort
        projections of batches.json) → `batches.json` (the commit point).
-       See Task 15 for the rationale.
+       The order is intentional: if we crash between the two writes,
+       batches.json still shows the batch as PENDING, the next pass
+       re-submits, and per-SG state gets overwritten — reconverging
+       cleanly rather than presenting downstream readers with a state
+       file referencing an unacknowledged batch.
     """
     # Fail-fast input-mode validation, BEFORE any GCS / ICA / secrets IO,
     # so misuse surfaces cheaply at the orchestrator layer. Exactly one of

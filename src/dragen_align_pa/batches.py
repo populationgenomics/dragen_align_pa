@@ -119,21 +119,20 @@ class BatchesFile:
     projections of this file, materialised eagerly to satisfy the cpg-flow per-SG
     I/O contract. If a per-SG projection is missing or stale, it can be
     reconstructed from this file (the consumer of `get_ica_sample_folder` is
-    responsible for the fallback — see Task 7).
+    responsible for the fallback).
 
     Note on `retry_generation` / `has_been_retried` / `retried_sgs`:
     - `retry_generation = 0`: initial batch.
     - `retry_generation = 1`: spawned by `add_retry_batch` from failed SGs.
     - `retried_sgs`: which of *this* batch's `sg_names` have been pulled into a
-      retry batch. Maintained by `mark_sgs_retried`. The spec requires both
-      batch-level and per-SG retry tracking (spec §6 line 304); `retried_sgs`
-      is the per-SG audit record.
+      retry batch. Maintained by `mark_sgs_retried`; the per-SG audit record
+      complements the batch-level `has_been_retried` flag.
     - `has_been_retried` is the action gate (`_build_retry_batches` skips
       batches where it's True). `mark_sgs_retried` flips it True on the first
-      retry of any SG from this batch — the spec's "single retry only" rule
-      applies at the batch level, so partial retries still consume the batch's
-      retry allowance. Retry batches have `has_been_retried = True` set at
-      creation so a hypothetical second retry pass short-circuits.
+      retry of any SG from this batch — the "single retry only" rule applies
+      at the batch level, so partial retries still consume the batch's retry
+      allowance. Retry batches have `has_been_retried = True` set at creation
+      so a hypothetical second retry pass short-circuits.
     - Resume uses `retry_generation` + `status` to decide what to re-monitor
       (NOT `has_been_retried`) so in-flight retry batches survive a crash.
 
@@ -144,11 +143,11 @@ class BatchesFile:
       sidecar + rename: that pattern is broken on GCS (rename = copy+delete,
       not atomic) and unnecessary given the single-PUT guarantee.
     - Multi-file writes (batches.json + per-SG state files) are not atomic
-      across files. The commit order is documented in Task 15: per-SG state
-      files first (best-effort projections), then batches.json (the commit
-      point). On crash between writes, the batches file still shows the batch
-      as PENDING/INPROGRESS, the next orchestrator pass re-submits, and the
-      per-SG state files get overwritten with the new pipeline_id.
+      across files. The submitter writes per-SG state files first (best-effort
+      projections), then batches.json (the commit point). On crash between
+      writes, the batches file still shows the batch as PENDING/INPROGRESS,
+      the next orchestrator pass re-submits, and the per-SG state files get
+      overwritten with the new pipeline_id.
 
     Note on input file IDs:
     - **FASTQ mode**: `fastq_list_fid` holds the per-batch combined CSV ID
@@ -307,12 +306,12 @@ class BatchesFile:
     def mark_sgs_retried(self, source_batch_idx: int, sg_names: list[str]) -> None:
         """Record that these SGs from `source_batch_idx` have been pulled into a retry batch.
 
-        Per-SG audit trail mandated by spec §6 line 304 ("mark them and their
-        SGs has_been_retried=true"). The batch-level `has_been_retried` flag is
-        the "no second retry" action gate: it flips True as soon as ANY of this
-        batch's SGs has been pulled into a retry, because the spec allows only
-        a single retry pass per cohort (so the source batch has used up its
-        retry allowance regardless of how many SGs were involved).
+        Per-SG audit trail complementing the batch-level `has_been_retried` flag.
+        `has_been_retried` is the "no second retry" action gate: it flips True
+        as soon as ANY of this batch's SGs has been pulled into a retry,
+        because only one retry pass is allowed per cohort (so the source batch
+        has used up its retry allowance regardless of how many SGs were
+        involved).
         """
         b = self.batches[source_batch_idx]
         if not sg_names:

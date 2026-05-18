@@ -4,11 +4,9 @@
 `sample_id → "Success" | "Fail"`. In our pipeline `sample_id` == `sg_name`:
 - FASTQ mode: `MakeFastqFileList` writes RGSM = SG name in every row.
 - CRAM mode: the original CRAM's RG SM tag is preserved through the unified
-  pipeline's input handling (validated in design doc §7 "Open items deferred
-  to implementation" and confirmed during the small-cohort validation runs
-  in Task 25 step V3 — if a CRAM cohort surfaces RGSM != sg_name, the
+  pipeline's input handling. If a CRAM cohort surfaces RGSM != sg_name, the
   defensive filter in `_on_succeeded` warns and drops the unexpected keys
-  before they reach the retry path).
+  before they reach the retry path.
 """
 
 import json

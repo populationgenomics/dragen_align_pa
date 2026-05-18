@@ -133,7 +133,7 @@ def _persist_per_sg_state_for_batch(
 ) -> None:
     """Write per-SG state files for one batch immediately on submission.
 
-    Schema must match the version validated by `get_ica_sample_folder` (Task 7).
+    Schema must match the version validated by `get_ica_sample_folder`.
     Bumping the version requires a coordinated change on both sides — the
     `monitor_previous=true` resume path will refuse to read state files written
     under a different version.
@@ -248,13 +248,13 @@ def _on_succeeded_factory(
                         f'folder {analysis_folder_name}): could not resolve analysis output folder ID: {e}',
                     )
         except Exception as e:  # noqa: BLE001
-            # RAISE (don't `return`): Task 10's transactional callback catches
-            # this, logs it, and leaves the loop's per-target status INPROGRESS.
-            # batches.json also stays INPROGRESS (we never called record_status).
-            # Next poll cycle re-fires on_succeeded. If we silently `return`ed
-            # here, the loop would think the callback succeeded and set
-            # SUCCEEDED — diverging from batches.json which would still show
-            # INPROGRESS.
+            # RAISE (don't `return`): the shared loop's transactional callback
+            # contract catches this, logs it, and leaves the per-target status
+            # at INPROGRESS. batches.json also stays INPROGRESS (we never
+            # called record_status). Next poll cycle re-fires on_succeeded.
+            # If we silently `return`ed here, the loop would think the
+            # callback succeeded and set SUCCEEDED — diverging from
+            # batches.json which would still show INPROGRESS.
             raise RuntimeError(
                 f'Batch {batch.name}: ICA fetch failed in on_succeeded ({e}); '
                 f'leaving status INPROGRESS so the next poll can re-fetch.',
@@ -356,11 +356,11 @@ def _build_retry_batches(
 
     Only retries batches with `retry_generation == 0` (the initial cohort batches).
     Uses `BatchesFile.add_retry_batch` to append retry entries and
-    `BatchesFile.mark_sgs_retried` to record per-SG audit trail on the source
-    batches (spec §6 line 304). Retry batches are created with
-    `has_been_retried=True` and `error_strategy` defaulting to `continue` for
-    single-sample batches, so a hypothetical second retry pass short-circuits —
-    enforcing the "single retry only" spec invariant.
+    `BatchesFile.mark_sgs_retried` to record the per-SG audit trail on the
+    source batches. Retry batches are created with `has_been_retried=True` and
+    `error_strategy` defaulting to `continue` for single-sample batches, so a
+    hypothetical second retry pass short-circuits — enforcing the single-retry
+    invariant.
 
     `CANCELLED` is treated as a **terminal** state — `cancel_cohort_run=true` is
     a user-initiated abort and the spec (§4 line 214) does not allow it to spawn
@@ -796,9 +796,9 @@ def run(
     n_failed = len(failed)
     if _threshold_breached(n_failed=n_failed, n_total=n_total):
         # Persist errors.log to disk before raising, so the cohort run
-        # produces a durable error artefact (spec §6 line 312). `errors_path`
-        # is internal scratch — not declared as a stage expected_output, so
-        # absence of the file on a successful run does not trigger a re-run.
+        # produces a durable error artefact. `errors_path` is internal
+        # scratch — not declared as a stage expected_output, so absence of
+        # the file on a successful run does not trigger a re-run.
         with errors_path.open('w') as fh:
             fh.write(
                 f'Cohort {cohort.name}: {n_failed}/{n_total} SGs failed the DRAGEN '
