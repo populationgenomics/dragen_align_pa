@@ -700,13 +700,45 @@ class DownloadBatchArtefactsFromIca(CohortStage):
     for diagnosing per-SG download failures, and intentionally decoupling
     them means a failed `DownloadDataFromIca` for one SG doesn't block
     the cohort-level diagnostics.
+
+    **Marker payload** (`{cohort}_artefacts_done.json`, the stage's
+    `expected_outputs`):
+
+    ```json
+    {
+        "cohort_name": "COH0001",
+        "batches_processed": 3,
+        "success_count": 45,
+        "lookup_failure_count": 0,
+        "stream_failure_count": 2
+    }
+    ```
+
+    - `batches_processed`: count of batches with a non-null `pipeline_id`
+      in `{cohort}_batches.json`. Batches with no pipeline_id (PENDING /
+      never-submitted) are skipped and excluded from this count.
+    - `success_count`: every file streamed to GCS individually. Each batch
+      contributes 1 for `passfail.json` (if present), 1 for `summary.json`
+      (if present), and 1 for each file under `reports/` (recursive).
+    - `lookup_failure_count`: number of `find_file_id_by_name` calls that
+      raised `icasdk.ApiException`. The file may exist but we couldn't
+      address it — usually an auth / connectivity blip.
+    - `stream_failure_count`: number of `stream_ica_file_to_gcs` calls
+      that raised a transient ICA / HTTP / GCS error after a successful
+      lookup.
+
+    Stage success means "the run completed". A non-zero failure count
+    means partial artefacts on GCS; operators inspect the JSON marker to
+    decide whether to re-run. A run where every attempted stream failed
+    raises `RuntimeError` and does NOT write the marker (cpg-flow sees the
+    stage as failed and retries).
     """
 
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:  # pyright: ignore[reportIncompatibleMethodOverride]
         # Sibling marker in the dragen_batch_metrics/ root. `get_batch_artefacts_root`
         # builds the `ica/{DRAGEN_VERSION}/output/dragen_batch_metrics` prefix in
         # exactly one place; cohort scoping is at the leaf via the filename.
-        return get_batch_artefacts_root() / f'{cohort.name}_artefacts_done.txt'
+        return get_batch_artefacts_root() / f'{cohort.name}_artefacts_done.json'
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:
         batches_file_path: cpg_utils.Path = inputs.as_dict(target=cohort, stage=ManageDragenPipeline)[
