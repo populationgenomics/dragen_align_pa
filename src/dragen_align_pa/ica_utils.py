@@ -205,96 +205,32 @@ def stream_ica_file_to_gcs(
         raise
 
 
-def list_and_filter_ica_files(
+def list_ica_files(
     api_instance: 'project_data_api.ProjectDataApi',
     path_parameters: dict[str, str],
     base_ica_folder_path: str,
+    *,
+    recursive: bool = False,
 ) -> list[tuple[str, str]]:
-    """
-    Lists all files in the ICA folder, handles pagination,
-    and filters out CRAMs/GVCFs.
-    (Used by download_ica_pipeline_outputs.py)
-    """
-    files_to_download: list[tuple[str, str]] = []
-    page_token: str | None = None
-    logger.info('Listing files in ICA folder...')
+    """List files under an ICA folder. Pagination is handled internally.
 
-    while True:
-        query_params = {  # pyright: ignore[reportUnknownVariableType]
-            'parentFolderPath': base_ica_folder_path,
-            'type': 'FILE',
-            'pageSize': '1000',
-        }
-        if page_token:
-            query_params['pageToken'] = page_token
+    Returns ``(name_or_relative_path, file_id)`` tuples.
 
-        try:
-            api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
-                path_params=path_parameters,  # pyright: ignore[reportArgumentType]
-                query_params=query_params,  # type: ignore[reportArgumentType]
-            )
-        except icasdk.ApiException as e:
-            logger.error(
-                f'Exception when calling ProjectDataApi->get_project_data_list: {e}',
-            )
-            raise
+    With ``recursive=False`` (default), lists only files directly inside
+    ``base_ica_folder_path``; the first tuple element is the leaf file
+    name. With ``recursive=True``, walks subfolders and returns relative
+    paths (e.g. ``'report_files/samples/foo.csv'``) — pass the relative
+    path directly to ``stream_ica_file_to_gcs`` as ``file_name`` and the
+    GCS object key preserves the nested layout.
 
-        # --- Filter files ---
-        for item in api_response.body['items']:  # pyright: ignore[reportUnknownVariableType]
-            details = item['data'].get('details', {})  # pyright: ignore[reportUnknownVariableType]
-            file_name = details.get('name')  # pyright: ignore[reportUnknownVariableType]
-            file_id = item['data'].get('id')  # pyright: ignore[reportUnknownVariableType]
+    No extension filtering — callers compose any filter they need (e.g.
+    ``[(n, f) for n, f in list_ica_files(...) if not n.endswith(...)]``).
 
-            if not file_name or not file_id:
-                logger.warning(f'Skipping item with missing name or id: {item}')
-                continue
-
-            # Exclude CRAMs, GVCFs, and their indices
-            if not file_name.endswith(
-                ('.cram', '.cram.crai', '.gvcf.gz', '.gvcf.gz.tbi'),
-            ):
-                files_to_download.append(
-                    (file_name, file_id),
-                )  # pyright: ignore[reportUnknownArgumentType]
-
-        page_token = api_response.body.get(
-            'nextPageToken',
-        )  # pyright: ignore[reportUnknownVariableType]
-        if not page_token:
-            break  # Exit loop if no more pages
-
-    logger.info(f'Found {len(files_to_download)} files to download.')
-    return files_to_download
-
-
-def list_ica_files_recursive(
-    api_instance: 'project_data_api.ProjectDataApi',
-    path_parameters: dict[str, str],
-    base_ica_folder_path: str,
-) -> list[tuple[str, str]]:
-    """Recursively list every file under `base_ica_folder_path`.
-
-    Returns ``(relative_path, file_id)`` tuples, where ``relative_path`` is
-    the file's path component relative to ``base_ica_folder_path`` (e.g.
-    ``'foo.html'`` or ``'report_files/samples/CPG_00001.csv'``). The relative
-    path can be passed directly to ``stream_ica_file_to_gcs`` as ``file_name``;
-    the resulting GCS object key preserves the nested layout.
-
-    Walks subfolders via separate ``type=FOLDER`` queries — the ICA SDK's
-    ``get_project_data_list`` does not expose a recursive flag. The
-    non-recursive sibling ``list_and_filter_ica_files`` only sees files at
-    the top level of the requested folder, so it silently drops files in
-    nested subdirectories. Use this helper for DRAGEN's ``reports/`` tree
-    (which contains ``report_files/samples/``) and any other case where the
-    folder tree may have arbitrary depth.
-
-    No extension filtering — the recursive use case is ``reports/``, which
-    doesn't contain CRAM/gVCF, and callers can filter the return themselves.
-
-    Raises ``icasdk.ApiException`` on any API failure mid-walk. The walk is
-    not transactional: if a subfolder's list call fails after some files
+    Folder traversal uses separate ``type=FOLDER`` queries — the ICA SDK's
+    ``get_project_data_list`` does not expose a recursive flag. The walk
+    is not transactional: if a subfolder query fails after some files
     have been collected, those collected entries are discarded and the
-    exception propagates. Callers should re-run on failure.
+    ``icasdk.ApiException`` propagates. Callers should re-run on failure.
     """
     base = base_ica_folder_path.rstrip('/') + '/'
 
@@ -335,8 +271,10 @@ def list_ica_files_recursive(
             if not name or not fid:
                 logger.warning(f'Skipping item with missing name or id under {parent}: {item}')
                 continue
-            rel = f'{relative_prefix}{name}'
-            files.append((rel, fid))  # pyright: ignore[reportUnknownArgumentType]
+            files.append((f'{relative_prefix}{name}', fid))  # pyright: ignore[reportUnknownArgumentType]
+
+        if not recursive:
+            return
 
         for item in _list_children(parent, 'FOLDER'):
             details = item['data'].get('details', {})  # pyright: ignore[reportUnknownVariableType]
@@ -346,7 +284,7 @@ def list_ica_files_recursive(
             _walk(f'{parent}{name}/', f'{relative_prefix}{name}/')
 
     _walk(base, '')
-    logger.info(f'Recursive list under {base} found {len(files)} files.')
+    logger.info(f'List under {base} (recursive={recursive}) found {len(files)} files.')
     return files
 
 

@@ -52,12 +52,16 @@ def run(
     with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
 
-        # --- List, filter, and download files ---
-        files_to_download = ica_utils.list_and_filter_ica_files(
+        # --- List + inline filter for CRAM/gVCF (handled by sibling stages) ---
+        files = ica_utils.list_ica_files(
             api_instance=api_instance,
             path_parameters=path_parameters,
             base_ica_folder_path=base_ica_folder_path,
         )
+        files_to_download = [
+            (name, fid) for name, fid in files
+            if not name.endswith(('.cram', '.cram.crai', '.gvcf.gz', '.gvcf.gz.tbi'))
+        ]
 
         for file_name, file_id in files_to_download:
             logger.info(f'Preparing to download file: {file_name} (ID: {file_id})')
