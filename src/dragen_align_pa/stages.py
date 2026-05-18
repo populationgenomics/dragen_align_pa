@@ -365,16 +365,7 @@ class ManageDragenPipeline(CohortStage):
 
 @stage(required_stages=[ManageDragenPipeline])
 class ManageDragenMlr(CohortStage):
-    """**TEMPORARILY BROKEN on this branch (Task 19b deferred to PR#4).**
-
-    `manage_dragen_mlr._submit_mlr_run` still constructs the legacy per-SG
-    ICA path (`{output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/`)
-    instead of the new batched
-    `{output_folder}/{cohort.name}/{user_reference}-{pipeline_id}/` layout
-    written by the unified orchestrator. Running this stage on top of the
-    new orchestrator output will fail at the ICA file-lookup step. Fix
-    lands in PR#4 (Task 19b — `manage_dragen_mlr` path-construction rewrite).
-    """
+    """Submit per-SG DRAGEN MLR runs and wait for them to complete."""
 
     def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
@@ -487,12 +478,7 @@ class DownloadCramFromIca(SequencingGroupStage):
     required_stages=[ManageDragenPipeline],
 )
 class DownloadGvcfFromIca(SequencingGroupStage):
-    """**TEMPORARILY BROKEN on this branch (Task 19 deferred to PR#4).**
-
-    Shares `download_specific_files_from_ica.run` with `DownloadCramFromIca`,
-    which still uses the legacy per-SG ICA path layout. Will fail at the
-    ICA file-lookup step on the new orchestrator output. Fix lands in PR#4.
-    """
+    """Download base gVCF + index from ICA into the cohort's per-SG GCS folder."""
 
     def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
@@ -512,8 +498,9 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
 
         # Inputs from previous stage
+        cohort = get_multicohort().get_cohorts()[0]
         pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
-            target=get_multicohort().get_cohorts()[0],
+            target=cohort,
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
@@ -535,10 +522,11 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         )
 
         ica_download_job.call(
-            download_specific_files_from_ica.run,
+            download_specific_files_from_ica.resolve_and_run,
             sequencing_group=sequencing_group,
             file_spec=base_gvcf_spec,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
+            cohort_name=cohort.name,
             gcs_output_dir=outputs['gvcf'].parent,
         )
 
@@ -553,12 +541,13 @@ class DownloadGvcfFromIca(SequencingGroupStage):
     required_stages=[DownloadGvcfFromIca, ManageDragenMlr, ManageDragenPipeline],
 )
 class DownloadMlrGvcfFromIca(SequencingGroupStage):
-    """**TEMPORARILY BROKEN on this branch (Tasks 19 + 19b deferred to PR#4).**
+    """Download the MLR-refined gVCF + index from the parent batch's per-SG folder.
 
-    Shares `download_specific_files_from_ica.run` with the other download
-    stages (legacy per-SG ICA path layout), and depends on
-    `ManageDragenMlr`'s output, which is itself runtime-broken on this
-    branch. Fix lands in PR#4 once Tasks 19 and 19b are applied together.
+    Under the batched layout, MLR writes into the same per-SG subfolder as
+    the original DRAGEN outputs, so the ICA folder is resolved through
+    `ManageDragenPipeline`'s per-SG state file (NOT `ManageDragenMlr`'s).
+    The `ManageDragenMlr` dependency is retained for stage ordering — we
+    must wait for MLR to finish — but the path comes from the DRAGEN state.
     """
 
     def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -582,9 +571,12 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
         """  # noqa: E501
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
 
-        # Inputs from previous stage
+        # Resolve through the DRAGEN per-SG state file — MLR writes into the
+        # parent batch's per-SG folder, so the path matches DownloadCram /
+        # DownloadGvcf's resolution.
+        cohort = get_multicohort().get_cohorts()[0]
         pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
-            target=get_multicohort().get_cohorts()[0],
+            target=cohort,
             stage=ManageDragenPipeline,
         )[f'{sequencing_group.name}_pipeline_id_and_arguid']
 
@@ -606,10 +598,11 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
         )
 
         ica_download_job.call(
-            download_specific_files_from_ica.run,
+            download_specific_files_from_ica.resolve_and_run,
             sequencing_group=sequencing_group,
             file_spec=recal_gvcf_spec,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
+            cohort_name=cohort.name,
             gcs_output_dir=outputs['gvcf'].parent,
         )
 

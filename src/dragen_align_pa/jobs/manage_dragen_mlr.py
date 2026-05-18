@@ -13,6 +13,7 @@ from loguru import logger
 from dragen_align_pa import ica_cli_utils, utils
 from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
+from dragen_align_pa.utils import PER_SG_STATE_SCHEMA_VERSION
 
 
 def _mlr_enter_project(mlr_project: str) -> None:
@@ -93,7 +94,7 @@ def _mlr_build_popgen_cli_command(
         '--input-gvcf-file-url',
         gvcf_url,
         '--analysis-instance-tier',
-        config_retrieve(['ica', 'mlr', 'analysis_instance_tier']),
+        config_retrieve(['dragen_align_pa', 'manage_dragen_mlr', 'analysis_instance_tier']),
     ]
 
 
@@ -123,6 +124,7 @@ def _submit_mlr_run(
     pipeline_id_arguid_path: cpg_utils.Path,
     ica_analysis_output_folder: str,
     sg_name: str,
+    cohort_name: str,
     mlr_project: str,
     mlr_config_json: str,
     mlr_hash_table: str,
@@ -133,13 +135,33 @@ def _submit_mlr_run(
     and parsing the JSON output file.
     """
     with pipeline_id_arguid_path.open() as pid_arguid_fhandle:
-        data: dict[str, str] = json.load(pid_arguid_fhandle)
+        # Schema kept symmetric with `get_ica_sample_folder` (utils.py): same
+        # schema_version check and required-key loop so operators see identical
+        # error messages regardless of which consumer surfaces a bad file.
+        data = json.load(pid_arguid_fhandle)
+        schema_version = data.get('schema_version', 0)
+        if schema_version != PER_SG_STATE_SCHEMA_VERSION:
+            raise ValueError(
+                f'Per-SG state file {pipeline_id_arguid_path} has schema_version '
+                f'{schema_version}; MLR expects {PER_SG_STATE_SCHEMA_VERSION}. '
+                f'Rerun the cohort with force_resubmit=true (or manually delete '
+                f'the file) to rewrite it under the new schema.',
+            )
+        for required in ('pipeline_id', 'user_reference'):
+            if required not in data:
+                raise KeyError(
+                    f'Per-SG state file {pipeline_id_arguid_path} missing required '
+                    f'key {required!r} under schema_version={PER_SG_STATE_SCHEMA_VERSION}.',
+                )
         pipeline_id = data['pipeline_id']
-        ar_guid = f'_{data["ar_guid"]}_'
+        user_reference = data['user_reference']
 
     batch_tmpdir = os.environ.get('BATCH_TMPDIR', '/io')
+    # MLR outputs land inside the parent Dragen batch's per-SG subfolder so all
+    # outputs for an SG live together. Matches `get_ica_sample_folder`'s shape.
     ica_base_folder = (
-        f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
+        f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{cohort_name}/'
+        f'{user_reference}-{pipeline_id}/{sg_name}/'
     )
 
     try:
@@ -155,7 +177,7 @@ def _submit_mlr_run(
         local_config_path = _mlr_download_config(mlr_config_json, batch_tmpdir)
 
         # --- 4. Build and run the popgen-cli command ---
-        output_folder_url = f'{output_prefix}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}'
+        output_folder_url = f'{output_prefix}/{cohort_name}/{user_reference}-{pipeline_id}/{sg_name}'
         mlr_run_id = f'{sg_name}-mlr'
         submit_command = _mlr_build_popgen_cli_command(
             local_config_path=local_config_path,
@@ -193,23 +215,20 @@ def run(
     )
     mlr_project: str = config_retrieve(['ica', 'projects', 'dragen_mlr'])
     dragen_align_project: str = config_retrieve(['ica', 'projects', 'dragen_align'])
-    mlr_config_json: str = config_retrieve(['ica', 'mlr', 'config_json'])
-    mlr_hash_table: str = config_retrieve(['ica', 'mlr', 'mlr_hash_table'])
+    mlr_config_json: str = config_retrieve(['dragen_align_pa', 'manage_dragen_mlr', 'config_json'])
+    mlr_hash_table: str = config_retrieve(['dragen_align_pa', 'manage_dragen_mlr', 'mlr_hash_table'])
+    output_prefix: str = f'ica://{dragen_align_project}/{BUCKET_NAME}/{ica_analysis_output_folder}'
 
     logger.info(f'Dataset name is: {cohort.dataset.name}')
 
     def _create_submit_callable(sg_name: str) -> Callable[[], str]:
         """Creates a zero-argument callable for pipeline submission."""
-        output_prefix: str = (
-            f'ica://{dragen_align_project}/{BUCKET_NAME}/'
-            f'{config_retrieve(["ica", "data_prep", "output_folder"])}/{sg_name}'
-        )
-
         return partial(
             _submit_mlr_run,
             pipeline_id_arguid_path=pipeline_id_arguid_path_dict[f'{sg_name}_pipeline_id_and_arguid'],
             ica_analysis_output_folder=ica_analysis_output_folder,
             sg_name=sg_name,
+            cohort_name=cohort.name,
             mlr_project=mlr_project,
             mlr_config_json=mlr_config_json,
             mlr_hash_table=mlr_hash_table,
