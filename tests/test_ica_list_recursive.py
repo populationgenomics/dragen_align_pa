@@ -149,3 +149,50 @@ def test_recursive_list_handles_pagination_for_files():
         api_instance=api, path_parameters={'projectId': 'p'}, base_ica_folder_path='/base/',
     )
     assert sorted(result) == [('a.txt', 'fid_a'), ('b.txt', 'fid_b')]
+
+
+def test_recursive_list_handles_pagination_for_folders():
+    """Multi-page FOLDER listings are concatenated correctly across pages,
+    and the walker recurses into every folder from every page."""
+    base_files = MagicMock(body={'items': [], 'nextPageToken': None})
+    folders_page_a = MagicMock(body={
+        'items': [_folder_item('alpha')],
+        'nextPageToken': 'fld-token-1',
+    })
+    folders_page_b = MagicMock(body={
+        'items': [_folder_item('beta')],
+        'nextPageToken': None,
+    })
+    # Each subfolder has one file and no sub-subfolders.
+    alpha_files = MagicMock(body={
+        'items': [_file_item('a.csv', 'fid_a')],
+        'nextPageToken': None,
+    })
+    beta_files = MagicMock(body={
+        'items': [_file_item('b.csv', 'fid_b')],
+        'nextPageToken': None,
+    })
+    empty_folders = MagicMock(body={'items': [], 'nextPageToken': None})
+
+    api = MagicMock()
+    folder_pages_at_base = iter([folders_page_a, folders_page_b])
+
+    def fake_list(path_params, query_params):  # noqa: ARG001
+        parent = query_params['parentFolderPath']
+        type_ = query_params['type']
+        if parent == '/base/' and type_ == 'FILE':
+            return base_files
+        if parent == '/base/' and type_ == 'FOLDER':
+            return next(folder_pages_at_base)
+        if parent == '/base/alpha/' and type_ == 'FILE':
+            return alpha_files
+        if parent == '/base/beta/' and type_ == 'FILE':
+            return beta_files
+        return empty_folders
+
+    api.get_project_data_list.side_effect = fake_list
+
+    result = list_ica_files_recursive(
+        api_instance=api, path_parameters={'projectId': 'p'}, base_ica_folder_path='/base/',
+    )
+    assert sorted(result) == [('alpha/a.csv', 'fid_a'), ('beta/b.csv', 'fid_b')]
