@@ -297,7 +297,7 @@ def test_run_raises_runtime_error_on_total_failure(patched_environment, tmp_path
         MagicMock(side_effect=icasdk.ApiException(status=503, reason='stream boom')),
     )
     monkeypatch.setattr(
-        'dragen_align_pa.ica_utils.list_ica_files_recursive',
+        'dragen_align_pa.ica_utils.list_ica_files',
         MagicMock(return_value=[]),
     )
 
@@ -334,7 +334,7 @@ def test_run_writes_marker_payload_with_partial_success(patched_environment, tmp
         'dragen_align_pa.ica_utils.stream_ica_file_to_gcs', fake_stream,
     )
     monkeypatch.setattr(
-        'dragen_align_pa.ica_utils.list_ica_files_recursive',
+        'dragen_align_pa.ica_utils.list_ica_files',
         MagicMock(return_value=[]),
     )
 

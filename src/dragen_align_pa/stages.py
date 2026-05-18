@@ -293,30 +293,36 @@ class ManageDragenPipeline(CohortStage):
     """Submit cohort batches to the unified DRAGEN pipeline and monitor them."""
 
     def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        # Only DETERMINISTIC outputs go in expected_outputs — anything cpg-flow
+        # can't find when re-evaluating this stage triggers a re-run, so the
+        # set must be exactly the files a successful `run()` always writes.
+        # Variable-existence files (per-batch success/pipeline_id, errors.log
+        # written only on threshold breach) are internal orchestrator scratch
+        # and the orchestrator computes their paths inline via
+        # `get_pipeline_path()` rather than going through expected_outputs.
         results: dict[str, cpg_utils.Path] = {
-            f'{cohort.name}_errors': get_pipeline_path(filename=f'{cohort.name}_errors.log'),
+            # Cohort batches state — written near the start of run() and
+            # updated throughout. Consumed by DownloadBatchArtefactsFromIca.
             f'{cohort.name}_batches': get_pipeline_path(filename=f'{cohort.name}_batches.json'),
+            # Completion marker — written as the FINAL action of a successful
+            # run(). Acts as the canonical "stage completed without raising"
+            # signal that cpg-flow checks for stage completion. Any earlier
+            # raise (threshold breach, cancel, ICA error) skips this write and
+            # the stage is correctly seen as failed.
+            f'{cohort.name}_pipeline_complete': get_pipeline_path(
+                filename=f'{cohort.name}_pipeline_complete.json',
+            ),
         }
 
-        # Per-SG state files (extended schema; consumed by download stages).
+        # Per-SG state files (extended schema; consumed by download stages
+        # via `get_ica_sample_folder` to resolve per-SG ICA folder paths).
+        # Written by `_persist_per_sg_state_for_batch` immediately after each
+        # batch is submitted, so they exist for every SG of any batch that
+        # made it as far as ICA — i.e. all SGs in any successful run().
         for sg in cohort.get_sequencing_groups():
             results[f'{sg.name}_pipeline_id_and_arguid'] = get_pipeline_path(
                 filename=f'{sg.name}_pipeline_id_and_arguid.json',
             )
-
-        # Per-batch success + pipeline-id files used by the shared loop.
-        # Batch count isn't known until submission, so generate enough keys for
-        # twice the cohort size (initial + retry batches with batch_size>=1).
-        sg_names = cohort.get_sequencing_group_ids()
-        batch_size = config_retrieve(
-            ['dragen_align_pa', 'manage_dragen_pipeline', 'batch_size'],
-            default=manage_dragen_pipeline.DEFAULT_BATCH_SIZE,
-        )
-        max_batches = 2 * ((len(sg_names) + batch_size - 1) // batch_size)
-        for i in range(max_batches):
-            name = f'{cohort.name}-batch{i:04d}'
-            results[f'{name}_success'] = get_pipeline_path(filename=f'{name}_pipeline_success.json')
-            results[f'{name}_pipeline_id'] = get_pipeline_path(filename=f'{name}_pipeline_id.json')
 
         return results
 
@@ -660,7 +666,7 @@ class DownloadDataFromIca(SequencingGroupStage):
         cohort_name: str = get_multicohort().get_cohorts()[0].name
 
         ica_download_job.call(
-            _resolve_then_download_bulk,
+            download_ica_pipeline_outputs.run,
             sequencing_group=sequencing_group,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
             cohort_name=cohort_name,
@@ -671,24 +677,6 @@ class DownloadDataFromIca(SequencingGroupStage):
             data=outputs,
             jobs=ica_download_job,
         )
-
-
-def _resolve_then_download_bulk(
-    sequencing_group: SequencingGroup,
-    pipeline_id_arguid_path: cpg_utils.Path,
-    cohort_name: str,
-) -> None:
-    from dragen_align_pa.utils import get_ica_sample_folder  # noqa: PLC0415
-
-    ica_folder = get_ica_sample_folder(
-        pipeline_id_arguid_path,
-        sg_name=sequencing_group.name,
-        cohort_name=cohort_name,
-    )
-    download_ica_pipeline_outputs.run(
-        sequencing_group=sequencing_group,
-        ica_folder_path=ica_folder,
-    )
 
 
 @stage(required_stages=[ManageDragenPipeline])

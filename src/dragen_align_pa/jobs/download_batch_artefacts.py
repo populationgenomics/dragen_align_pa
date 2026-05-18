@@ -248,11 +248,10 @@ def run(
 
             # `reports/` — recursively enumerate every file under the subfolder
             # and stream each. DRAGEN's reports/ tree has nested subdirectories
-            # (e.g. report_files/samples/), so the non-recursive
-            # `list_and_filter_ica_files` would silently drop the nested files;
-            # `list_ica_files_recursive` walks the whole tree and returns
-            # relative paths that preserve the nested layout when reassembled
-            # under the GCS `reports/` prefix.
+            # (e.g. report_files/samples/), so a non-recursive listing would
+            # silently drop the nested files. `list_ica_files(recursive=True)`
+            # walks the whole tree and returns relative paths that preserve the
+            # nested layout when reassembled under the GCS `reports/` prefix.
             #
             # The folder may be absent on a catastrophically-failed batch (e.g.
             # single-sample retry that aborted before producing reports); treat
@@ -261,10 +260,11 @@ def run(
             # for this folder — re-running the stage re-fetches everything.
             reports_folder = f'{ica_folder}reports/'
             try:
-                report_files = ica_utils.list_ica_files_recursive(
+                report_files = ica_utils.list_ica_files(
                     api_instance=api_instance,
                     path_parameters=path_parameters,
                     base_ica_folder_path=reports_folder,
+                    recursive=True,
                 )
             except icasdk.ApiException as e:
                 logger.warning(

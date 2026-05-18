@@ -4,6 +4,7 @@ Download all non CRAM / GVCF outputs from ICA using the Python SDK.
 
 from typing import Literal
 
+import cpg_utils
 from cpg_flow.targets import SequencingGroup
 from google.cloud import storage
 from icasdk.apis.tags import project_data_api
@@ -17,16 +18,29 @@ from dragen_align_pa.constants import (
 
 def run(
     sequencing_group: SequencingGroup,
-    ica_folder_path: str,
+    pipeline_id_arguid_path: cpg_utils.Path,
+    cohort_name: str,
 ) -> None:
     """Stream per-sample ICA artefacts to GCS.
 
-    `ica_folder_path` is the resolved ICA folder for this SG's batch output
-    (see `utils.get_ica_sample_folder`). Only files inside this folder are
-    downloaded — batch-root artefacts (`passfail.json`, `summary.json`,
-    `reports/`) sit one level up and are handled by `DownloadBatchArtefactsFromIca`.
+    Resolves the ICA folder for this SG's batch output via
+    `utils.get_ica_sample_folder`, reading `pipeline_id_arguid_path` (the
+    per-SG state file written by `ManageDragenPipeline`) + `cohort_name`.
+    Only files inside the resolved folder are downloaded — batch-root
+    artefacts (`passfail.json`, `summary.json`, `reports/`) sit one level
+    up and are handled by `DownloadBatchArtefactsFromIca`.
+
+    Resolution is done inside this entrypoint (rather than in a
+    `_resolve_then_download_bulk` shim in `stages.py`) so the resolver
+    and the downloader share a single Hail PythonJob — `stages.py` is
+    reserved for cpg-flow stage definitions only.
     """
     sg_name: str = sequencing_group.name
+    ica_folder_path = utils.get_ica_sample_folder(
+        pipeline_id_arguid_path,
+        sg_name=sg_name,
+        cohort_name=cohort_name,
+    )
     logger.info(f'Downloading bulk ICA data for {sg_name} from {ica_folder_path}')
 
     gcs_output_path_prefix = str(utils.get_output_path(filename=f'dragen_metrics/{sg_name}')).removeprefix(
