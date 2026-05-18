@@ -245,16 +245,10 @@ def list_ica_files(
             }
             if page_token:
                 query_params['pageToken'] = page_token
-            try:
-                api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
-                    path_params=path_parameters,  # pyright: ignore[reportArgumentType]
-                    query_params=query_params,  # type: ignore[reportArgumentType]
-                )
-            except icasdk.ApiException as e:
-                logger.error(
-                    f'Exception listing {type_} children under {parent}: {e}',
-                )
-                raise
+            api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
+                path_params=path_parameters,  # pyright: ignore[reportArgumentType]
+                query_params=query_params,  # type: ignore[reportArgumentType]
+            )
             items.extend(api_response.body.get('items', []))  # pyright: ignore[reportUnknownArgumentType]
             page_token = api_response.body.get('nextPageToken')  # pyright: ignore[reportUnknownVariableType]
             if not page_token:
