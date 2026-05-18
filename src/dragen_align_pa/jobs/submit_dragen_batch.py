@@ -23,7 +23,7 @@ from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
-from dragen_align_pa.batches import Batch, validate_error_strategy
+from dragen_align_pa.batches import IcaBatch, validate_error_strategy
 from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_file_id
 
 # DRAGEN flags that don't depend on input type (CRAM vs FASTQ) or sequencing type (WGS vs WES).
@@ -138,7 +138,7 @@ def _build_top_level_parameters(error_strategy: str = 'auto') -> list[AnalysisPa
 
 
 def _build_cram_data_inputs(
-    batch: Batch,
+    batch: IcaBatch,
     per_sg_state_paths: dict[str, cpg_utils.Path],
 ) -> tuple[list[AnalysisDataInput], list[str]]:
     """Construct ICA data inputs for a CRAM-mode batch.
@@ -318,7 +318,7 @@ def _upload_per_batch_fastq_list(
 def _build_fastq_data_inputs(
     api_instance: project_data_api.ProjectDataApi,
     project_id: str,
-    batch: Batch,
+    batch: IcaBatch,
     fastq_ids_path: cpg_utils.Path,
     per_sg_fastq_list_paths: dict[str, cpg_utils.Path],
 ) -> tuple[list[AnalysisDataInput], str]:
@@ -407,7 +407,7 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
 
 
 def run(
-    batch: Batch,
+    batch: IcaBatch,
     analysis_output_fid_path: cpg_utils.Path,
     cram_state_paths: dict[str, cpg_utils.Path] | None,
     fastq_ids_path: cpg_utils.Path | None,

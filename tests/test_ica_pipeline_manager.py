@@ -6,7 +6,7 @@ in isolation; the SUCCEEDED-branch logic is extracted into a small helper
 exercised directly.
 """
 
-from dragen_align_pa.batches import Batch
+from dragen_align_pa.batches import IcaBatch
 from dragen_align_pa.jobs.ica_pipeline_manager import (
     MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES,
     MonitoredTarget,
@@ -16,7 +16,7 @@ from dragen_align_pa.jobs.ica_pipeline_manager import (
 
 
 def _make_target() -> MonitoredTarget:
-    batch = Batch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
+    batch = IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
     t = MonitoredTarget(target=batch, allow_retry=False)
     t.pipeline_id = 'analysis-123'
     t.status = PipelineStatus.INPROGRESS

@@ -34,10 +34,14 @@ def validate_error_strategy(value: str, *, context: str) -> None:
 
 
 @dataclass
-class Batch:
+class IcaBatch:
     """Internal target representing a batch of SGs for the unified DRAGEN pipeline.
 
-    Not a cpg-flow target type — only `.name` is consumed by `manage_ica_pipeline_loop`.
+    Not a cpg-flow target type — only `.name` is consumed by
+    `manage_ica_pipeline_loop`. Named `IcaBatch` (rather than the more
+    natural `Batch`) to avoid confusion with `hailtop.batch.Batch` —
+    `cpg_utils.hail_batch.Batch` shows up in submit-time code paths and
+    the unqualified `Batch` symbol there means the Hail concept.
     """
 
     cohort_name: str
@@ -53,7 +57,7 @@ def chunk_sgs_into_batches(
     cohort_name: str,
     sg_names: list[str],
     batch_size: int,
-) -> list[Batch]:
+) -> list[IcaBatch]:
     """Partition a cohort's SGs into deterministic batches.
 
     SGs are sorted lexicographically before chunking so re-runs with the same
@@ -65,10 +69,10 @@ def chunk_sgs_into_batches(
         raise ValueError(f'batch_size must be >= 1, got {batch_size}')
 
     sorted_sgs = sorted(sg_names)
-    batches: list[Batch] = []
+    batches: list[IcaBatch] = []
     for i in range(0, len(sorted_sgs), batch_size):
         batches.append(
-            Batch(
+            IcaBatch(
                 cohort_name=cohort_name,
                 batch_index=len(batches),
                 sg_names=sorted_sgs[i : i + batch_size],
@@ -159,7 +163,7 @@ class BatchesFile:
         self.batch_size: int = 0
         self.batches: list[dict[str, Any]] = []
 
-    def initialise(self, batch_size: int, batches: list[Batch]) -> None:
+    def initialise(self, batch_size: int, batches: list[IcaBatch]) -> None:
         # Mirror add_retry_batch's heuristic: DRAGEN's `auto` strategy
         # terminates single-sample runs before passfail.json is written,
         # so any 1-SG batch (initial cohort of 1, or trailing batch when
@@ -175,7 +179,7 @@ class BatchesFile:
         ]
 
     @staticmethod
-    def _new_batch_entry(b: Batch, *, retry_generation: int, error_strategy: str = 'auto') -> dict[str, Any]:
+    def _new_batch_entry(b: IcaBatch, *, retry_generation: int, error_strategy: str = 'auto') -> dict[str, Any]:
         return {
             'batch_index': b.batch_index,
             'retry_generation': retry_generation,
@@ -345,10 +349,10 @@ class BatchesFile:
             error_strategy = 'continue' if len(sg_names) == 1 else 'auto'
         validate_error_strategy(error_strategy, context='add_retry_batch')
         new_index = len(self.batches)
-        # The cohort_name on Batch is not written into the entry; the entry only
-        # carries batch_index + sg_names. Pass an empty string to keep `_new_batch_entry`
-        # signature uniform.
-        seed = Batch(cohort_name='', batch_index=new_index, sg_names=list(sg_names))
+        # The cohort_name on IcaBatch is not written into the entry; the entry
+        # only carries batch_index + sg_names. Pass an empty string to keep
+        # `_new_batch_entry` signature uniform.
+        seed = IcaBatch(cohort_name='', batch_index=new_index, sg_names=list(sg_names))
         self.batches.append(
             self._new_batch_entry(seed, retry_generation=1, error_strategy=error_strategy),
         )

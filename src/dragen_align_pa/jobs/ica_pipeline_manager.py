@@ -19,11 +19,11 @@ from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import config_retrieve, try_get_ar_guid
 from loguru import logger
 
-from dragen_align_pa.batches import Batch
+from dragen_align_pa.batches import IcaBatch
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline
 from dragen_align_pa.utils import delete_pipeline_id_file
 
-ProcessingTarget: TypeAlias = Cohort | SequencingGroup | Batch
+ProcessingTarget: TypeAlias = Cohort | SequencingGroup | IcaBatch
 
 
 class PipelineStatus(Enum):
@@ -139,7 +139,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
     Generic loop to manage ICA pipeline execution for a cohort.
 
     Args:
-        targets_to_process: The list of targets (Cohort, SequencingGroup, or Batch) to process.
+        targets_to_process: The list of targets (Cohort, SequencingGroup, or IcaBatch) to process.
         outputs: The outputs dictionary for the stage.
         api_root: The ICA API root endpoint.
         pipeline_name: Name of the pipeline (e.g., "Dragen", "MLR") for logging.
@@ -175,8 +175,8 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                       signature. MLR's factory ignores this dimension entirely.
 
                       Note: `on_succeeded` receives the `MonitoredTarget` wrapper,
-                      not the wrapped `Batch` / `SequencingGroup`. Access
-                      `monitored.target.sg_names` (for `Batch`) to reach the
+                      not the wrapped `IcaBatch` / `SequencingGroup`. Access
+                      `monitored.target.sg_names` (for `IcaBatch`) to reach the
                       underlying domain object.
 
                       MLR omits `on_succeeded` — its behaviour is unchanged.

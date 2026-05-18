@@ -143,7 +143,7 @@ def get_batch_artefacts_path(cohort_name: str, batch_index: int) -> cpg_utils.Pa
     `passfail.json`, `summary.json`, and a `reports/` directory.
 
     Note: the GCS subdirectory uses **underscore** (`{cohort}_batch{NN}`) — distinct
-    from `Batch.name`, which uses **hyphen** (`{cohort}-batch{NN}`) as the
+    from `IcaBatch.name`, which uses **hyphen** (`{cohort}-batch{NN}`) as the
     cpg-flow target identifier. The two are deliberately split: hyphen for the
     in-process target name (cpg-flow Stage identifier convention), underscore
     for the GCS path (filesystem-friendly, won't be confused with the cohort name).
