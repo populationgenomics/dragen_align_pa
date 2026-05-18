@@ -2,7 +2,6 @@ from typing import Literal
 
 from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_analysis_api
-from loguru import logger
 
 from dragen_align_pa import ica_api_utils
 
@@ -20,9 +19,6 @@ def run(ica_pipeline_id: str | dict[str, str], is_mlr: bool = False) -> str:
 
     pipeline_id: str = ica_pipeline_id['pipeline_id'] if isinstance(ica_pipeline_id, dict) else ica_pipeline_id
 
-    logger.info(
-        f'Monitoring pipeline run {pipeline_id}',
-    )
     with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         if not is_mlr:

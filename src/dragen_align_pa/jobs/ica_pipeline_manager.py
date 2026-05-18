@@ -327,8 +327,6 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                     target.set_status(PipelineStatus.INPROGRESS)
                     with pipeline_id_arguid_file.open('w') as f:
                         f.write(json.dumps({'pipeline_id': target.pipeline_id, 'ar_guid': target.ar_guid}))
-                else:
-                    logger.info(f'Checking status of existing {pipeline_name} ICA pipeline for {target_name}')
 
                 pipeline_status: str = monitor_dragen_pipeline.run(
                     ica_pipeline_id=target.pipeline_id,
