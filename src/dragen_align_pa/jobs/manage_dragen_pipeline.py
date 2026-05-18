@@ -77,8 +77,6 @@ def _build_submit_callable(
         # `BatchesFile.initialise` or `BatchesFile.add_retry_batch`).
         entry = batches_file.batches[batch.batch_index]
         error_strategy = entry.get('error_strategy', 'auto')
-        # If `force_resubmit` pre-seeded an AR GUID on this batch entry, reuse it.
-        ar_guid_override = entry.get('ar_guid')
         result = submit_dragen_batch.run(
             batch=batch,
             analysis_output_fid_path=analysis_output_fid_path,
@@ -86,7 +84,6 @@ def _build_submit_callable(
             fastq_ids_path=fastq_ids_path,
             per_sg_fastq_list_paths=per_sg_fastq_list_paths,
             error_strategy=error_strategy,
-            ar_guid_override=ar_guid_override,
         )
         # Narrow the return-dict values to satisfy type-checkers — submit_dragen_batch.run
         # returns dict[str, str | list[str]] but the str-keyed fields are always strings.
@@ -174,53 +171,6 @@ def _persist_per_sg_state_for_batch(
                 },
                 fh,
             )
-
-
-def _harvest_ar_guids_from_per_sg_state(
-    sg_names: list[str],
-    outputs: dict[str, cpg_utils.Path],
-) -> tuple[dict[int, str], dict[int, set[str]]]:
-    """Read per-SG state files and return ({batch_index: ar_guid}, {batch_index: {sg_name, ...}}).
-
-    Used by `force_resubmit` to lift AR GUIDs out of per-SG state before
-    deleting both the batches file and the per-SG files (spec §4 line 213:
-    "preserves AR GUID per batch (lifted up from per-SG)"). SGs in the same
-    original batch share an AR GUID by construction, so the mapping is
-    well-defined even if a few state files are missing.
-
-    The second return is the SG membership that was associated with each old
-    batch_index. The caller compares it to the new partition's sg_names so it
-    can warn when membership has drifted (cohort changed between runs) —
-    positional AR-GUID reuse is still applied in that case (the audit-trail
-    identity is preserved), but the warning makes the drift visible.
-    Any I/O or parse failure (`OSError`, `JSONDecodeError`) propagates
-    naturally — `force_resubmit` that can't read every state file should
-    abort loudly rather than silently mint fresh AR GUIDs and sever the
-    billing audit trail. A state file that parses but is missing
-    `batch_index` or `ar_guid` raises `KeyError`.
-    """
-    harvested: dict[int, str] = {}
-    membership: dict[int, set[str]] = {}
-    for sg_name in sg_names:
-        path = outputs.get(f'{sg_name}_pipeline_id_and_arguid')
-        if path is None or not path.exists():
-            continue
-        with path.open('r') as fh:
-            state = json.load(fh)
-        batch_index = state.get('batch_index')
-        ar_guid = state.get('ar_guid')
-        if batch_index is None or not ar_guid:
-            raise KeyError(
-                f'Per-SG state file {path} parsed but is missing required keys '
-                f'(batch_index={batch_index!r}, ar_guid={ar_guid!r}). The file '
-                f'should have been written by `_persist_per_sg_state_for_batch` '
-                f'with both fields populated — either an older schema is on disk '
-                f'or the file was edited out-of-band. Investigate before re-running.',
-            )
-        # Earlier entries win; subsequent SGs in the same batch should agree.
-        harvested.setdefault(batch_index, ar_guid)
-        membership.setdefault(batch_index, set()).add(sg_name)
-    return harvested, membership
 
 
 # Spec §6 line 312: strict `>` — the threshold is breached only when more
@@ -491,50 +441,33 @@ def _handle_management_flags(
     batches_file_path: cpg_utils.Path,
     outputs: dict[str, cpg_utils.Path],
     sg_names: list[str],
-) -> tuple[dict[int, str], dict[int, set[str]]]:
+) -> None:
     """Apply `force_resubmit` / `monitor_previous` / `cancel_cohort_run` BEFORE
     constructing the BatchesFile.
-
-    Returns `({batch_index: ar_guid}, {batch_index: {sg_name, ...}})`:
-    - The AR-GUID map is empty unless `force_resubmit` harvested some.
-    - The membership map carries the old per-batch SG set so the caller can
-      warn when the new partition diverges (cohort membership changed).
 
     Raises `CohortCancelled` (terminal) if `cancel_cohort_run=true` —
     short-circuits `run()` so it doesn't fall into retry-building or
     threshold-checking.
 
-    Deliberate spec drift (design doc §4 line 214): the original spec said
-    `cancel_cohort_run=true` "deletes per-SG state files". We preserve them
-    instead — the versioned per-SG state file is the single source of truth
-    and a subsequent `force_resubmit=true` (the only sanctioned recovery
-    path) needs the preserved AR GUIDs in order to honour spec §4 line 213's
-    AR-GUID preservation requirement. The design doc has been updated to
-    match; this docstring records the drift for reviewers cross-checking
-    the original spec text.
-
-    Semantics (spec §4 lines 211-215):
+    Semantics:
     - `monitor_previous=true`: raises if the batches file is missing.
-    - `force_resubmit=true`: harvests per-batch AR GUIDs from the existing
-      per-SG state files (the authoritative source — the user may have changed
-      cohort membership, so positional mapping by `batch_index` is what gets
-      re-used), then DELETES both `{cohort}_batches.json` and the per-SG state
-      files. The caller re-batches the cohort from scratch and passes the
-      harvested AR GUIDs into the new submissions.
+    - `force_resubmit=true`: clean slate. Deletes `{cohort}_batches.json`,
+      the completion marker, and every per-SG state file. The caller
+      re-batches the cohort from scratch — fresh AR GUIDs are minted on
+      submission, no positional reuse. Raises if no prior state exists
+      (force_resubmit on a fresh cohort is a config mistake, not a no-op).
     - `cancel_cohort_run=true`: for each batch with status PENDING/INPROGRESS,
       calls the ICA abort API if a `pipeline_id` is known, then marks the
       batch CANCELLED in the file. **Per-SG state files are NOT deleted** —
-      the versioned state file is the single source of per-SG truth and we
-      avoid deleting it unless we have no choice. Preserving them keeps the
-      AR GUIDs available for a future `force_resubmit=true` to harvest. The
-      function raises `CohortCancelled` to terminate the run cleanly; a
-      subsequent run will only get clean state via `force_resubmit=true`
-      (which IS allowed to delete, since deletion is the only way to clear
-      stale pointers to aborted ICA analyses).
+      the versioned state file is the single source of per-SG truth, and
+      preserving it lets a `force_resubmit=true` recovery rerun see clearly
+      what was running when the cancel fired (the files become stale
+      pointers to aborted ICA analyses, which the resubmit path deletes
+      wholesale). The function raises `CohortCancelled` to terminate cleanly.
 
-    Precedence (contract C8): if both `force_resubmit` and `monitor_previous`
-    are set, `force_resubmit` wins and `monitor_previous` is logged as ignored.
-    `force_resubmit` and `cancel_cohort_run` together: undefined; we raise.
+    Conflicts: `force_resubmit` + any other management flag raises
+    `ValueError`. The three flags express orthogonal user intents and the
+    safer behaviour is to make the user pick one.
     """
     force_resubmit = config_retrieve(['ica', 'management', 'force_resubmit'], default=False)
     monitor_previous = config_retrieve(['ica', 'management', 'monitor_previous'], default=False)
@@ -578,11 +511,8 @@ def _handle_management_flags(
                 f'from the config to submit fresh.',
             )
         logger.warning(
-            f'force_resubmit=true for cohort {cohort_name}: harvesting AR GUIDs and '
-            f'deleting batches file + per-SG state.',
-        )
-        preserved_ar_guids, old_membership = _harvest_ar_guids_from_per_sg_state(
-            sg_names=sg_names, outputs=outputs,
+            f'force_resubmit=true for cohort {cohort_name}: deleting batches '
+            f'file, completion marker, and per-SG state — fresh slate.',
         )
         batches_file_path.unlink(missing_ok=True)
         # Delete the completion marker too — otherwise a marker left over from a
@@ -594,7 +524,7 @@ def _handle_management_flags(
             complete_path.unlink(missing_ok=True)
         for p in per_sg_state_paths:
             p.unlink(missing_ok=True)
-        return preserved_ar_guids, old_membership
+        return
 
     if cancel_cohort_run and not batches_file_path.exists():
         logger.warning(
@@ -651,11 +581,10 @@ def _handle_management_flags(
         raise CohortCancelled(
             f'Cohort {cohort_name} cancelled by user request (cancel_cohort_run=true). '
             f'{n_aborted} in-flight batches aborted; SUCCEEDED batches preserved. '
-            f'Rerun with force_resubmit=true to start a fresh submission '
-            f'(AR GUIDs from the preserved per-SG state will be reused).',
+            f'Rerun with force_resubmit=true to start a fresh submission.',
         )
 
-    return {}, {}
+    return
 
 
 def run(
@@ -696,12 +625,12 @@ def run(
     # because variable-existence outputs trigger spurious cpg-flow re-runs.
     errors_path = get_pipeline_path(filename=f'{cohort.name}_errors.log')
 
-    # `_handle_management_flags` raises CohortCancelled on `cancel_cohort_run=true`;
-    # we let it propagate so cpg-flow marks the stage failed and downstream stages
-    # skip. For force_resubmit it returns `(preserved_ar_guids, old_membership)`
-    # so we can pre-seed AR GUIDs on the freshly-batched cohort and warn if
-    # membership drifted.
-    preserved_ar_guids, old_membership = _handle_management_flags(
+    # `_handle_management_flags` raises CohortCancelled on `cancel_cohort_run=true`
+    # — we let it propagate so cpg-flow marks the stage failed and downstream
+    # stages skip. On `force_resubmit=true` it deletes the previous state files
+    # (batches.json, completion marker, per-SG state) so this run starts from a
+    # clean slate; no AR GUIDs are preserved, fresh ones are minted at submit.
+    _handle_management_flags(
         cohort_name=cohort.name,
         batches_file_path=batches_file_path,
         outputs=outputs,
@@ -745,30 +674,6 @@ def run(
             batch_size=batch_size,
         )
         batches_file.initialise(batch_size=batch_size, batches=initial_batches)
-        # Pre-seed any AR GUIDs lifted by `force_resubmit` so the new submissions
-        # reuse the cohort's existing submission identity where positional mapping
-        # exists. New batches (or batches without a positional match) get a fresh
-        # AR GUID minted at submit time inside `submit_dragen_batch.run`.
-        for batch_entry in batches_file.batches:
-            new_index = batch_entry['batch_index']
-            preserved = preserved_ar_guids.get(new_index)
-            if preserved:
-                batch_entry['ar_guid'] = preserved
-                # Warn if the new batch's SG membership differs from the old
-                # batch that originally held this AR GUID — positional reuse
-                # then maps the AR GUID to a different sample set (audit
-                # confusion, not a correctness bug per spec §4 line 213).
-                old_set = old_membership.get(new_index)
-                new_set = set(batch_entry['sg_names'])
-                if old_set is not None and old_set != new_set:
-                    added = new_set - old_set
-                    removed = old_set - new_set
-                    logger.warning(
-                        f'force_resubmit: batch {new_index} reuses AR GUID {preserved!r} '
-                        f'but membership has drifted (added={sorted(added)}, '
-                        f'removed={sorted(removed)}). The AR GUID will be associated '
-                        f'with the new membership in this run.',
-                    )
         batches_file.write()
 
     batches_by_name = {b.name: b for b in initial_batches}

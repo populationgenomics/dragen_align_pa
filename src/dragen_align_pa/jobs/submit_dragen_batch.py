@@ -413,7 +413,6 @@ def run(
     fastq_ids_path: cpg_utils.Path | None,
     per_sg_fastq_list_paths: dict[str, cpg_utils.Path] | None,
     error_strategy: str = 'auto',
-    ar_guid_override: str | None = None,
 ) -> dict[str, str | list[str]]:
     """Submit one batch to the unified DRAGEN pipeline.
 
@@ -474,25 +473,12 @@ def run(
     with analysis_output_fid_path.open('r') as fh:
         analysis_output_fid: str = json.load(fh)['analysis_output_fid']
 
-    if ar_guid_override is not None:
-        # `force_resubmit` lifts the prior batch's AR GUID out of per-SG state
-        # so the new submission keeps the same ICA folder identity (spec §4 line 213).
-        # `is not None` (not truthiness) so an empty-string override raises clearly
-        # rather than silently falling through to the env GUID.
-        if not ar_guid_override:
-            raise ValueError(
-                f'ar_guid_override was empty string for batch {batch.name}; '
-                f'callers should pass None to use the env GUID.',
-            )
-        ar_guid = ar_guid_override
-        logger.info(f'Reusing preserved AR GUID for batch {batch.name}: {ar_guid}')
-    else:
-        ar_guid = try_get_ar_guid()
-        if not ar_guid:
-            raise RuntimeError(
-                'try_get_ar_guid() returned None/empty — analysis-runner GUID is missing from env. '
-                'This breaks ICA folder naming and per-SG state files. Refusing to submit.',
-            )
+    ar_guid = try_get_ar_guid()
+    if not ar_guid:
+        raise RuntimeError(
+            'try_get_ar_guid() returned None/empty — analysis-runner GUID is missing from env. '
+            'This breaks ICA folder naming and per-SG state files. Refusing to submit.',
+        )
     user_reference = f'{batch.name}_{ar_guid}_'
 
     pipeline_id_config: str = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'pipeline_id'])

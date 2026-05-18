@@ -2,9 +2,8 @@
 
 Covers the algorithmic helpers: _build_retry_batches (per-sample retry
 discipline + single-retry invariant + CANCELLED-as-terminal),
-_harvest_ar_guids_from_per_sg_state, _handle_management_flags
-(force_resubmit harvest+delete, cancel preserves per-SG state),
-_threshold_breached (5% boundary semantics).
+_handle_management_flags (force_resubmit clean-slate delete, cancel
+preserves per-SG state), _threshold_breached (5% boundary semantics).
 
 Integration glue around the shared monitor loop (_on_succeeded_factory,
 _on_status_change_factory, _build_submit_callable) is left for end-to-end
@@ -22,7 +21,6 @@ from dragen_align_pa.jobs.manage_dragen_pipeline import (
     CohortCancelled,
     _build_retry_batches,
     _handle_management_flags,
-    _harvest_ar_guids_from_per_sg_state,
     _threshold_breached,
 )
 
@@ -153,69 +151,11 @@ def test_retry_batches_treats_cancelled_as_terminal(tmp_path: Path):
     assert new == []
 
 
-def test_harvest_ar_guids_from_per_sg_state(tmp_path: Path):
-    """Harvest helper reads `{batch_index: ar_guid}` and `{batch_index: {sg, ...}}`
-    out of per-SG state files. Used by `force_resubmit` BEFORE deletion."""
-    state_dir = tmp_path
-    (state_dir / 'SYN_A_pipeline_id_and_arguid.json').write_text(
-        '{"schema_version": 1, "pipeline_id": "p1", "ar_guid": "guid-batch-0", '
-        '"user_reference": "COH-batch0000_guid-batch-0_", "batch_index": 0}',
-    )
-    (state_dir / 'SYN_B_pipeline_id_and_arguid.json').write_text(
-        '{"schema_version": 1, "pipeline_id": "p1", "ar_guid": "guid-batch-0", '
-        '"user_reference": "COH-batch0000_guid-batch-0_", "batch_index": 0}',
-    )
-    paths = {
-        'SYN_A_pipeline_id_and_arguid': state_dir / 'SYN_A_pipeline_id_and_arguid.json',
-        'SYN_B_pipeline_id_and_arguid': state_dir / 'SYN_B_pipeline_id_and_arguid.json',
-    }
-    harvested, membership = _harvest_ar_guids_from_per_sg_state(['SYN_A', 'SYN_B'], paths)
-    assert harvested == {0: 'guid-batch-0'}
-    assert membership == {0: {'SYN_A', 'SYN_B'}}
-
-
-def test_harvest_raises_on_state_file_missing_required_keys(tmp_path: Path):
-    """A state file that parses but is missing `batch_index` / `ar_guid`
-    raises rather than silently being skipped. force_resubmit relies on
-    harvesting every existing state file; silently skipping would mint a
-    fresh AR GUID and sever the billing audit trail without a log signal."""
-    bad_path = tmp_path / 'SYN_A_pipeline_id_and_arguid.json'
-    bad_path.write_text('{}')  # parses but no fields
-    paths = {'SYN_A_pipeline_id_and_arguid': bad_path}
-
-    with pytest.raises(KeyError, match='missing required keys'):
-        _harvest_ar_guids_from_per_sg_state(['SYN_A'], paths)
-
-
-def test_harvest_raises_on_unparseable_state_file(tmp_path: Path):
-    """A state file that fails to parse aborts the harvest by propagating
-    JSONDecodeError. force_resubmit must not silently fall back to fresh
-    AR GUIDs when prior state exists but is unreadable."""
-    bad_path = tmp_path / 'SYN_A_pipeline_id_and_arguid.json'
-    bad_path.write_text('not json {')
-    paths = {'SYN_A_pipeline_id_and_arguid': bad_path}
-
-    with pytest.raises(json.JSONDecodeError):
-        _harvest_ar_guids_from_per_sg_state(['SYN_A'], paths)
-
-
-def test_harvest_returns_empty_when_no_state_files_on_disk(tmp_path: Path):
-    """If no per-SG state files exist on disk at all (truly fresh cohort,
-    or the harvest helper was called outside the `had_prior_state` guard),
-    return empty dicts rather than raising. The empty-harvest-with-no-state
-    case is handled by the caller's `had_prior_state` check, not here."""
-    paths = {
-        'SYN_A_pipeline_id_and_arguid': tmp_path / 'SYN_A_pipeline_id_and_arguid.json',
-    }
-    harvested, membership = _harvest_ar_guids_from_per_sg_state(['SYN_A'], paths)
-    assert harvested == {}
-    assert membership == {}
-
-
-def test_force_resubmit_deletes_state_and_returns_harvest(tmp_path: Path, monkeypatch):
-    """Spec §4 line 213: `force_resubmit=true` deletes batches.json + all
-    per-SG state files AND preserves AR GUIDs lifted from per-SG state.
-    Exercise `_handle_management_flags` end-to-end."""
+def test_force_resubmit_deletes_state(tmp_path: Path, monkeypatch):
+    """`force_resubmit=true` is the clean-slate flag: deletes
+    `{cohort}_batches.json` and every per-SG state file so the orchestrator
+    re-batches the cohort from scratch with fresh AR GUIDs. No prior state
+    is preserved across the boundary."""
     batches_path = tmp_path / 'COH0001_batches.json'
     batches_path.write_text('{"schema_version": 1, "batch_size": 5, "n_batches": 0, "batches": []}')
     sg_a_state = tmp_path / 'SYN_A_pipeline_id_and_arguid.json'
@@ -232,14 +172,12 @@ def test_force_resubmit_deletes_state_and_returns_harvest(tmp_path: Path, monkey
         'SYN_A_pipeline_id_and_arguid': sg_a_state,
         'SYN_B_pipeline_id_and_arguid': sg_b_state,
     }
-    harvested, membership = _handle_management_flags(
+    _handle_management_flags(
         cohort_name='COH0001',
         batches_file_path=batches_path,
         outputs=outputs,
         sg_names=['SYN_A', 'SYN_B'],
     )
-    assert harvested == {0: 'guid-0'}
-    assert membership == {0: {'SYN_A', 'SYN_B'}}
     assert not batches_path.exists(), 'batches.json should be deleted'
     assert not sg_a_state.exists(), 'per-SG state should be deleted'
     assert not sg_b_state.exists()
