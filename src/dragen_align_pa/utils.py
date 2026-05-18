@@ -192,11 +192,12 @@ def load_per_sg_state(
             f'force_resubmit=true (or manually delete the file) to rewrite it under '
             f'the new schema.',
         )
-    for required in required_keys:
-        if required not in state:
-            raise KeyError(
-                f'Per-SG state file {pipeline_id_arguid_path} missing required key {required!r}.',
-            )
+    missing = [key for key in required_keys if key not in state]
+    if missing:
+        raise KeyError(
+            f'Per-SG state file {pipeline_id_arguid_path} missing required key(s): '
+            f'{", ".join(repr(k) for k in missing)}.',
+        )
     return state
 
 
