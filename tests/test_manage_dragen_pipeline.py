@@ -193,6 +193,37 @@ def test_force_resubmit_deletes_state_and_returns_harvest(tmp_path: Path, monkey
     assert not sg_b_state.exists()
 
 
+def test_force_resubmit_deletes_completion_marker(tmp_path: Path, monkeypatch):
+    """If a completion marker from a previous successful run is sitting in
+    the outputs dict, force_resubmit deletes it. Otherwise the marker
+    would advertise this cohort as 'complete' even after wiping the state
+    underneath it, and cpg-flow would skip the re-submission entirely."""
+    batches_path = tmp_path / 'COH0001_batches.json'
+    batches_path.write_text('{"schema_version": 1, "batch_size": 5, "n_batches": 0, "batches": []}')
+    complete_marker = tmp_path / 'COH0001_pipeline_complete.json'
+    complete_marker.write_text('{"cohort_name": "COH0001"}')
+
+    def fake_config_retrieve(key, default=None):
+        cfg = {
+            ('ica', 'management', 'force_resubmit'): True,
+            ('ica', 'management', 'monitor_previous'): False,
+            ('ica', 'management', 'cancel_cohort_run'): False,
+        }
+        return cfg.get(tuple(key), default)
+
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.config_retrieve', fake_config_retrieve,
+    )
+
+    outputs = {
+        'COH0001_pipeline_complete': complete_marker,
+    }
+    _handle_management_flags(
+        cohort_name='COH0001', batches_file_path=batches_path, outputs=outputs, sg_names=[],
+    )
+    assert not complete_marker.exists()
+
+
 def test_cancel_cohort_run_raises_cohort_cancelled(tmp_path: Path, monkeypatch):
     """`cancel_cohort_run=true` is terminal — raises CohortCancelled so run()
     short-circuits past retry-building and threshold-checking."""

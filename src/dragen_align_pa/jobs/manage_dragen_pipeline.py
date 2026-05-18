@@ -31,6 +31,7 @@ from dragen_align_pa.jobs.ica_pipeline_manager import (
     manage_ica_pipeline_loop,
 )
 from dragen_align_pa.jobs.parse_passfail import fetch_passfail_from_ica
+from dragen_align_pa.utils import get_pipeline_path
 
 # Single source of truth for the default batch chunking width. Used both by
 # this orchestrator (to chunk SGs at submit time) and by `ManageDragenPipeline.
@@ -460,36 +461,22 @@ def _build_retry_batches(
     return new_batches
 
 
-def _build_loop_outputs_for_batches(
-    batches: list[Batch],
-    outputs: dict[str, cpg_utils.Path],
-) -> dict[str, cpg_utils.Path]:
-    """Subset of `outputs` keyed by batch name, as the shared loop expects.
+def _build_loop_outputs_for_batches(batches: list[Batch]) -> dict[str, cpg_utils.Path]:
+    """Build the shared loop's `outputs` dict keyed by batch name.
 
-    Raises if any batch's expected_outputs entries are missing — that means
-    `ManageDragenPipeline.expected_outputs` undercounted `max_batches` and the
-    shared loop would fail later in a more confusing way.
-
-    Common cause: `batch_size` was lowered between a force_resubmit and the
-    next orchestrator run, so the resumed batches partition exceeds the new
-    `max_batches = 2 * ceil(N / batch_size)`. The fix is to delete
-    `{cohort}_batches.json` (force_resubmit deletes it; manual delete also
-    works) so the re-batch uses the current `batch_size`.
+    Per-batch success / pipeline_id paths are internal orchestrator state
+    — `cpg-flow` does not consume them, so the orchestrator constructs
+    them directly via `get_pipeline_path()` rather than reading them out
+    of `ManageDragenPipeline.expected_outputs`. Declaring per-batch files
+    in `expected_outputs` would force a heuristic upper bound on the
+    batch count (`max_batches`), and if fewer retry batches materialise
+    than the heuristic predicts, `cpg-flow` would treat the stage as
+    incomplete and re-run unnecessarily.
     """
     keys: dict[str, cpg_utils.Path] = {}
     for b in batches:
-        success_key = f'{b.name}_success'
-        pid_key = f'{b.name}_pipeline_id'
-        if success_key not in outputs or pid_key not in outputs:
-            raise KeyError(
-                f'Missing expected_outputs entries for batch {b.name}. '
-                f'This usually means batch_size was lowered between runs. '
-                f"Rerun with force_resubmit=true (or delete the cohort's "
-                f'batches.json manually) so the cohort is re-batched under '
-                f'the current batch_size, then retry.',
-            )
-        keys[success_key] = outputs[success_key]
-        keys[pid_key] = outputs[pid_key]
+        keys[f'{b.name}_success'] = get_pipeline_path(filename=f'{b.name}_pipeline_success.json')
+        keys[f'{b.name}_pipeline_id'] = get_pipeline_path(filename=f'{b.name}_pipeline_id.json')
     return keys
 
 
@@ -586,6 +573,13 @@ def _handle_management_flags(
         )
         if batches_file_path.exists():
             batches_file_path.unlink()
+        # Delete the completion marker too — otherwise a marker left over from a
+        # previous successful run would advertise this cohort as "complete" even
+        # though force_resubmit just wiped the underlying state. Defensive on
+        # the key presence so callers with an older outputs schema still work.
+        complete_key = f'{cohort_name}_pipeline_complete'
+        if complete_key in outputs and outputs[complete_key].exists():
+            outputs[complete_key].unlink()
         for sg_name in sg_names:
             key = f'{sg_name}_pipeline_id_and_arguid'
             if key in outputs and outputs[key].exists():
@@ -687,6 +681,10 @@ def run(
         )
 
     batches_file_path: cpg_utils.Path = outputs[f'{cohort.name}_batches']
+    # `errors_path` is internal scratch — written only on threshold breach.
+    # Computed via `get_pipeline_path` rather than declared in expected_outputs
+    # because variable-existence outputs trigger spurious cpg-flow re-runs.
+    errors_path = get_pipeline_path(filename=f'{cohort.name}_errors.log')
 
     # `_handle_management_flags` raises CohortCancelled on `cancel_cohort_run=true`;
     # we let it propagate so cpg-flow marks the stage failed and downstream stages
@@ -765,14 +763,14 @@ def run(
         )
 
     if initial_batches:
-        loop_outputs = _build_loop_outputs_for_batches(initial_batches, outputs)
+        loop_outputs = _build_loop_outputs_for_batches(initial_batches)
         # allow_retry=False: the shared loop's whole-target retry plus its 5%-of-targets
         # threshold are bypassed for DRAGEN. Retry + threshold logic is owned by this
         # orchestrator (per-sample retry over the cohort), not by the loop (which would
         # over-trigger on small batch counts).
         manage_ica_pipeline_loop(
             targets_to_process=initial_batches,
-            outputs=loop_outputs | {f'{cohort.name}_errors': outputs[f'{cohort.name}_errors']},
+            outputs=loop_outputs | {f'{cohort.name}_errors': errors_path},
             pipeline_name='Dragen',
             is_mlr_pipeline=False,
             success_file_key_template='{target_name}_success',
@@ -818,10 +816,10 @@ def run(
                 outputs=outputs,
             )
 
-        retry_loop_outputs = _build_loop_outputs_for_batches(retry_batches, outputs)
+        retry_loop_outputs = _build_loop_outputs_for_batches(retry_batches)
         manage_ica_pipeline_loop(
             targets_to_process=retry_batches,
-            outputs=retry_loop_outputs | {f'{cohort.name}_errors': outputs[f'{cohort.name}_errors']},
+            outputs=retry_loop_outputs | {f'{cohort.name}_errors': errors_path},
             pipeline_name='Dragen',
             is_mlr_pipeline=False,
             success_file_key_template='{target_name}_success',
@@ -868,9 +866,10 @@ def run(
     failed = batches_file.failed_sg_names()
     n_failed = len(failed)
     if _threshold_breached(n_failed=n_failed, n_total=n_total):
-        # Persist errors.log to the stage's declared output before raising, so the
-        # cohort run produces a durable error artefact (spec §6 line 312).
-        errors_path = outputs[f'{cohort.name}_errors']
+        # Persist errors.log to disk before raising, so the cohort run
+        # produces a durable error artefact (spec §6 line 312). `errors_path`
+        # is internal scratch — not declared as a stage expected_output, so
+        # absence of the file on a successful run does not trigger a re-run.
         with errors_path.open('w') as fh:
             fh.write(
                 f'Cohort {cohort.name}: {n_failed}/{n_total} SGs failed the DRAGEN '
@@ -880,4 +879,23 @@ def run(
         raise RuntimeError(
             f'More than 5% of SGs failed the DRAGEN pipeline: {n_failed}/{n_total}. '
             f'See {errors_path} for the failure list.',
+        )
+
+    # Completion marker: writes the canonical "stage completed without raising"
+    # signal that cpg-flow checks via expected_outputs. The marker is the LAST
+    # write of the orchestrator — any earlier raise (threshold breach, cancel,
+    # ICA exception) skips this and leaves cpg-flow seeing the stage as failed,
+    # so the stage will retry. Marker payload records the cohort's outcome
+    # summary so operators can audit completed runs without re-reading
+    # batches.json.
+    complete_path = outputs[f'{cohort.name}_pipeline_complete']
+    with complete_path.open('w') as fh:
+        json.dump(
+            {
+                'cohort_name': cohort.name,
+                'n_sgs_total': n_total,
+                'n_sgs_failed': n_failed,
+                'n_batches': len(batches_file.batches),
+            },
+            fh,
         )
