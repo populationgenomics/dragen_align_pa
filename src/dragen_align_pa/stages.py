@@ -505,13 +505,11 @@ class DownloadGvcfFromIca(SequencingGroupStage):
     required_stages=[DownloadGvcfFromIca, ManageDragenMlr, ManageDragenPipeline],
 )
 class DownloadMlrGvcfFromIca(SequencingGroupStage):
-    """Download the MLR-refined gVCF + index from the parent batch's per-SG folder.
+    """Download the MLR-refined gVCF + index.
 
-    Under the batched layout, MLR writes into the same per-SG subfolder as
-    the original DRAGEN outputs, so the ICA folder is resolved through
-    `ManageDragenPipeline`'s per-SG state file (NOT `ManageDragenMlr`'s).
-    The `ManageDragenMlr` dependency is retained for stage ordering — we
-    must wait for MLR to finish — but the path comes from the DRAGEN state.
+    MLR writes into the parent DRAGEN batch's per-SG subfolder, so the path
+    resolves through `ManageDragenPipeline`'s state file. The `ManageDragenMlr`
+    dependency exists for ordering only.
     """
 
     def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -633,51 +631,13 @@ class DownloadDataFromIca(SequencingGroupStage):
 
 @stage(required_stages=[ManageDragenPipeline])
 class DownloadBatchArtefactsFromIca(CohortStage):
-    """One-shot per-batch download of passfail.json / summary.json / reports/.
+    """Per-batch download of passfail.json / summary.json / reports/ from ICA.
 
-    Only depends on `ManageDragenPipeline`, not on `DownloadDataFromIca`:
-    the batch-root artefacts (passfail / summary / reports/) are valuable
-    for diagnosing per-SG download failures, and intentionally decoupling
-    them means a failed `DownloadDataFromIca` for one SG doesn't block
-    the cohort-level diagnostics.
-
-    **Marker payload** (`{cohort}_artefacts_done.json`, the stage's
-    `expected_outputs`):
-
-    ```json
-    {
-        "cohort_name": "COH0001",
-        "batches_processed": 3,
-        "success_count": 45,
-        "lookup_failure_count": 0,
-        "stream_failure_count": 2
-    }
-    ```
-
-    - `batches_processed`: count of batches with a non-null `pipeline_id`
-      in `{cohort}_batches.json`. Batches with no pipeline_id (PENDING /
-      never-submitted) are skipped and excluded from this count.
-    - `success_count`: every file streamed to GCS individually. Each batch
-      contributes 1 for `passfail.json` (if present), 1 for `summary.json`
-      (if present), and 1 for each file under `reports/` (recursive).
-    - `lookup_failure_count`: number of `find_file_id_by_name` calls that
-      raised `icasdk.ApiException`. The file may exist but we couldn't
-      address it — usually an auth / connectivity blip.
-    - `stream_failure_count`: number of `stream_ica_file_to_gcs` calls
-      that raised a transient ICA / HTTP / GCS error after a successful
-      lookup.
-
-    Stage success means "the run completed". A non-zero failure count
-    means partial artefacts on GCS; operators inspect the JSON marker to
-    decide whether to re-run. A run where every attempted stream failed
-    raises `RuntimeError` and does NOT write the marker (cpg-flow sees the
-    stage as failed and retries).
+    Only depends on `ManageDragenPipeline` (not `DownloadDataFromIca`) so a
+    per-SG download failure doesn't block the cohort-level diagnostics.
     """
 
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:  # pyright: ignore[reportIncompatibleMethodOverride]
-        # Sibling marker in the dragen_batch_metrics/ root. `get_batch_artefacts_root`
-        # builds the `ica/{DRAGEN_VERSION}/output/dragen_batch_metrics` prefix in
-        # exactly one place; cohort scoping is at the leaf via the filename.
         return get_batch_artefacts_root() / f'{cohort.name}_artefacts_done.json'
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:

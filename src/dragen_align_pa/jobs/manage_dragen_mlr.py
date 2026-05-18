@@ -13,7 +13,7 @@ from loguru import logger
 from dragen_align_pa import ica_cli_utils, utils
 from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
-from dragen_align_pa.utils import PER_SG_STATE_SCHEMA_VERSION
+from dragen_align_pa.utils import load_per_sg_state
 
 
 def _mlr_enter_project(mlr_project: str) -> None:
@@ -134,31 +134,11 @@ def _submit_mlr_run(
     Submits the DRAGEN MLR pipeline by running individual CLI commands
     and parsing the JSON output file.
     """
-    with pipeline_id_arguid_path.open() as pid_arguid_fhandle:
-        # Schema kept symmetric with `get_ica_sample_folder` (utils.py): same
-        # schema_version check and required-key loop so operators see identical
-        # error messages regardless of which consumer surfaces a bad file.
-        data = json.load(pid_arguid_fhandle)
-        schema_version = data.get('schema_version', 0)
-        if schema_version != PER_SG_STATE_SCHEMA_VERSION:
-            raise ValueError(
-                f'Per-SG state file {pipeline_id_arguid_path} has schema_version '
-                f'{schema_version}; MLR expects {PER_SG_STATE_SCHEMA_VERSION}. '
-                f'Rerun the cohort with force_resubmit=true (or manually delete '
-                f'the file) to rewrite it under the new schema.',
-            )
-        for required in ('pipeline_id', 'user_reference'):
-            if required not in data:
-                raise KeyError(
-                    f'Per-SG state file {pipeline_id_arguid_path} missing required '
-                    f'key {required!r} under schema_version={PER_SG_STATE_SCHEMA_VERSION}.',
-                )
-        pipeline_id = data['pipeline_id']
-        user_reference = data['user_reference']
+    data = load_per_sg_state(pipeline_id_arguid_path, required_keys=('pipeline_id', 'user_reference'))
+    pipeline_id = data['pipeline_id']
+    user_reference = data['user_reference']
 
     batch_tmpdir = os.environ.get('BATCH_TMPDIR', '/io')
-    # MLR outputs land inside the parent Dragen batch's per-SG subfolder so all
-    # outputs for an SG live together. Matches `get_ica_sample_folder`'s shape.
     ica_base_folder = (
         f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{cohort_name}/'
         f'{user_reference}-{pipeline_id}/{sg_name}/'

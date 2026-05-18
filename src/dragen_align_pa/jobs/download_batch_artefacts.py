@@ -26,20 +26,10 @@ from dragen_align_pa.constants import BUCKET_NAME
 
 @dataclass
 class _StreamStats:
-    """Per-cohort accounting for the marker payload + total-failure guard.
-
-    `success`: file streamed to GCS.
-    `lookup_failure`: `find_file_id_by_name` raised `ApiException` — file
-        may exist but we couldn't address it. NOT incremented for
-        `FileNotFoundError` (legitimate absence).
-    `stream_failure`: lookup succeeded (or the file_id was supplied
-        directly), but `stream_ica_file_to_gcs` raised a transient
-        `ApiException` / `RequestException` / `GoogleCloudError`.
-
-    The two failure counters are kept separate so operators inspecting the
-    marker payload can triage a cohort-wide outage (lookup-heavy =
-    auth/connectivity; stream-heavy = transfer / GCS).
-    """
+    """Per-cohort marker-payload counters. Failure counters are split so an
+    operator can tell a cohort-wide auth/connectivity outage (lookup-heavy)
+    from a transfer/GCS outage (stream-heavy). `FileNotFoundError` at lookup
+    is legitimate absence and is NOT counted as a failure."""
 
     success: int = 0
     lookup_failure: int = 0
@@ -62,21 +52,10 @@ def _stream_silently(
 ) -> None:
     """Stream one file to GCS; warn-and-skip on transient ICA / HTTP / GCS errors.
 
-    Increments `stats.success` or `stats.stream_failure`. Wraps
-    `ica_utils.stream_ica_file_to_gcs` so a single transient blip on one
-    file does not abort the whole cohort's batch-artefacts run mid-loop
-    and leave partial GCS state with no marker file. Missed files are
-    observable via the marker payload (which records the failure counts)
-    and via the absence of GCS objects; both are re-fetched by re-running
-    the stage. `context` is included in the warning log so the source
-    location is traceable.
-
-    Note: `ValueError` from `stream_ica_file_to_gcs`'s MD5-mismatch branch
-    (`ica_utils.py:192`) is **intentionally not caught**. This helper
-    passes `expected_md5_hash=None`, so that branch is unreachable from
-    here. A future caller that supplies an expected hash inherits a hard
-    crash on mismatch, which is the correct behaviour for integrity
-    violations.
+    Wraps `stream_ica_file_to_gcs` so one transient blip doesn't abort the
+    whole cohort mid-loop. MD5-mismatch (`ValueError`) is intentionally not
+    caught — we pass `expected_md5_hash=None` here so it's unreachable, but a
+    future caller passing a hash should crash hard on integrity violations.
     """
     try:
         ica_utils.stream_ica_file_to_gcs(
@@ -106,14 +85,10 @@ def _stream_named_file(
 ) -> None:
     """Find one named file in `parent_folder` and stream it to `gcs_prefix/file_name`.
 
-    Increments one of `stats.success` / `stats.lookup_failure` /
-    `stats.stream_failure`, OR leaves stats unchanged if the file is
-    legitimately absent (`FileNotFoundError` at lookup — passfail.json
-    and summary.json may be missing on a catastrophically-failed batch).
-
-    Lookup-side ICA `ApiException` is bucketed as `lookup_failure`
-    (file may exist; we couldn't address it). Definitive absence is
-    `FileNotFoundError` only.
+    `FileNotFoundError` at lookup is legitimate absence — passfail.json and
+    summary.json may be missing on a catastrophically-failed batch — and is
+    NOT counted as a failure. ICA `ApiException` is `lookup_failure` (the
+    file may exist; we couldn't address it).
     """
     try:
         file_id = ica_api_utils.find_file_id_by_name(
@@ -152,23 +127,10 @@ def run(
 ) -> None:
     """For each successfully-submitted batch, mirror passfail.json/summary.json/reports/.
 
-    Writes `marker_path` on completion so the stage has a deterministic
-    expected_output. The marker is a JSON payload — see
-    `DownloadBatchArtefactsFromIca`'s docstring for the schema.
-
-    `cohort_name` is passed explicitly from the stage (rather than parsed
-    out of the filename) so the job is decoupled from
-    `ManageDragenPipeline.expected_outputs`'s filename convention.
-
-    Schema validation: uses `BatchesFile.read()` to enforce schema_version
-    + every required per-batch key — a malformed batches file raises
-    `ValueError` here instead of a bare `KeyError` deep in the loop.
-
-    Total-failure guard: if any streams were attempted and ZERO succeeded,
-    raises `RuntimeError` rather than writing a green marker over an empty
-    GCS state. Partial failures (some successes + some failures) still
-    write the marker; the JSON payload carries the failure counts so
-    operators can decide whether to re-run.
+    Raises `RuntimeError` if streams were attempted and ZERO succeeded, so
+    cpg-flow retries instead of writing a green marker over an empty GCS
+    state. Partial failures still write the marker; failure counts in the
+    payload let operators decide whether to re-run.
     """
     batches_file = BatchesFile(path=batches_file_path)
     batches_file.read()
@@ -177,12 +139,8 @@ def run(
 
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
-    # `gcs_output_root` is a `cpg_utils.Path` like `gs://{BUCKET}/ica/{ver}/output/dragen_batch_metrics`;
-    # `gcs_prefix` for `stream_ica_file_to_gcs` must be relative to the bucket.
-    # Assert the expected bucket prefix rather than silently `removeprefix`-ing —
-    # if `output_path` ever returns a different bucket (test override, future
-    # `category` redirect), `removeprefix` would be a no-op and we'd write
-    # objects under a path like `gs://other-bucket/...` inside `BUCKET_NAME`.
+    # Assert (don't silently removeprefix) so a future `output_path` override
+    # returning a different bucket doesn't no-op into a wrong-bucket write.
     expected_prefix = f'gs://{BUCKET_NAME}/'
     gcs_output_str = str(gcs_output_root)
     if not gcs_output_str.startswith(expected_prefix):
@@ -193,9 +151,8 @@ def run(
         )
     base_prefix = gcs_output_str.removeprefix(expected_prefix)
 
-    # Pre-scan for duplicate batch_index. The BatchesFile schema doesn't enforce
-    # uniqueness, and two entries with the same index would silently clobber each
-    # other's GCS prefix. Detect upfront so the error fires before any I/O.
+    # BatchesFile schema doesn't enforce batch_index uniqueness; duplicates would
+    # silently clobber each other's GCS prefix.
     indices = [b['batch_index'] for b in batches_file.batches]
     if len(set(indices)) != len(indices):
         duplicates = sorted(idx for idx, n in Counter(indices).items() if n > 1)
@@ -224,10 +181,7 @@ def run(
             batch_index = batch_entry['batch_index']
             batches_processed += 1
 
-            # PrepareIcaForDragenAnalysis creates one folder named `cohort_name`
-            # under `output_folder/`; ICA writes each batch's analysis run inside
-            # it. Path layout mirrors `utils.get_ica_sample_folder` minus the
-            # trailing `/{sg_name}/` (this stage operates at the batch root).
+            # Mirrors `get_ica_sample_folder` minus the per-SG suffix (batch root).
             ica_folder = (
                 f'/{BUCKET_NAME}/{output_folder}/{cohort_name}/'
                 f'{batch_entry["user_reference"]}-{batch_entry["pipeline_id"]}/'
@@ -246,18 +200,9 @@ def run(
                     stats=stats,
                 )
 
-            # `reports/` — recursively enumerate every file under the subfolder
-            # and stream each. DRAGEN's reports/ tree has nested subdirectories
-            # (e.g. report_files/samples/), so a non-recursive listing would
-            # silently drop the nested files. `list_ica_files(recursive=True)`
-            # walks the whole tree and returns relative paths that preserve the
-            # nested layout when reassembled under the GCS `reports/` prefix.
-            #
-            # The folder may be absent on a catastrophically-failed batch (e.g.
-            # single-sample retry that aborted before producing reports); treat
-            # that as a non-fatal warning so the rest of the batches continue.
-            # Note: a mid-walk ApiException discards any files collected so far
-            # for this folder — re-running the stage re-fetches everything.
+            # Recursive: DRAGEN's reports/ has nested subdirs; non-recursive would
+            # silently drop them. Folder may be absent on a catastrophically-failed
+            # batch — warn and continue.
             reports_folder = f'{ica_folder}reports/'
             try:
                 report_files = ica_utils.list_ica_files(
@@ -285,11 +230,6 @@ def run(
                     stats=stats,
                 )
 
-    # Total-failure guard: if streams were attempted and ZERO succeeded,
-    # raise rather than write a green marker over a useless GCS state.
-    # Partial failures (some successes + some failures) still write the
-    # marker — the JSON payload's failure counts let operators decide
-    # whether to re-run.
     if stats.success == 0 and stats.total_failure > 0:
         raise RuntimeError(
             f'Cohort {cohort_name}: every artefact stream failed '

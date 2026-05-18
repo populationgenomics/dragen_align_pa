@@ -10,10 +10,8 @@ from loguru import logger
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.constants import BUCKET_NAME
 
-# ICA folder statuses that are terminally incompatible with subsequent
-# pipeline submissions. ARCHIVED / DELETING / UNARCHIVING all guarantee that
-# writes into the folder will fail — fail-fast at the prep step instead of
-# deferring to an opaque error during pipeline launch.
+# Fail-fast here so a doomed submission surfaces with context instead of
+# crashing opaquely later at pipeline launch.
 _TERMINAL_BAD_FOLDER_STATUSES = frozenset({'ARCHIVED', 'DELETING', 'UNARCHIVING'})
 
 
@@ -40,14 +38,6 @@ def run(cohort: Cohort, output: cpg_utils.Path) -> None:
         )
     logger.info(f'Cohort output folder for {cohort.name} (status {status}): {folder_id}')
 
-    # ICA folder statuses are documented as `PARTIAL`, `AVAILABLE`, `ARCHIVING`,
-    # `ARCHIVED`, `UNARCHIVING`, `DELETING`. Split by operator-actionability:
-    # - terminal-bad (ARCHIVED / DELETING / UNARCHIVING): downstream submissions
-    #   WILL fail with opaque ICA errors. Raise at the prep step so the failure
-    #   surfaces with actionable context here instead of much later.
-    # - in-flight (ARCHIVING / PARTIAL): transient states that may resolve
-    #   before the orchestrator's first submission. Warn so operators can
-    #   monitor without blocking the pipeline.
     if status in _TERMINAL_BAD_FOLDER_STATUSES:
         raise RuntimeError(
             f'Cohort output folder for {cohort.name} is in terminal-bad status '

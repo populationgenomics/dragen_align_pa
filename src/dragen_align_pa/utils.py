@@ -152,56 +152,18 @@ def get_batch_artefacts_path(cohort_name: str, batch_index: int) -> cpg_utils.Pa
     return get_batch_artefacts_root() / f'{cohort_name}_batch{batch_index:04d}'
 
 
-def get_ica_sample_folder(
+def load_per_sg_state(
     pipeline_id_arguid_path: cpg_utils.Path,
-    sg_name: str,
-    cohort_name: str,
-) -> str:
-    """Resolve the ICA folder containing a single SG's batch output.
+    required_keys: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Read + validate a per-SG state file, returning the parsed JSON dict.
 
-    Reads the per-SG state file (extended schema with `schema_version`,
-    `user_reference`, `pipeline_id`, `batch_index`) and constructs:
-        /{bucket}/{output_folder}/{cohort_name}/{user_reference}-{pipeline_id}/{sg_name}/
-
-    The `{cohort_name}/` segment is the cohort-level analysis output folder
-    created once by `PrepareIcaForDragenAnalysis` and passed to ICA as
-    `outputParentFolderId` when the pipeline is submitted. ICA writes each
-    batch's analysis run as `{user_reference}-{pipeline_id}/` inside that
-    folder. `cohort_name` is supplied by the caller (every cpg-flow stage
-    has it via `cohort.name` or `batch.cohort_name`) rather than stored in
-    the state file, because the state file's `user_reference` already
-    encodes `{cohort_name}-batch{NN}_{ar_guid}_` and we prefer the caller
-    pass the unambiguous value.
-
-    Failure modes:
-    - State file missing → `FileNotFoundError` (resume the orchestrator with
-      `monitor_previous=true` to repopulate from `{cohort}_batches.json`).
-    - State file lacks `schema_version` or has the wrong value →
-      `ValueError`. The file was written by an older code path. A vanilla
-      rerun of `ManageDragenPipeline` only rewrites per-SG files for batches
-      whose status is PENDING/INPROGRESS — files for SUCCEEDED batches are
-      left alone. To force rewriting under the new schema:
-        (a) Rerun the cohort with `force_resubmit=true` (deletes batches.json
-            + every per-SG state file, then re-batches and re-submits), OR
-        (b) Manually delete the offending per-SG file so the next resume pass
-            re-reads from `{cohort}_batches.json` (the authoritative source).
-    - Required key absent under the right schema version → `KeyError`
-      naming the missing field.
-    - State file present, schema valid, BUT the SG's batch was CANCELLED →
-      this helper returns a syntactically valid path that points at an
-      ABORTED ICA analysis. The helper has no awareness of batch status.
-      In practice this branch is unreachable from production code because
-      the orchestrator-level resume-after-cancel guard in
-      `manage_dragen_pipeline.run()` raises `CohortCancelled` on ANY
-      remaining CANCELLED batches, halting the cohort before downstream
-      Download stages run. If a future caller bypasses that guard, the
-      subsequent ICA call would fail with "analysis not found".
-
-    Note: per-SG state files are derived projections of `{cohort}_batches.json`
-    (see `BatchesFile`'s docstring for the recovery contract).
+    Single source of truth for the schema_version check and required-key
+    validation. Callers that need specific fields pass them in `required_keys`
+    so a malformed file raises `KeyError` here rather than several frames deeper.
     """
     with pipeline_id_arguid_path.open('r') as fh:
-        state = json.load(fh)
+        state: dict[str, Any] = json.load(fh)
     version = state.get('schema_version', 0)
     if version != PER_SG_STATE_SCHEMA_VERSION:
         raise ValueError(
@@ -210,11 +172,34 @@ def get_ica_sample_folder(
             f'force_resubmit=true (or manually delete the file) to rewrite it under '
             f'the new schema.',
         )
-    for required in ('user_reference', 'pipeline_id', 'batch_index'):
+    for required in required_keys:
         if required not in state:
             raise KeyError(
                 f'Per-SG state file {pipeline_id_arguid_path} missing required key {required!r}.',
             )
+    return state
+
+
+def get_ica_sample_folder(
+    pipeline_id_arguid_path: cpg_utils.Path,
+    sg_name: str,
+    cohort_name: str,
+) -> str:
+    """Resolve the ICA folder for a single SG's batch output.
+
+    Returns `/{bucket}/{output_folder}/{cohort_name}/{user_reference}-{pipeline_id}/{sg_name}/`.
+
+    A schema-mismatched or missing-key state file raises here rather than
+    downstream — operators can recover by rerunning with `force_resubmit=true`
+    or deleting the offending per-SG file so the next resume reads from
+    `{cohort}_batches.json` (the authoritative source). The helper has no
+    awareness of CANCELLED batches; the orchestrator's resume-after-cancel
+    guard halts the cohort before any Download stage runs.
+    """
+    state = load_per_sg_state(
+        pipeline_id_arguid_path,
+        required_keys=('user_reference', 'pipeline_id', 'batch_index'),
+    )
     user_reference = state['user_reference']
     pipeline_id = state['pipeline_id']
     output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
