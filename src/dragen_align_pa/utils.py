@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING, Any
 
 import cpg_utils
 from cloudpathlib.exceptions import NoStatError
+from collections.abc import Callable
+
+from cpg_flow.inputs import get_multicohort
+from cpg_flow.stage import Stage, StageInput
 from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import config_retrieve, get_access_level, get_driver_image, output_path
 from cpg_utils.hail_batch import get_batch
@@ -150,6 +154,24 @@ def get_batch_artefacts_path(cohort_name: str, batch_index: int) -> cpg_utils.Pa
     Both forms zero-pad `batch_index` to width 4.
     """
     return get_batch_artefacts_root() / f'{cohort_name}_batch{batch_index:04d}'
+
+
+def get_per_sg_state_path(
+    inputs: StageInput,
+    sequencing_group: SequencingGroup,
+    state_stage: Callable[..., Stage],
+) -> tuple[Cohort, cpg_utils.Path]:
+    """Look up an SG's per-SG state file via the given upstream stage's outputs.
+
+    Returns `(cohort, state_path)` because both are needed at every call site:
+    the cohort to read `inputs.as_dict`, and `cohort.name` to thread into
+    downstream `resolve_and_run` / `get_ica_sample_folder` calls.
+    """
+    cohort = get_multicohort().get_cohorts()[0]
+    state_path = inputs.as_dict(target=cohort, stage=state_stage)[
+        f'{sequencing_group.name}_pipeline_id_and_arguid'
+    ]
+    return cohort, state_path
 
 
 def load_per_sg_state(

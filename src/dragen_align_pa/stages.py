@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING
 
 import cpg_utils
 from cpg_flow.filetypes import CramPath
-from cpg_flow.inputs import get_multicohort
 from cpg_flow.stage import (
     CohortStage,
     SequencingGroupStage,
@@ -40,6 +39,7 @@ from dragen_align_pa.utils import (
     get_batch_artefacts_root,
     get_manifest_path_for_cohort,
     get_output_path,
+    get_per_sg_state_path,
     get_pipeline_path,
     get_prep_path,
     initialise_python_job,
@@ -264,31 +264,21 @@ class ManageDragenPipeline(CohortStage):
         # written only on threshold breach) are internal orchestrator scratch
         # and the orchestrator computes their paths inline via
         # `get_pipeline_path()` rather than going through expected_outputs.
-        results: dict[str, cpg_utils.Path] = {
-            # Cohort batches state — written near the start of run() and
-            # updated throughout. Consumed by DownloadBatchArtefactsFromIca.
+        # `_pipeline_complete` is the canonical "stage completed without raising"
+        # signal — written ONLY as the final action of a successful run(). Any
+        # earlier raise (threshold breach, cancel, ICA error) skips it and the
+        # stage is correctly seen as failed.
+        return {
             f'{cohort.name}_batches': get_pipeline_path(filename=f'{cohort.name}_batches.json'),
-            # Completion marker — written as the FINAL action of a successful
-            # run(). Acts as the canonical "stage completed without raising"
-            # signal that cpg-flow checks for stage completion. Any earlier
-            # raise (threshold breach, cancel, ICA error) skips this write and
-            # the stage is correctly seen as failed.
             f'{cohort.name}_pipeline_complete': get_pipeline_path(
                 filename=f'{cohort.name}_pipeline_complete.json',
             ),
-        }
-
-        # Per-SG state files (extended schema; consumed by download stages
-        # via `get_ica_sample_folder` to resolve per-SG ICA folder paths).
-        # Written by `_persist_per_sg_state_for_batch` immediately after each
-        # batch is submitted, so they exist for every SG of any batch that
-        # made it as far as ICA — i.e. all SGs in any successful run().
-        for sg in cohort.get_sequencing_groups():
-            results[f'{sg.name}_pipeline_id_and_arguid'] = get_pipeline_path(
+        } | {
+            f'{sg.name}_pipeline_id_and_arguid': get_pipeline_path(
                 filename=f'{sg.name}_pipeline_id_and_arguid.json',
             )
-
-        return results
+            for sg in cohort.get_sequencing_groups()
+        }
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:
         outputs = self.expected_outputs(cohort=cohort)
@@ -395,13 +385,7 @@ class DownloadCramFromIca(SequencingGroupStage):
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
-
-        # Inputs from previous stage
-        cohort = get_multicohort().get_cohorts()[0]
-        pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
-            target=cohort,
-            stage=ManageDragenPipeline,
-        )[f'{sequencing_group.name}_pipeline_id_and_arguid']
+        cohort, pipeline_id_arguid_path = get_per_sg_state_path(inputs, sequencing_group, ManageDragenPipeline)
 
         ica_download_job: PythonJob = initialise_python_job(
             job_name='DownloadCramFromIca',
@@ -454,19 +438,8 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         }
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
-        """
-        Download gVCF and gVCF TBI files from ICA separately. This is to allow registrations of the gVCF files
-        in metamist to be done via stage decorators. The pipeline ID needs to be read within the Hail BashJob to get the current
-        pipeline ID. If read outside the job, it will get the pipeline ID from the previous pipeline run.
-        """  # noqa: E501
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
-
-        # Inputs from previous stage
-        cohort = get_multicohort().get_cohorts()[0]
-        pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
-            target=cohort,
-            stage=ManageDragenPipeline,
-        )[f'{sequencing_group.name}_pipeline_id_and_arguid']
+        cohort, pipeline_id_arguid_path = get_per_sg_state_path(inputs, sequencing_group, ManageDragenPipeline)
 
         ica_download_job: PythonJob = initialise_python_job(
             job_name='DownloadGvcfFromIca',
@@ -526,21 +499,10 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
         }
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
-        """
-        Download gVCF and gVCF TBI files from ICA separately. This is to allow registrations of the gVCF files
-        in metamist to be done via stage decorators. The pipeline ID needs to be read within the Hail BashJob to get the current
-        pipeline ID. If read outside the job, it will get the pipeline ID from the previous pipeline run.
-        """  # noqa: E501
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
-
-        # Resolve through the DRAGEN per-SG state file — MLR writes into the
-        # parent batch's per-SG folder, so the path matches DownloadCram /
-        # DownloadGvcf's resolution.
-        cohort = get_multicohort().get_cohorts()[0]
-        pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
-            target=cohort,
-            stage=ManageDragenPipeline,
-        )[f'{sequencing_group.name}_pipeline_id_and_arguid']
+        # MLR writes into the DRAGEN batch's per-SG folder, so we resolve via
+        # ManageDragenPipeline's state (NOT ManageDragenMlr's).
+        cohort, pipeline_id_arguid_path = get_per_sg_state_path(inputs, sequencing_group, ManageDragenPipeline)
 
         ica_download_job: PythonJob = initialise_python_job(
             job_name='DownloadMlrGvcfFromIca',
@@ -598,11 +560,7 @@ class DownloadDataFromIca(SequencingGroupStage):
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
         outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
-
-        pipeline_id_arguid_path: cpg_utils.Path = inputs.as_dict(
-            target=get_multicohort().get_cohorts()[0],
-            stage=ManageDragenPipeline,
-        )[f'{sequencing_group.name}_pipeline_id_and_arguid']
+        cohort, pipeline_id_arguid_path = get_per_sg_state_path(inputs, sequencing_group, ManageDragenPipeline)
 
         ica_download_job: PythonJob = initialise_python_job(
             job_name='Download ICA bulk data',
@@ -613,13 +571,11 @@ class DownloadDataFromIca(SequencingGroupStage):
         ica_download_job.spot(is_spot=False)
         ica_download_job.memory(memory='8Gi')
 
-        cohort_name: str = get_multicohort().get_cohorts()[0].name
-
         ica_download_job.call(
             download_ica_pipeline_outputs.run,
             sequencing_group=sequencing_group,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
-            cohort_name=cohort_name,
+            cohort_name=cohort.name,
         )
 
         return self.make_outputs(

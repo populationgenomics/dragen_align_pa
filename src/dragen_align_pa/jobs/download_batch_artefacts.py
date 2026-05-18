@@ -153,9 +153,8 @@ def run(
 
     # BatchesFile schema doesn't enforce batch_index uniqueness; duplicates would
     # silently clobber each other's GCS prefix.
-    indices = [b['batch_index'] for b in batches_file.batches]
-    if len(set(indices)) != len(indices):
-        duplicates = sorted(idx for idx, n in Counter(indices).items() if n > 1)
+    counts = Counter(b['batch_index'] for b in batches_file.batches)
+    if duplicates := sorted(idx for idx, n in counts.items() if n > 1):
         raise ValueError(
             f'Duplicate batch_index values in {batches_file_path}: {duplicates}; '
             f'refusing to overwrite GCS artefacts.',
