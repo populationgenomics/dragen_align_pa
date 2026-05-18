@@ -144,7 +144,7 @@ def check_object_already_exists(
             query_params=query_params,  # type: ignore[ReportUnknownVariableType]
         )  # type: ignore[ReportUnknownVariableType]
 
-        if len(api_response.body['items']) == 0:  # type: ignore[ReportUnknownVariableType]
+        if not api_response.body['items']:  # type: ignore[ReportUnknownVariableType]
             return None
 
         object_data = api_response.body['items'][0]['data']  # pyright: ignore[reportUnknownVariableType]
@@ -188,7 +188,7 @@ def find_file_id_by_name(
         )
 
         items = api_response.body.get('items', [])  # pyright: ignore[reportUnknownVariableType]
-        if len(items) == 0:  # pyright: ignore[reportUnknownArgumentType]
+        if not items:  # pyright: ignore[reportUnknownArgumentType]
             raise FileNotFoundError(
                 f'File not found in ICA: {parent_folder_path}{file_name}',
             )
@@ -235,7 +235,7 @@ def get_file_details_from_ica(
             query_params=query_params,
         )
         items = api_response.body.get('items', [])
-        if len(items) > 0:
+        if items:
             return items[0]['data']  # pyright: ignore[reportUnknownVariableType]
 
     except icasdk.ApiException as e:

@@ -2,10 +2,11 @@
 Download specific files (e.g., CRAM, GVCF) from ICA using the Python SDK.
 """
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import cpg_utils
 from cpg_flow.targets import SequencingGroup
+from cpg_utils.config import get_driver_image
 from google.cloud import storage
 from google.cloud.storage.bucket import Bucket
 from icasdk.apis.tags import project_data_api
@@ -13,7 +14,10 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.file_types import FileTypeSpec
-from dragen_align_pa.utils import get_ica_sample_folder
+from dragen_align_pa.utils import get_ica_sample_folder, initialise_python_job
+
+if TYPE_CHECKING:
+    from hailtop.batch.job import PythonJob
 
 
 def _orchestrate_download(
@@ -171,3 +175,33 @@ def resolve_and_run(
         ica_folder_path=ica_folder_path,
         gcs_output_dir=gcs_output_dir,
     )
+
+
+def make_download_job(
+    job_name: str,
+    sequencing_group: SequencingGroup,
+    file_spec: FileTypeSpec,
+    pipeline_id_arguid_path: cpg_utils.Path,
+    cohort_name: str,
+    gcs_output_dir: cpg_utils.Path,
+) -> 'PythonJob':
+    """Build a Hail PythonJob that resolves the SG's ICA folder and downloads `file_spec`.
+
+    The three Download*FromIca stages share identical job-construction boilerplate
+    (image, storage, memory, spot, then `resolve_and_run`); this is the single place
+    that boilerplate lives.
+    """
+    job = initialise_python_job(job_name=job_name, target=sequencing_group, tool_name='ICA-Python')
+    job.image(image=get_driver_image())
+    job.storage('8Gi')
+    job.memory('8Gi')
+    job.spot(is_spot=False)
+    job.call(
+        resolve_and_run,
+        sequencing_group=sequencing_group,
+        file_spec=file_spec,
+        pipeline_id_arguid_path=pipeline_id_arguid_path,
+        cohort_name=cohort_name,
+        gcs_output_dir=gcs_output_dir,
+    )
+    return job

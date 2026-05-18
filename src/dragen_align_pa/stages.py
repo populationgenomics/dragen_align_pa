@@ -387,37 +387,17 @@ class DownloadCramFromIca(SequencingGroupStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
         cohort, pipeline_id_arguid_path = get_per_sg_state_path(inputs, sequencing_group, ManageDragenPipeline)
 
-        ica_download_job: PythonJob = initialise_python_job(
+        job = download_specific_files_from_ica.make_download_job(
             job_name='DownloadCramFromIca',
-            target=sequencing_group,
-            tool_name='ICA-Python',
-        )
-        ica_download_job.image(image=get_driver_image())
-        ica_download_job.storage('8Gi')
-        ica_download_job.memory('8Gi')
-        ica_download_job.spot(is_spot=False)
-
-        cram_spec: FileTypeSpec = FileTypeSpec(
-            gcs_prefix='cram',
-            data_suffix='cram',
-            index_suffix='cram.crai',
-            md5_suffix='md5sum',
-        )
-
-        ica_download_job.call(
-            download_specific_files_from_ica.resolve_and_run,
             sequencing_group=sequencing_group,
-            file_spec=cram_spec,
+            file_spec=FileTypeSpec(
+                gcs_prefix='cram', data_suffix='cram', index_suffix='cram.crai', md5_suffix='md5sum',
+            ),
             pipeline_id_arguid_path=pipeline_id_arguid_path,
             cohort_name=cohort.name,
             gcs_output_dir=outputs['cram'].parent,
         )
-
-        return self.make_outputs(
-            target=sequencing_group,
-            data=outputs,  # pyright: ignore[reportArgumentType]
-            jobs=ica_download_job,
-        )
+        return self.make_outputs(target=sequencing_group, data=outputs, jobs=job)  # pyright: ignore[reportArgumentType]
 
 
 @stage(
@@ -441,37 +421,20 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
         cohort, pipeline_id_arguid_path = get_per_sg_state_path(inputs, sequencing_group, ManageDragenPipeline)
 
-        ica_download_job: PythonJob = initialise_python_job(
+        job = download_specific_files_from_ica.make_download_job(
             job_name='DownloadGvcfFromIca',
-            target=sequencing_group,
-            tool_name='ICA-Python',
-        )
-        ica_download_job.image(image=get_driver_image())
-        ica_download_job.storage('8Gi')
-        ica_download_job.memory('8Gi')
-        ica_download_job.spot(is_spot=False)
-
-        base_gvcf_spec: FileTypeSpec = FileTypeSpec(
-            gcs_prefix='base_gvcf',
-            data_suffix='hard-filtered.gvcf.gz',
-            index_suffix='hard-filtered.gvcf.gz.tbi',
-            md5_suffix='md5sum',
-        )
-
-        ica_download_job.call(
-            download_specific_files_from_ica.resolve_and_run,
             sequencing_group=sequencing_group,
-            file_spec=base_gvcf_spec,
+            file_spec=FileTypeSpec(
+                gcs_prefix='base_gvcf',
+                data_suffix='hard-filtered.gvcf.gz',
+                index_suffix='hard-filtered.gvcf.gz.tbi',
+                md5_suffix='md5sum',
+            ),
             pipeline_id_arguid_path=pipeline_id_arguid_path,
             cohort_name=cohort.name,
             gcs_output_dir=outputs['gvcf'].parent,
         )
-
-        return self.make_outputs(
-            target=sequencing_group,
-            data=outputs,  # pyright: ignore[reportArgumentType]
-            jobs=ica_download_job,
-        )
+        return self.make_outputs(target=sequencing_group, data=outputs, jobs=job)  # pyright: ignore[reportArgumentType]
 
 
 @stage(
@@ -504,37 +467,20 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
         # ManageDragenPipeline's state (NOT ManageDragenMlr's).
         cohort, pipeline_id_arguid_path = get_per_sg_state_path(inputs, sequencing_group, ManageDragenPipeline)
 
-        ica_download_job: PythonJob = initialise_python_job(
+        job = download_specific_files_from_ica.make_download_job(
             job_name='DownloadMlrGvcfFromIca',
-            target=sequencing_group,
-            tool_name='ICA-Python',
-        )
-        ica_download_job.image(image=get_driver_image())
-        ica_download_job.storage('8Gi')
-        ica_download_job.memory('8Gi')
-        ica_download_job.spot(is_spot=False)
-
-        recal_gvcf_spec: FileTypeSpec = FileTypeSpec(
-            gcs_prefix='recal_gvcf',
-            data_suffix='hard-filtered.recal.gvcf.gz',
-            index_suffix='hard-filtered.recal.gvcf.gz.tbi',
-            md5_suffix='md5',
-        )
-
-        ica_download_job.call(
-            download_specific_files_from_ica.resolve_and_run,
             sequencing_group=sequencing_group,
-            file_spec=recal_gvcf_spec,
+            file_spec=FileTypeSpec(
+                gcs_prefix='recal_gvcf',
+                data_suffix='hard-filtered.recal.gvcf.gz',
+                index_suffix='hard-filtered.recal.gvcf.gz.tbi',
+                md5_suffix='md5',
+            ),
             pipeline_id_arguid_path=pipeline_id_arguid_path,
             cohort_name=cohort.name,
             gcs_output_dir=outputs['gvcf'].parent,
         )
-
-        return self.make_outputs(
-            target=sequencing_group,
-            data=outputs,  # pyright: ignore[reportArgumentType]
-            jobs=ica_download_job,
-        )
+        return self.make_outputs(target=sequencing_group, data=outputs, jobs=job)  # pyright: ignore[reportArgumentType]
 
 
 @stage(

@@ -1,6 +1,5 @@
 import os
 import time
-from collections.abc import Callable
 from functools import partial
 from typing import Literal
 
@@ -214,10 +213,6 @@ def run(
         md5_outputs_folder_id=md5_outputs_folder_id,
     )
 
-    def _create_submit_callable_factory(target_name: str) -> Callable[[], str]:
-        _ = target_name
-        return submit_callable
-
     manage_ica_pipeline_loop(
         targets_to_process=[cohort],
         outputs=outputs,
@@ -226,7 +221,7 @@ def run(
         success_file_key_template='md5sum_pipeline_success',
         pipeline_id_file_key_template='md5sum_pipeline_run',
         error_log_key=f'{cohort_name}_md5_errors',
-        submit_function_factory=_create_submit_callable_factory,
+        submit_function_factory=lambda _target_name: submit_callable,
         allow_retry=True,
         sleep_time_seconds=300,
     )
