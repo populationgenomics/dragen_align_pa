@@ -10,6 +10,12 @@ from loguru import logger
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.constants import BUCKET_NAME
 
+# ICA folder statuses that are terminally incompatible with subsequent
+# pipeline submissions. ARCHIVED / DELETING / UNARCHIVING all guarantee that
+# writes into the folder will fail — fail-fast at the prep step instead of
+# deferring to an opaque error during pipeline launch.
+_TERMINAL_BAD_FOLDER_STATUSES = frozenset({'ARCHIVED', 'DELETING', 'UNARCHIVING'})
+
 
 def run(cohort: Cohort, output: cpg_utils.Path) -> None:
     """Create (or find) a single ICA folder for the cohort's pipeline outputs.
@@ -35,17 +41,26 @@ def run(cohort: Cohort, output: cpg_utils.Path) -> None:
     logger.info(f'Cohort output folder for {cohort.name} (status {status}): {folder_id}')
 
     # ICA folder statuses are documented as `PARTIAL`, `AVAILABLE`, `ARCHIVING`,
-    # `ARCHIVED`, `UNARCHIVING`, `DELETING`. Anything other than `AVAILABLE`
-    # means the folder is in a state where the orchestrator's subsequent
-    # writes (analysis output / FASTQ list uploads) will fail with an opaque
-    # error — surface the issue at the prep step so operators can clean up
-    # (manually unarchive, abort and re-create, etc.) before any pipeline
-    # is submitted.
+    # `ARCHIVED`, `UNARCHIVING`, `DELETING`. Split by operator-actionability:
+    # - terminal-bad (ARCHIVED / DELETING / UNARCHIVING): downstream submissions
+    #   WILL fail with opaque ICA errors. Raise at the prep step so the failure
+    #   surfaces with actionable context here instead of much later.
+    # - in-flight (ARCHIVING / PARTIAL): transient states that may resolve
+    #   before the orchestrator's first submission. Warn so operators can
+    #   monitor without blocking the pipeline.
+    if status in _TERMINAL_BAD_FOLDER_STATUSES:
+        raise RuntimeError(
+            f'Cohort output folder for {cohort.name} is in terminal-bad status '
+            f'{status!r} (folder_id={folder_id}). DRAGEN pipeline submissions '
+            f'against this folder will fail. Manually unarchive or recreate the '
+            f"folder in ICA, then re-run the cohort.",
+        )
     if status != 'AVAILABLE':
         logger.warning(
             f'Cohort output folder for {cohort.name} has non-AVAILABLE status '
-            f'{status!r} (folder_id={folder_id}). Subsequent pipeline submissions '
-            f"may fail; verify the folder's state in ICA before proceeding.",
+            f'{status!r} (folder_id={folder_id}). The folder is likely in a '
+            f'transient state; if subsequent pipeline submissions fail, verify '
+            f"the folder's state in ICA before retrying.",
         )
 
     with output.open('w') as fh:

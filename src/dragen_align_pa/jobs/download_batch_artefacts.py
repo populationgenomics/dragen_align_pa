@@ -5,6 +5,7 @@ batches file. Files are streamed directly from ICA to GCS via the existing
 `ica_utils.stream_ica_file_to_gcs` helper — no local staging, no icav2 CLI.
 """
 
+import json
 from typing import Literal
 
 import cpg_utils
@@ -29,16 +30,25 @@ def _stream_silently(
     gcs_bucket: storage.Bucket,
     gcs_prefix: str,
     context: str,
-) -> None:
+) -> bool:
     """Stream one file to GCS; warn-and-skip on transient ICA / HTTP / GCS errors.
+
+    Returns `True` on success, `False` on a transient failure that was
+    caught + logged. Callers aggregate these for the per-cohort summary.
 
     Wraps `ica_utils.stream_ica_file_to_gcs` so a single transient blip on
     one file does not abort the whole cohort's batch-artefacts run mid-loop
     and leave partial GCS state with no marker file. Missed files are
-    observable via the absence of GCS objects and can be re-fetched by
+    observable both via the marker payload (which records the failure
+    count) and via the absence of GCS objects; both are re-fetched by
     re-running the stage. `context` is included in the warning log to make
-    the source location of the failure traceable (typically the batch name
-    plus what the file is).
+    the source location traceable.
+
+    Note: `ValueError` from `stream_ica_file_to_gcs`'s MD5-mismatch branch
+    (`ica_utils.py:192`) is **intentionally not caught**. This helper passes
+    `expected_md5_hash=None`, so that branch is unreachable from here. A
+    future caller that supplies an expected hash inherits a hard crash on
+    mismatch, which is the correct behaviour for integrity violations.
     """
     try:
         ica_utils.stream_ica_file_to_gcs(
@@ -52,6 +62,8 @@ def _stream_silently(
         )
     except (icasdk.ApiException, requests.RequestException, gcs_exceptions.GoogleCloudError) as e:
         logger.warning(f'{context}: streaming {file_name} failed ({e}); skipping.')
+        return False
+    return True
 
 
 def _stream_named_file(
@@ -61,13 +73,19 @@ def _stream_named_file(
     file_name: str,
     gcs_bucket: storage.Bucket,
     gcs_prefix: str,
-) -> None:
+) -> bool | None:
     """Find one named file in `parent_folder` and stream it to `gcs_prefix/file_name`.
 
-    Logs and returns silently if the file is not present (passfail.json /
-    summary.json may legitimately be absent on a catastrophically-failed
-    batch). Tolerates transient ICA / HTTP / GCS errors at both the lookup
-    AND the stream step so a single blip doesn't abort the cohort run.
+    Returns:
+    - `True`: file was streamed.
+    - `False`: file existed at lookup but the stream step failed (transient).
+    - `None`: file is legitimately absent (passfail.json / summary.json may
+      be missing on a catastrophically-failed batch — not counted as a
+      failure for marker accounting).
+
+    Lookup-side ICA `ApiException` is bucketed as `False` (transient
+    failure) rather than `None` (absent) because the file may exist; only
+    `FileNotFoundError` from the SDK indicates definitive absence.
     """
     try:
         file_id = ica_api_utils.find_file_id_by_name(
@@ -78,14 +96,14 @@ def _stream_named_file(
         )
     except FileNotFoundError:
         logger.warning(f'{file_name} not present in {parent_folder}; skipping.')
-        return
+        return None
     except icasdk.ApiException as e:
         logger.warning(
             f'ICA API error while looking up {file_name} in {parent_folder}: {e}; skipping.',
         )
-        return
+        return False
 
-    _stream_silently(
+    return _stream_silently(
         api_instance=api_instance,
         path_parameters=path_parameters,
         file_id=file_id,
@@ -136,10 +154,24 @@ def run(
         )
     base_prefix = gcs_output_str.removeprefix(expected_prefix)
 
+    # Pre-scan for duplicate batch_index. The BatchesFile schema doesn't enforce
+    # uniqueness, and two entries with the same index would silently clobber each
+    # other's GCS prefix. Detect upfront so the error fires before any I/O.
+    indices = [b['batch_index'] for b in batches_file.batches]
+    if len(set(indices)) != len(indices):
+        from collections import Counter  # noqa: PLC0415
+        duplicates = sorted(idx for idx, n in Counter(indices).items() if n > 1)
+        raise ValueError(
+            f'Duplicate batch_index values in {batches_file_path}: {duplicates}; '
+            f'refusing to overwrite GCS artefacts.',
+        )
+
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     path_parameters = {'projectId': secrets['projectID']}
 
-    seen_batch_indices: set[int] = set()
+    success_count = 0
+    failure_count = 0
+    batches_processed = 0
 
     with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
@@ -153,15 +185,7 @@ def run(
                 continue
 
             batch_index = batch_entry['batch_index']
-            if batch_index in seen_batch_indices:
-                # Two entries with the same batch_index would write to the same
-                # GCS prefix and silently clobber each other. The BatchesFile
-                # schema doesn't enforce uniqueness, so guard here.
-                raise ValueError(
-                    f'Duplicate batch_index {batch_index} in {batches_file_path}; '
-                    f'refusing to overwrite GCS artefacts.',
-                )
-            seen_batch_indices.add(batch_index)
+            batches_processed += 1
 
             # PrepareIcaForDragenAnalysis creates one folder named `cohort_name`
             # under `output_folder/`; ICA writes each batch's analysis run inside
@@ -175,7 +199,7 @@ def run(
             gcs_prefix = f'{base_prefix}/{batch_name}'
 
             for name in ('passfail.json', 'summary.json'):
-                _stream_named_file(
+                result = _stream_named_file(
                     api_instance=api_instance,
                     path_parameters=path_parameters,
                     parent_folder=ica_folder,
@@ -183,6 +207,11 @@ def run(
                     gcs_bucket=gcs_bucket,
                     gcs_prefix=gcs_prefix,
                 )
+                if result is True:
+                    success_count += 1
+                elif result is False:
+                    failure_count += 1
+                # result is None: file legitimately absent — not counted.
 
             # `reports/` — recursively enumerate every file under the subfolder
             # and stream each. DRAGEN's reports/ tree has nested subdirectories
@@ -195,6 +224,8 @@ def run(
             # The folder may be absent on a catastrophically-failed batch (e.g.
             # single-sample retry that aborted before producing reports); treat
             # that as a non-fatal warning so the rest of the batches continue.
+            # Note: a mid-walk ApiException discards any files collected so far
+            # for this folder — re-running the stage re-fetches everything.
             reports_folder = f'{ica_folder}reports/'
             try:
                 report_files = ica_utils.list_ica_files_recursive(
@@ -210,7 +241,7 @@ def run(
                 report_files = []
 
             for report_relative_path, report_id in report_files:
-                _stream_silently(
+                if _stream_silently(
                     api_instance=api_instance,
                     path_parameters=path_parameters,
                     file_id=report_id,
@@ -218,7 +249,41 @@ def run(
                     gcs_bucket=gcs_bucket,
                     gcs_prefix=f'{gcs_prefix}/reports',
                     context=f'batch {batch_name} reports/',
-                )
+                ):
+                    success_count += 1
+                else:
+                    failure_count += 1
+
+    # Total-failure guard: if we attempted streams (failure_count > 0) and not a
+    # single one succeeded, raising propagates the failure to cpg-flow rather
+    # than writing a green marker over a useless GCS state. Partial failures
+    # (some successes + some failures) still write the marker — the failure
+    # count goes into the JSON payload so operators can decide whether to re-run.
+    if failure_count > 0 and success_count == 0:
+        raise RuntimeError(
+            f'Cohort {cohort_name}: every artefact stream failed '
+            f'({failure_count} attempts, 0 successes). No files landed on GCS. '
+            f'Re-run the stage; if the failure persists, investigate ICA / GCS '
+            f'connectivity for this project.',
+        )
+
+    summary_msg = (
+        f'Cohort {cohort_name} batch-artefact download: '
+        f'batches_processed={batches_processed}, success={success_count}, '
+        f'failure={failure_count}.'
+    )
+    if failure_count > 0:
+        logger.warning(summary_msg)
+    else:
+        logger.info(summary_msg)
 
     with marker_path.open('w') as fh:
-        fh.write(f'Downloaded batch artefacts for {cohort_name}\n')
+        json.dump(
+            {
+                'cohort_name': cohort_name,
+                'batches_processed': batches_processed,
+                'success_count': success_count,
+                'failure_count': failure_count,
+            },
+            fh,
+        )

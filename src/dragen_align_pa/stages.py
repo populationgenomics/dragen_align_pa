@@ -839,6 +839,15 @@ class DeleteDataInIca(CohortStage):
     Delete all the data in ICA for a dataset, so we don't pay storage costs
     once processing is finished. This includes generated analysis folders
     and the original source data (uploaded CRAMs or FASTQs).
+
+    **TEMPORARILY BROKEN on this branch (`DeleteDataInIca` rewrite deferred
+    to a follow-up PR; see spec section 7).** `queue_jobs` reads
+    `inputs.as_dict(target=cohort, stage=PrepareIcaForDragenAnalysis)`, but
+    after Task 17 that stage returns a single `cpg_utils.Path`, so the
+    `as_dict` call fails at DAG build time. The job also still constructs
+    legacy per-SG ICA paths for cleanup, which don't match the new batched
+    layout. Production runs continue on `main` until the migration is
+    complete; the rewrite lands alongside the per-batch cleanup work.
     """
 
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
