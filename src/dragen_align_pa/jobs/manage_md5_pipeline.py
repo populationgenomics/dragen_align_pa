@@ -172,7 +172,6 @@ def run(
         max_retries = 5
         retry_delay_seconds = 15
         for attempt in range(max_retries):
-            logger.info(f"Attempt {attempt + 1}/{max_retries} to find uploaded file '{fastq_list_filename}'...")
             fastq_list_file_details = ica_api_utils.get_file_details_from_ica(
                 api_instance=api_instance,
                 path_params=path_parameters,

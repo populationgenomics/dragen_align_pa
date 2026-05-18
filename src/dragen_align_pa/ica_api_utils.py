@@ -135,9 +135,6 @@ def check_object_already_exists(
             'filename': [file_name],
             'filenameMatchMode': 'EXACT',
         } | query_params
-    logger.info(
-        f'Checking to see if the {object_type} object already exists at {folder_path}/{file_name}',
-    )
     try:
         api_response = api_instance.get_project_data_list(  # type: ignore[ReportUnknownVariableType]
             path_params=path_params,  # type: ignore[ReportUnknownVariableType]
@@ -175,7 +172,6 @@ def find_file_id_by_name(
     Finds a specific file ID in an ICA folder by its exact name.
     (Used by download_specific_files_from_ica.py)
     """
-    logger.info(f"Searching for file '{file_name}' in '{parent_folder_path}'...")
     try:
         api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
             path_params=path_parameters,
@@ -201,7 +197,6 @@ def find_file_id_by_name(
         if not file_id:
             raise ValueError(f"Found file item for '{file_name}' but it has no ID.")
 
-        logger.info(f'Found file ID: {file_id}')
         return file_id  # pyright: ignore[reportUnknownVariableType]
 
     except icasdk.ApiException as e:

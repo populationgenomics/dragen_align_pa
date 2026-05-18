@@ -65,7 +65,8 @@ class MonitoredTarget:
         return self.target.name
 
     def set_status(self, new_status: PipelineStatus) -> None:
-        logger.info(f'Target {self.name} status moving from {self.status.name} to {new_status.name}')
+        if new_status != self.status:
+            logger.info(f'Target {self.name}: {self.status.name} → {new_status.name}')
         self.status = new_status
 
 
@@ -444,7 +445,6 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
         )
         if all(is_finished(target) for target in monitored_targets):
             break
-        logger.info(f'Waiting {sleep_time_seconds}s.')
         time.sleep(sleep_time_seconds)
 
     try:

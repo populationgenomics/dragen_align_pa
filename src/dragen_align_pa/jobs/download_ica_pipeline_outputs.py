@@ -67,7 +67,6 @@ def run(
         ]
 
         for file_name, file_id in files_to_download:
-            logger.info(f'Preparing to download file: {file_name} (ID: {file_id})')
             ica_utils.stream_ica_file_to_gcs(
                 api_instance=api_instance,
                 path_parameters=path_parameters,

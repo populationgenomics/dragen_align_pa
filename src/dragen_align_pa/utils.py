@@ -35,7 +35,6 @@ def validate_cli_path_input(path: str, arg_name: str) -> None:
     if re.search(r'[;&|$`(){}[\]<>*?!#\s]', path):
         logger.error(f'Invalid characters found in {arg_name}: {path}')
         raise ValueError(f'Potential unsafe characters in {arg_name}')
-    logger.info(f'Path validation passed for {arg_name}.')
 
 
 def delete_pipeline_id_file(pipeline_id_file: str) -> None:
@@ -49,7 +48,6 @@ def delete_pipeline_id_file(pipeline_id_file: str) -> None:
 def calculate_needed_storage(
     cram_path: cpg_utils.Path,
 ) -> str:
-    logger.info(f'Checking blob size for {cram_path}')
     try:
         storage_size: int = cram_path.stat().st_size
         # Added a buffer (3GB) and increased multiplier slightly (1.2 -> 1.3)

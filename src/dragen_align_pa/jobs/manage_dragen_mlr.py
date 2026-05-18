@@ -199,8 +199,6 @@ def run(
     mlr_hash_table: str = config_retrieve(['dragen_align_pa', 'manage_dragen_mlr', 'mlr_hash_table'])
     output_prefix: str = f'ica://{dragen_align_project}/{BUCKET_NAME}/{ica_analysis_output_folder}'
 
-    logger.info(f'Dataset name is: {cohort.dataset.name}')
-
     def _create_submit_callable(sg_name: str) -> Callable[[], str]:
         """Creates a zero-argument callable for pipeline submission."""
         return partial(
