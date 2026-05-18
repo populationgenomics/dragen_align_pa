@@ -1,10 +1,10 @@
 """Orchestrate the unified DRAGEN pipeline across a cohort.
 
 Responsibilities:
-- Chunk the cohort into deterministic batches (Batch dataclass).
+- Chunk the cohort into deterministic batches (IcaBatch dataclass).
 - Persist `{cohort}_batches.json` plus per-SG state files (extended schema).
 - Submit batches via `submit_dragen_batch.run`, monitored by the shared
-  `manage_ica_pipeline_loop` (now generic over Batch targets).
+  `manage_ica_pipeline_loop` (now generic over IcaBatch targets).
 - After the first pass completes, read passfail across all batches; if any SGs
   are marked Fail and have not been retried, form retry batches and run the
   loop a second time. Single retry only.
@@ -22,7 +22,7 @@ from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
-from dragen_align_pa.batches import Batch, BatchesFile, chunk_sgs_into_batches
+from dragen_align_pa.batches import BatchesFile, IcaBatch, chunk_sgs_into_batches
 from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, submit_dragen_batch
 from dragen_align_pa.jobs.ica_pipeline_manager import (
@@ -57,7 +57,7 @@ class CohortCancelled(RuntimeError):  # noqa: N818
 
 
 def _build_submit_callable(
-    batch: Batch,
+    batch: IcaBatch,
     analysis_output_fid_path: cpg_utils.Path,
     cram_state_paths: dict[str, cpg_utils.Path] | None,
     fastq_ids_path: cpg_utils.Path | None,
@@ -131,7 +131,7 @@ def _build_submit_callable(
 
 def _persist_per_sg_state_for_batch(
     outputs: dict[str, cpg_utils.Path],
-    batch: Batch,
+    batch: IcaBatch,
     submission_result: dict[str, str],
 ) -> None:
     """Write per-SG state files for one batch immediately on submission.
@@ -193,14 +193,30 @@ def _harvest_ar_guids_from_per_sg_state(
     can warn when membership has drifted (cohort changed between runs) —
     positional AR-GUID reuse is still applied in that case (the audit-trail
     identity is preserved), but the warning makes the drift visible.
+    Failure modes — all raise rather than silently fall through, because a
+    `force_resubmit` that harvests fewer AR GUIDs than expected silently
+    re-submits with fresh GUIDs, which severs the billing-association
+    audit trail with no log signal at the time the divergence happens.
+
+    - State file parses successfully but is missing `batch_index` or
+      `ar_guid` (e.g. truncated to `{}` or an older schema): raises
+      `KeyError`. The file's presence implies a previous submission
+      attempt, so missing fields point at a real bug in the writer or
+      an out-of-band manual edit.
+    - All per-SG state files present and parseable, but harvested ends
+      up empty: raises `RuntimeError`. The caller (`_handle_management_flags`)
+      only invokes this helper when prior state was detected, so an
+      empty harvest is impossible by construction in normal flow.
     """
     harvested: dict[int, str] = {}
     membership: dict[int, set[str]] = {}
+    sgs_with_state: list[str] = []
     for sg_name in sg_names:
         key = f'{sg_name}_pipeline_id_and_arguid'
         path = outputs.get(key)
         if path is None or not path.exists():
             continue
+        sgs_with_state.append(sg_name)
         try:
             with path.open('r') as fh:
                 state = json.load(fh)
@@ -210,10 +226,26 @@ def _harvest_ar_guids_from_per_sg_state(
         batch_index = state.get('batch_index')
         ar_guid = state.get('ar_guid')
         if batch_index is None or not ar_guid:
-            continue
+            raise KeyError(
+                f'Per-SG state file {path} parsed but is missing required keys '
+                f'(batch_index={batch_index!r}, ar_guid={ar_guid!r}). The file '
+                f'should have been written by `_persist_per_sg_state_for_batch` '
+                f'with both fields populated — either an older schema is on disk '
+                f'or the file was edited out-of-band. Investigate before re-running.',
+            )
         # Earlier entries win; subsequent SGs in the same batch should agree.
         harvested.setdefault(batch_index, ar_guid)
         membership.setdefault(batch_index, set()).add(sg_name)
+    if sgs_with_state and not harvested:
+        # Every state file we found either failed to parse or had usable
+        # fields filtered out — neither path should happen when the caller
+        # has just detected prior state. Raise to make the divergence loud.
+        raise RuntimeError(
+            f'Found per-SG state files for {len(sgs_with_state)} SG(s) but harvested zero '
+            f'AR GUIDs. All state files were unparseable. SGs with state on disk: '
+            f'{sgs_with_state}. force_resubmit cannot proceed without harvesting — '
+            f'investigate the state file integrity before re-running.',
+        )
     return harvested, membership
 
 
@@ -232,7 +264,7 @@ def _threshold_breached(n_failed: int, n_total: int) -> bool:
 
 def _on_succeeded_factory(
     batches_file: BatchesFile,
-    batches_by_name: dict[str, Batch],
+    batches_by_name: dict[str, IcaBatch],
 ) -> Callable[[MonitoredTarget], None]:
     """Callback invoked when a batch's ICA analysis reaches SUCCEEDED.
 
@@ -348,7 +380,7 @@ def _on_succeeded_factory(
 
 def _on_status_change_factory(
     batches_file: BatchesFile,
-    batches_by_name: dict[str, Batch],
+    batches_by_name: dict[str, IcaBatch],
 ) -> Callable[[MonitoredTarget, PipelineStatus], None]:
     """Mirror the loop's terminal non-success transitions into `{cohort}_batches.json`.
 
@@ -395,7 +427,7 @@ def _build_retry_batches(
     cohort_name: str,
     batches_file: BatchesFile,
     batch_size: int,
-) -> list[Batch]:
+) -> list[IcaBatch]:
     """Form retry batches from per-sample failures across batches.
 
     Only retries batches with `retry_generation == 0` (the initial cohort batches).
@@ -445,12 +477,12 @@ def _build_retry_batches(
         cohort_name=cohort_name, sg_names=eligible, batch_size=batch_size,
     )
 
-    new_batches: list[Batch] = []
+    new_batches: list[IcaBatch] = []
     source_to_retried: dict[int, list[str]] = {}
     for pseudo in pseudo_batches:
         new_index = batches_file.add_retry_batch(sg_names=pseudo.sg_names)
         new_batches.append(
-            Batch(cohort_name=cohort_name, batch_index=new_index, sg_names=list(pseudo.sg_names)),
+            IcaBatch(cohort_name=cohort_name, batch_index=new_index, sg_names=list(pseudo.sg_names)),
         )
         for sg in pseudo.sg_names:
             source_to_retried.setdefault(sg_to_source[sg], []).append(sg)
@@ -461,7 +493,7 @@ def _build_retry_batches(
     return new_batches
 
 
-def _build_loop_outputs_for_batches(batches: list[Batch]) -> dict[str, cpg_utils.Path]:
+def _build_loop_outputs_for_batches(batches: list[IcaBatch]) -> dict[str, cpg_utils.Path]:
     """Build the shared loop's `outputs` dict keyed by batch name.
 
     Per-batch success / pipeline_id paths are internal orchestrator state
@@ -541,11 +573,12 @@ def _handle_management_flags(
             'wait for ICA aborts to settle, then rerun with force_resubmit=true.',
         )
     if force_resubmit and monitor_previous:
-        logger.warning(
-            f'Cohort {cohort_name}: both force_resubmit and monitor_previous are set; '
-            f'force_resubmit wins and monitor_previous is ignored.',
+        raise ValueError(
+            f'Cohort {cohort_name}: force_resubmit and monitor_previous are mutually '
+            f'exclusive. Pick one: force_resubmit deletes existing state and starts '
+            f'a fresh submission; monitor_previous resumes monitoring an in-flight '
+            f'run. Unset whichever flag does not match your intent and retry.',
         )
-        monitor_previous = False
 
     if monitor_previous and not batches_file_path.exists():
         raise FileNotFoundError(
@@ -558,21 +591,26 @@ def _handle_management_flags(
             and outputs[f'{sg}_pipeline_id_and_arguid'].exists()
             for sg in sg_names
         )
-        if had_prior_state:
-            logger.warning(
-                f'force_resubmit=true for cohort {cohort_name}: harvesting AR GUIDs and '
-                f'deleting batches file + per-SG state.',
+        if not had_prior_state:
+            # No batches file + no per-SG state means there's nothing to
+            # force-resubmit. Silently falling through to a fresh submission
+            # would burn money on an ICA run the user probably didn't intend
+            # (force_resubmit is the destructive flag — they expected
+            # existing state to be replaced). Raise so the user un-sets the
+            # flag explicitly.
+            raise RuntimeError(
+                f'force_resubmit=true for cohort {cohort_name} but no prior state '
+                f'(batches.json or per-SG state files) exists. Remove force_resubmit '
+                f'from the config to submit fresh.',
             )
-        else:
-            logger.info(
-                f'force_resubmit=true for cohort {cohort_name} but no prior state exists; '
-                f'proceeding as a fresh submission.',
-            )
+        logger.warning(
+            f'force_resubmit=true for cohort {cohort_name}: harvesting AR GUIDs and '
+            f'deleting batches file + per-SG state.',
+        )
         preserved_ar_guids, old_membership = _harvest_ar_guids_from_per_sg_state(
             sg_names=sg_names, outputs=outputs,
         )
-        if batches_file_path.exists():
-            batches_file_path.unlink()
+        batches_file_path.unlink(missing_ok=True)
         # Delete the completion marker too — otherwise a marker left over from a
         # previous successful run would advertise this cohort as "complete" even
         # though force_resubmit just wiped the underlying state. Defensive on
@@ -706,7 +744,7 @@ def run(
         # what to re-monitor on the first pass. Retry-batch resumption is handled in the
         # second loop call below — see retry section.
         initial_batches = [
-            Batch(cohort_name=cohort.name, batch_index=b['batch_index'], sg_names=b['sg_names'])
+            IcaBatch(cohort_name=cohort.name, batch_index=b['batch_index'], sg_names=b['sg_names'])
             for b in batches_file.batches
             if b['retry_generation'] == 0 and b['status'] in {'PENDING', 'INPROGRESS'}
         ]
@@ -715,6 +753,20 @@ def run(
         # have changed (SGs added/removed) since the original submission, so we
         # always re-batch from the *current* cohort SG list rather than reusing
         # the prior `sg_names` partitions.
+        #
+        # Defensive: `_handle_management_flags` on the force_resubmit path
+        # calls `batches_file_path.unlink(missing_ok=True)`. If that ever
+        # silently fails (e.g. a hypothetical GCS rate-limit, manual hold),
+        # we'd hit this branch with the old file still present and
+        # `chunk_sgs_into_batches` + `batches_file.initialise` would
+        # overwrite it WITHOUT the resume-from-existing path being taken
+        # — a real risk of data loss. Hard-assert so any such failure
+        # surfaces here instead of corrupting state.
+        assert not batches_file_path.exists(), (
+            f'{batches_file_path} should have been deleted by '
+            f'_handle_management_flags but still exists. Refusing to '
+            f'overwrite — investigate the deletion failure.'
+        )
         initial_batches = chunk_sgs_into_batches(
             cohort_name=cohort.name,
             sg_names=sg_names,
@@ -791,7 +843,7 @@ def run(
     # Resume scenario: a previous orchestrator pass already created retry batches but
     # crashed before they completed. Pick them back up here.
     existing_retry_in_flight = [
-        Batch(cohort_name=cohort.name, batch_index=b['batch_index'], sg_names=b['sg_names'])
+        IcaBatch(cohort_name=cohort.name, batch_index=b['batch_index'], sg_names=b['sg_names'])
         for b in batches_file.batches
         if b['retry_generation'] == 1 and b['status'] in {'PENDING', 'INPROGRESS'}
     ]
