@@ -193,36 +193,20 @@ def _harvest_ar_guids_from_per_sg_state(
     can warn when membership has drifted (cohort changed between runs) —
     positional AR-GUID reuse is still applied in that case (the audit-trail
     identity is preserved), but the warning makes the drift visible.
-    Failure modes — all raise rather than silently fall through, because a
-    `force_resubmit` that harvests fewer AR GUIDs than expected silently
-    re-submits with fresh GUIDs, which severs the billing-association
-    audit trail with no log signal at the time the divergence happens.
-
-    - State file parses successfully but is missing `batch_index` or
-      `ar_guid` (e.g. truncated to `{}` or an older schema): raises
-      `KeyError`. The file's presence implies a previous submission
-      attempt, so missing fields point at a real bug in the writer or
-      an out-of-band manual edit.
-    - All per-SG state files present and parseable, but harvested ends
-      up empty: raises `RuntimeError`. The caller (`_handle_management_flags`)
-      only invokes this helper when prior state was detected, so an
-      empty harvest is impossible by construction in normal flow.
+    Any I/O or parse failure (`OSError`, `JSONDecodeError`) propagates
+    naturally — `force_resubmit` that can't read every state file should
+    abort loudly rather than silently mint fresh AR GUIDs and sever the
+    billing audit trail. A state file that parses but is missing
+    `batch_index` or `ar_guid` raises `KeyError`.
     """
     harvested: dict[int, str] = {}
     membership: dict[int, set[str]] = {}
-    sgs_with_state: list[str] = []
     for sg_name in sg_names:
-        key = f'{sg_name}_pipeline_id_and_arguid'
-        path = outputs.get(key)
+        path = outputs.get(f'{sg_name}_pipeline_id_and_arguid')
         if path is None or not path.exists():
             continue
-        sgs_with_state.append(sg_name)
-        try:
-            with path.open('r') as fh:
-                state = json.load(fh)
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f'Could not harvest AR GUID from {path}: {e}')
-            continue
+        with path.open('r') as fh:
+            state = json.load(fh)
         batch_index = state.get('batch_index')
         ar_guid = state.get('ar_guid')
         if batch_index is None or not ar_guid:
@@ -236,16 +220,6 @@ def _harvest_ar_guids_from_per_sg_state(
         # Earlier entries win; subsequent SGs in the same batch should agree.
         harvested.setdefault(batch_index, ar_guid)
         membership.setdefault(batch_index, set()).add(sg_name)
-    if sgs_with_state and not harvested:
-        # Every state file we found either failed to parse or had usable
-        # fields filtered out — neither path should happen when the caller
-        # has just detected prior state. Raise to make the divergence loud.
-        raise RuntimeError(
-            f'Found per-SG state files for {len(sgs_with_state)} SG(s) but harvested zero '
-            f'AR GUIDs. All state files were unparseable. SGs with state on disk: '
-            f'{sgs_with_state}. force_resubmit cannot proceed without harvesting — '
-            f'investigate the state file integrity before re-running.',
-        )
     return harvested, membership
 
 
@@ -586,12 +560,12 @@ def _handle_management_flags(
         )
 
     if force_resubmit:
-        had_prior_state = batches_file_path.exists() or any(
-            outputs.get(f'{sg}_pipeline_id_and_arguid') is not None
-            and outputs[f'{sg}_pipeline_id_and_arguid'].exists()
+        per_sg_state_paths = [
+            outputs[k]
             for sg in sg_names
-        )
-        if not had_prior_state:
+            if (k := f'{sg}_pipeline_id_and_arguid') in outputs
+        ]
+        if not batches_file_path.exists() and not any(p.exists() for p in per_sg_state_paths):
             # No batches file + no per-SG state means there's nothing to
             # force-resubmit. Silently falling through to a fresh submission
             # would burn money on an ICA run the user probably didn't intend
@@ -615,13 +589,11 @@ def _handle_management_flags(
         # previous successful run would advertise this cohort as "complete" even
         # though force_resubmit just wiped the underlying state. Defensive on
         # the key presence so callers with an older outputs schema still work.
-        complete_key = f'{cohort_name}_pipeline_complete'
-        if complete_key in outputs and outputs[complete_key].exists():
-            outputs[complete_key].unlink()
-        for sg_name in sg_names:
-            key = f'{sg_name}_pipeline_id_and_arguid'
-            if key in outputs and outputs[key].exists():
-                outputs[key].unlink()
+        complete_path = outputs.get(f'{cohort_name}_pipeline_complete')
+        if complete_path is not None:
+            complete_path.unlink(missing_ok=True)
+        for p in per_sg_state_paths:
+            p.unlink(missing_ok=True)
         return preserved_ar_guids, old_membership
 
     if cancel_cohort_run and not batches_file_path.exists():

@@ -34,6 +34,30 @@ def _make_file(tmp_path: Path, batches: list[IcaBatch]) -> BatchesFile:
     return bf
 
 
+def _set_management_flags(
+    monkeypatch,
+    *,
+    force_resubmit: bool = False,
+    monitor_previous: bool = False,
+    cancel_cohort_run: bool = False,
+) -> None:
+    """Stub `config_retrieve` to return the supplied management flag values.
+
+    Every test that exercises `_handle_management_flags` needs to pin all three
+    flags; doing it inline produces four near-identical 7-line blocks. This
+    helper collapses each to a one-line call.
+    """
+    cfg = {
+        ('ica', 'management', 'force_resubmit'): force_resubmit,
+        ('ica', 'management', 'monitor_previous'): monitor_previous,
+        ('ica', 'management', 'cancel_cohort_run'): cancel_cohort_run,
+    }
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.config_retrieve',
+        lambda key, default=None: cfg.get(tuple(key), default),
+    )
+
+
 def test_retry_batches_empty_when_no_failures(tmp_path: Path):
     bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, ['SYN_A', 'SYN_B'])])
     bf.record_passfail(0, {'SYN_A': 'Success', 'SYN_B': 'Success'})
@@ -163,21 +187,16 @@ def test_harvest_raises_on_state_file_missing_required_keys(tmp_path: Path):
         _harvest_ar_guids_from_per_sg_state(['SYN_A'], paths)
 
 
-def test_harvest_raises_when_every_state_file_unparseable(tmp_path: Path):
-    """If every per-SG state file fails to parse, harvested ends up empty.
-    Raise rather than returning {} — force_resubmit would otherwise mint
-    fresh AR GUIDs across the whole cohort without surfacing the divergence."""
-    a_path = tmp_path / 'SYN_A_pipeline_id_and_arguid.json'
-    b_path = tmp_path / 'SYN_B_pipeline_id_and_arguid.json'
-    a_path.write_text('not json {')
-    b_path.write_text('also not json')
-    paths = {
-        'SYN_A_pipeline_id_and_arguid': a_path,
-        'SYN_B_pipeline_id_and_arguid': b_path,
-    }
+def test_harvest_raises_on_unparseable_state_file(tmp_path: Path):
+    """A state file that fails to parse aborts the harvest by propagating
+    JSONDecodeError. force_resubmit must not silently fall back to fresh
+    AR GUIDs when prior state exists but is unreadable."""
+    bad_path = tmp_path / 'SYN_A_pipeline_id_and_arguid.json'
+    bad_path.write_text('not json {')
+    paths = {'SYN_A_pipeline_id_and_arguid': bad_path}
 
-    with pytest.raises(RuntimeError, match='harvested zero AR GUIDs'):
-        _harvest_ar_guids_from_per_sg_state(['SYN_A', 'SYN_B'], paths)
+    with pytest.raises(json.JSONDecodeError):
+        _harvest_ar_guids_from_per_sg_state(['SYN_A'], paths)
 
 
 def test_harvest_returns_empty_when_no_state_files_on_disk(tmp_path: Path):
@@ -207,17 +226,7 @@ def test_force_resubmit_deletes_state_and_returns_harvest(tmp_path: Path, monkey
             '"user_reference": "COH-batch0000_guid-0_", "batch_index": 0}',
         )
 
-    def fake_config_retrieve(key, default=None):
-        cfg = {
-            ('ica', 'management', 'force_resubmit'): True,
-            ('ica', 'management', 'monitor_previous'): False,
-            ('ica', 'management', 'cancel_cohort_run'): False,
-        }
-        return cfg.get(tuple(key), default)
-
-    monkeypatch.setattr(
-        'dragen_align_pa.jobs.manage_dragen_pipeline.config_retrieve', fake_config_retrieve,
-    )
+    _set_management_flags(monkeypatch, force_resubmit=True)
 
     outputs = {
         'SYN_A_pipeline_id_and_arguid': sg_a_state,
@@ -242,18 +251,7 @@ def test_force_resubmit_no_prior_state_raises(tmp_path: Path, monkeypatch):
     submission (would burn money on an ICA run the user didn't intend).
     Raise so the user un-sets force_resubmit explicitly."""
     batches_path = tmp_path / 'COH0001_batches.json'  # does not exist
-
-    def fake_config_retrieve(key, default=None):
-        cfg = {
-            ('ica', 'management', 'force_resubmit'): True,
-            ('ica', 'management', 'monitor_previous'): False,
-            ('ica', 'management', 'cancel_cohort_run'): False,
-        }
-        return cfg.get(tuple(key), default)
-
-    monkeypatch.setattr(
-        'dragen_align_pa.jobs.manage_dragen_pipeline.config_retrieve', fake_config_retrieve,
-    )
+    _set_management_flags(monkeypatch, force_resubmit=True)
 
     with pytest.raises(RuntimeError, match='no prior state'):
         _handle_management_flags(
@@ -268,18 +266,7 @@ def test_force_resubmit_and_monitor_previous_raises(tmp_path: Path, monkeypatch)
     an in-flight run. Pick one."""
     batches_path = tmp_path / 'COH0001_batches.json'
     batches_path.write_text('{"schema_version": 1, "batch_size": 5, "n_batches": 0, "batches": []}')
-
-    def fake_config_retrieve(key, default=None):
-        cfg = {
-            ('ica', 'management', 'force_resubmit'): True,
-            ('ica', 'management', 'monitor_previous'): True,
-            ('ica', 'management', 'cancel_cohort_run'): False,
-        }
-        return cfg.get(tuple(key), default)
-
-    monkeypatch.setattr(
-        'dragen_align_pa.jobs.manage_dragen_pipeline.config_retrieve', fake_config_retrieve,
-    )
+    _set_management_flags(monkeypatch, force_resubmit=True, monitor_previous=True)
 
     with pytest.raises(ValueError, match='mutually exclusive'):
         _handle_management_flags(
@@ -297,18 +284,7 @@ def test_force_resubmit_deletes_completion_marker(tmp_path: Path, monkeypatch):
     batches_path.write_text('{"schema_version": 1, "batch_size": 5, "n_batches": 0, "batches": []}')
     complete_marker = tmp_path / 'COH0001_pipeline_complete.json'
     complete_marker.write_text('{"cohort_name": "COH0001"}')
-
-    def fake_config_retrieve(key, default=None):
-        cfg = {
-            ('ica', 'management', 'force_resubmit'): True,
-            ('ica', 'management', 'monitor_previous'): False,
-            ('ica', 'management', 'cancel_cohort_run'): False,
-        }
-        return cfg.get(tuple(key), default)
-
-    monkeypatch.setattr(
-        'dragen_align_pa.jobs.manage_dragen_pipeline.config_retrieve', fake_config_retrieve,
-    )
+    _set_management_flags(monkeypatch, force_resubmit=True)
 
     outputs = {
         'COH0001_pipeline_complete': complete_marker,
@@ -323,16 +299,7 @@ def test_cancel_cohort_run_raises_cohort_cancelled(tmp_path: Path, monkeypatch):
     """`cancel_cohort_run=true` is terminal — raises CohortCancelled so run()
     short-circuits past retry-building and threshold-checking."""
     # No batches file → "no in-flight state" branch still raises CohortCancelled.
-    def fake_config_retrieve(key, default=None):
-        cfg = {
-            ('ica', 'management', 'force_resubmit'): False,
-            ('ica', 'management', 'monitor_previous'): False,
-            ('ica', 'management', 'cancel_cohort_run'): True,
-        }
-        return cfg.get(tuple(key), default)
-    monkeypatch.setattr(
-        'dragen_align_pa.jobs.manage_dragen_pipeline.config_retrieve', fake_config_retrieve,
-    )
+    _set_management_flags(monkeypatch, cancel_cohort_run=True)
     with pytest.raises(CohortCancelled):
         _handle_management_flags(
             cohort_name='COH0001',
@@ -385,17 +352,7 @@ def test_cancel_cohort_run_preserves_per_sg_state(tmp_path: Path, monkeypatch):
         '"user_reference": "COH-batch0000_g_", "batch_index": 0}',
     )
 
-    def fake_config_retrieve(key, default=None):
-        cfg = {
-            ('ica', 'management', 'force_resubmit'): False,
-            ('ica', 'management', 'monitor_previous'): False,
-            ('ica', 'management', 'cancel_cohort_run'): True,
-        }
-        return cfg.get(tuple(key), default)
-
-    monkeypatch.setattr(
-        'dragen_align_pa.jobs.manage_dragen_pipeline.config_retrieve', fake_config_retrieve,
-    )
+    _set_management_flags(monkeypatch, cancel_cohort_run=True)
 
     outputs = {'SYN_A_pipeline_id_and_arguid': sg_state}
     with pytest.raises(CohortCancelled):
