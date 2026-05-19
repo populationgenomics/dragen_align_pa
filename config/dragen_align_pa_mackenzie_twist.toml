@@ -6,8 +6,7 @@
 
 [workflow]
 sequencing_type = 'exome'
-# TODO: replace with the real metamist cohort ID for Mackenzie Twist samples (~5k).
-input_cohorts = ['COH_PLACEHOLDER_MACKENZIE_TWIST']
+input_cohorts = ['COH12430']  # mackenzie-exome-twist-20260515-dragen (5191 SGs)
 
 [ica.reference_data]
 exome_bed = 'PLACEHOLDER-twist-bed-not-yet-uploaded-to-ica'
