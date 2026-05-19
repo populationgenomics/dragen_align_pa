@@ -10,9 +10,8 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import icasdk
 import pytest
-from icasdk import ApiException
-from icasdk.exceptions import ApiValueError
 
 from dragen_align_pa.jobs import delete_data_in_ica
 
@@ -77,7 +76,7 @@ def _make_api_instance(
             resp.body = {'data': {'details': {'status': 'AVAILABLE'}}}
             return resp
         # default = 404 not found
-        exc = ApiException(status=404, reason='Not Found')
+        exc = icasdk.ApiException(status=404, reason='Not Found')
         raise exc
 
     api.get_project_data.side_effect = fake_get
@@ -200,7 +199,7 @@ def test_spurious_apivalueerror_with_404_verify_is_success(tmp_path: Path, patch
     deletes. Verify returns 404 → counted as success, no log."""
     cohort_fid = 'fol.cohort_003'
     api = _make_api_instance(
-        delete_raises={cohort_fid: ApiValueError('spurious')},
+        delete_raises={cohort_fid: icasdk.ApiValueError('spurious')},
     )
     patched_env['api_instance'] = api
 
@@ -306,7 +305,7 @@ def test_idempotent_rerun_after_full_deletion(tmp_path: Path, patched_env):
     cohort_fid = 'fol.cohort_006'
     crams = {'SYN1': 'fil.cram_001'}
 
-    not_found = ApiException(status=404, reason='Not Found')
+    not_found = icasdk.ApiException(status=404, reason='Not Found')
     api = _make_api_instance(
         delete_raises={cohort_fid: not_found, 'fil.cram_001': not_found},
     )
