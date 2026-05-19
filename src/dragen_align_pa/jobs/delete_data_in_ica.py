@@ -61,7 +61,7 @@ def _read_cram_fids(paths: dict[str, cpg_utils.Path]) -> list[str]:
 
 def _read_fastq_fids(path: cpg_utils.Path) -> list[str]:
     with path.open() as fh:
-        fids = [line.strip() for line in fh if line.strip()]
+        fids = [line.split()[0] for line in fh if line.strip()]
     logger.info(f'Collected {len(fids)} FASTQ FIDs from {path}')
     return fids
 
