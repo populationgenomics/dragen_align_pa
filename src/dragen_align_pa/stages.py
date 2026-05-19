@@ -674,7 +674,6 @@ class ReheaderMlrGvcf(SequencingGroupStage):
         return self.make_outputs(target=sequencing_group, data=outputs, jobs=reheader_mlr_gvcf_job)  # pyright: ignore[reportArgumentType]
 
 
-# Change this to a sequencing group stage to be safer.
 @stage(
     required_stages=[
         PrepareIcaForDragenAnalysis,
@@ -687,58 +686,50 @@ class ReheaderMlrGvcf(SequencingGroupStage):
         ReheaderMlrGvcf,
         SomalierExtract,
         FastqIntakeQc,
-    ]
+    ],
 )
 class DeleteDataInIca(CohortStage):
-    """
-    Delete all the data in ICA for a dataset, so we don't pay storage costs
-    once processing is finished. This includes generated analysis folders
-    and the original source data (uploaded CRAMs or FASTQs).
+    """Delete cohort outputs + source CRAMs/FASTQs from ICA to release storage.
 
-    **TEMPORARILY BROKEN on this branch (`DeleteDataInIca` rewrite deferred
-    to a follow-up PR; see spec section 7).** `queue_jobs` reads
-    `inputs.as_dict(target=cohort, stage=PrepareIcaForDragenAnalysis)`, but
-    after Task 17 that stage returns a single `cpg_utils.Path`, so the
-    `as_dict` call fails at DAG build time. The job also still constructs
-    legacy per-SG ICA paths for cleanup, which don't match the new batched
-    layout. Production runs continue on `main` until the migration is
-    complete; the rewrite lands alongside the per-batch cleanup work.
+    Two project-scoped passes: DRAGEN runs project for the cohort folder
+    (cascades to per-batch analyses + per-SG outputs + per-batch FASTQ list
+    CSVs) and the uploaded source CRAMs; supplier project for linked FASTQs
+    (FASTQ mode only). Each pass verifies delete via `get_project_data`
+    after a 60s settle for ICA's async state machine.
     """
 
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
-        return get_prep_path(filename=f'{cohort.name}_delete_placeholder.txt')
+        return get_pipeline_path(filename=f'{cohort.name}_delete_complete.json')
 
-    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
-        # Get all analysis output folder FIDs (generated data)
-        analysis_output_fids_paths: dict[str, cpg_utils.Path] = inputs.as_dict(
-            target=cohort, stage=PrepareIcaForDragenAnalysis
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:
+        cohort_analysis_output_fid_path: cpg_utils.Path = inputs.as_path(
+            target=cohort, stage=PrepareIcaForDragenAnalysis,
         )
 
-        # Initialize paths for source data
         cram_fid_paths_dict: dict[str, cpg_utils.Path] | None = None
         fastq_ids_list_path: cpg_utils.Path | None = None
-
-        # Conditionally get source data FIDs based on READS_TYPE
         if READS_TYPE == 'cram':
-            # Get all uploaded CRAM FIDs
             cram_fid_paths_dict = inputs.as_path_by_target(stage=UploadDataToIca)
         elif READS_TYPE == 'fastq':
-            # Get the path to the list of FASTQ FIDs
-            fastq_ids_list_path = inputs.as_path(target=cohort, stage=FastqIntakeQc, key='fastq_ids_outpath')
+            fastq_ids_list_path = inputs.as_path(
+                target=cohort, stage=FastqIntakeQc, key='fastq_ids_outpath',
+            )
 
-        outputs: cpg_utils.Path = self.expected_outputs(cohort=cohort)
+        output_path: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
         ica_delete_job: PythonJob = initialise_python_job(
             job_name='DeleteDataInIca',
             target=cohort,
             tool_name='ICA',
         )
-
+        ica_delete_job.image(image=get_driver_image())
         ica_delete_job.call(
             delete_data_in_ica.run,
-            analysis_output_fids_paths=analysis_output_fids_paths,
+            cohort_name=cohort.name,
+            output_path=output_path,
+            cohort_analysis_output_fid_path=cohort_analysis_output_fid_path,
             cram_fid_paths_dict=cram_fid_paths_dict,
             fastq_ids_list_path=fastq_ids_list_path,
         )
 
-        return self.make_outputs(target=cohort, data=outputs, jobs=ica_delete_job)
+        return self.make_outputs(target=cohort, data=output_path, jobs=ica_delete_job)
