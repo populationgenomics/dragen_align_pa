@@ -37,8 +37,11 @@ def _write_cram_fids(tmp_path: Path, sg_to_fid: dict[str, str]) -> dict[str, Pat
 
 
 def _write_fastq_fid_list(tmp_path: Path, fids: list[str]) -> Path:
+    # Write whitespace-separated `{fid}\t{filename}` rows so the test exercises
+    # `_read_fastq_fids`'s `line.split()[0]` parsing — guards against a regression
+    # back to `line.strip()` if the producer schema ever gains a second column.
     p = tmp_path / 'fastq_ids.txt'
-    p.write_text('\n'.join(fids))
+    p.write_text('\n'.join(f'{fid}\tdummy_{fid}.fastq.gz' for fid in fids))
     return p
 
 
