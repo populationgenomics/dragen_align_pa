@@ -25,6 +25,7 @@ dependencies=[
     'cpg-flow>=v1.0.1',
     'loguru',
     'pandas',
+    'tenacity',
 ]
 
 [project.urls]
