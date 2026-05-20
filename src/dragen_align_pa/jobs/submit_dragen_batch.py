@@ -291,7 +291,7 @@ def _upload_per_batch_fastq_list(
     file_id, file_status = ica_utils.create_upload_object_id(
         api_instance=api_instance,
         path_params={'projectId': project_id},
-        sg_name=cohort_name,
+        folder_name=cohort_name,
         file_name=file_name,
         folder_path=folder_path,
         object_type='FILE',

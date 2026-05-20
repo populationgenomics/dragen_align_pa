@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 def create_upload_object_id(
     api_instance: 'project_data_api.ProjectDataApi',
     path_params: dict[str, str],
-    sg_name: str,
+    folder_name: str,
     file_name: str,
     folder_path: str,
     object_type: str,
@@ -36,7 +36,7 @@ def create_upload_object_id(
     Args:
         api_instance (project_data_api.ProjectDataApi): An instance of the ProjectDataApi
         path_params (dict[str, str]): A dict with the projectId
-        sg_name (str): The name of the sequencing group
+        folder_name (str): Name used when creating a FOLDER object (ignored for FILE)
         file_name (str): The name of the file to upload e.g. CPGxxxx.CRAM
         folder_path (str): The base path to the object in ICA to create
         object_type (str): The type of the object to create. Must be one of ['FILE', 'FOLDER']
@@ -70,7 +70,7 @@ def create_upload_object_id(
             )
         else:
             body = CreateData(
-                name=sg_name,
+                name=folder_name,
                 folderPath=f'{folder_path}/',
                 dataType=object_type,
             )
@@ -302,7 +302,7 @@ def check_file_existence(
     return None
 
 
-def finalize_upload(
+def finalise_upload(
     api_instance: 'project_data_api.ProjectDataApi',
     path_params: dict[str, str],
     paths: dict[str, str],

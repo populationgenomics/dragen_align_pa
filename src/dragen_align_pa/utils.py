@@ -165,7 +165,13 @@ def get_per_sg_state_path(
     the cohort to read `inputs.as_dict`, and `cohort.name` to thread into
     downstream `resolve_and_run` / `get_ica_sample_folder` calls.
     """
-    cohort = get_multicohort().get_cohorts()[0]
+    matching = [c for c in get_multicohort().get_cohorts() if sequencing_group in c.get_sequencing_groups()]
+    if len(matching) != 1:
+        raise ValueError(
+            f'Expected sequencing group {sequencing_group.name} to belong to exactly one '
+            f'cohort in the MultiCohort, found {len(matching)}.',
+        )
+    cohort = matching[0]
     state_path = inputs.as_dict(target=cohort, stage=state_stage)[
         f'{sequencing_group.name}_pipeline_id_and_arguid'
     ]

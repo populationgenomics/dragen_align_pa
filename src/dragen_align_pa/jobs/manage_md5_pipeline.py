@@ -70,8 +70,8 @@ def _create_md5_output_folder(
     object_id, _ = ica_utils.create_upload_object_id(
         api_instance=api_instance,
         path_params=path_parameters,
-        sg_name=cohort_name,
-        file_name=cohort_name,  # Folder name is the cohort name
+        folder_name=cohort_name,
+        file_name=cohort_name,
         folder_path=folder_path,
         object_type='FOLDER',
     )

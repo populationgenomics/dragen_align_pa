@@ -254,7 +254,27 @@ class UploadDataToIca(SequencingGroupStage):
     ],
 )
 class ManageDragenPipeline(CohortStage):
-    """Submit cohort batches to the unified DRAGEN pipeline and monitor them."""
+    """Submit cohort batches to the unified DRAGEN pipeline and monitor them.
+
+    Inputs (selected by READS_TYPE):
+        cram: per-SG ICA state from UploadDataToIca
+        fastq: fastq_ids map from FastqIntakeQc + per-SG CSVs from MakeFastqFileList
+                (combined into per-batch CSVs and uploaded to ICA inline by the submitter)
+        + analysis output folder FID from PrepareIcaForDragenAnalysis (both modes)
+
+    Outputs (2 cohort-level entries + one per sequencing group):
+
+        {
+            '<cohort>_batches':            <cohort>_batches.json            # batch plan
+            '<cohort>_pipeline_complete':  <cohort>_pipeline_complete.json  # success marker
+            '<sg>_pipeline_id_and_arguid': <sg>_pipeline_id_and_arguid.json # per-SG ICA state
+            ... one of these per SG ...
+        }
+
+    All paths live under `get_pipeline_path()`. See `expected_outputs` for why
+    per-batch scratch files (errors.log, per-batch success/pipeline_id) are
+    deliberately excluded from this dict.
+    """
 
     def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
         # Only DETERMINISTIC outputs go in expected_outputs — anything cpg-flow

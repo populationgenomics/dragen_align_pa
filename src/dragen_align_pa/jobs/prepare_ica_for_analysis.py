@@ -18,8 +18,8 @@ _TERMINAL_BAD_FOLDER_STATUSES = frozenset({'ARCHIVED', 'DELETING', 'UNARCHIVING'
 def run(cohort: Cohort, output: cpg_utils.Path) -> None:
     """Create (or find) a single ICA folder for the cohort's pipeline outputs.
 
-    The new unified pipeline writes per-batch analysis folders directly under
-    this parent folder, so we no longer need per-SG parent folders.
+    This pipeline writes per-batch (not per-SG) analysis folders directly under
+    this parent folder.
     """
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
@@ -31,7 +31,7 @@ def run(cohort: Cohort, output: cpg_utils.Path) -> None:
         folder_id, status = ica_utils.create_upload_object_id(
             api_instance=api_instance,
             path_params={'projectId': project_id},
-            sg_name=cohort.name,
+            folder_name=cohort.name,
             file_name=cohort.name,
             folder_path=folder_path,
             object_type='FOLDER',

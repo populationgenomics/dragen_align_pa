@@ -8,6 +8,7 @@ batches file. Files are streamed directly from ICA to GCS via the existing
 import json
 from collections import Counter
 from dataclasses import dataclass
+from http import HTTPStatus
 from typing import Literal
 
 import cpg_utils
@@ -201,7 +202,7 @@ def run(
 
             # Recursive: DRAGEN's reports/ has nested subdirs; non-recursive would
             # silently drop them. Folder may be absent on a catastrophically-failed
-            # batch — warn and continue.
+            # batch — 404 is expected there, anything else is a real lookup failure.
             reports_folder = f'{ica_folder}reports/'
             try:
                 report_files = ica_utils.list_ica_files(
@@ -211,10 +212,17 @@ def run(
                     recursive=True,
                 )
             except icasdk.ApiException as e:
-                logger.warning(
-                    f'Batch {batch_name}: reports/ folder not enumerable at '
-                    f'{reports_folder} ({e}); skipping.',
-                )
+                if e.status == HTTPStatus.NOT_FOUND:
+                    logger.warning(
+                        f'Batch {batch_name}: reports/ folder absent at '
+                        f'{reports_folder}; skipping.',
+                    )
+                else:
+                    stats.lookup_failure += 1
+                    logger.warning(
+                        f'Batch {batch_name}: reports/ folder not enumerable at '
+                        f'{reports_folder} ({e}); skipping.',
+                    )
                 report_files = []
 
             for report_relative_path, report_id in report_files:
