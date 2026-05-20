@@ -25,20 +25,31 @@ from dragen_align_pa.batches import BatchesFile
 from dragen_align_pa.constants import BUCKET_NAME
 
 
+from dataclasses import dataclass, field
+
 @dataclass
 class _StreamStats:
-    """Per-cohort marker-payload counters. Failure counters are split so an
-    operator can tell a cohort-wide auth/connectivity outage (lookup-heavy)
-    from a transfer/GCS outage (stream-heavy). `FileNotFoundError` at lookup
-    is legitimate absence and is NOT counted as a failure."""
+    """Per-cohort marker-payload tracking.
+
+    Tracks *identities* (not just counts) for failures so an operator reading
+    the marker payload can see which specific files failed and run a targeted
+    retry instead of having to scrape job logs.
+
+    `lookup_failure` and `stream_failure` are split so a cohort-wide auth /
+    connectivity outage (lookup-heavy) is distinguishable from a transfer /
+    GCS outage (stream-heavy). `FileNotFoundError` at lookup is legitimate
+    absence and is NOT recorded as a failure. `skipped` counts files already
+    present in GCS from a previous (partial) run.
+    """
 
     success: int = 0
-    lookup_failure: int = 0
-    stream_failure: int = 0
+    skipped: int = 0
+    lookup_failures: list[dict[str, str]] = field(default_factory=list)
+    stream_failures: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def total_failure(self) -> int:
-        return self.lookup_failure + self.stream_failure
+        return len(self.lookup_failures) + len(self.stream_failures)
 
 
 def _stream_silently(
