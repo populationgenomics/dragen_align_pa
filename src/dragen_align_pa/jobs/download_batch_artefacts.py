@@ -294,8 +294,10 @@ def run(
                 'cohort_name': cohort_name,
                 'batches_processed': batches_processed,
                 'success_count': stats.success,
-                'lookup_failure_count': stats.lookup_failure,
-                'stream_failure_count': stats.stream_failure,
+                'skipped_count': stats.skipped,
+                'lookup_failures': stats.lookup_failures,
+                'stream_failures': stats.stream_failures,
             },
             fh,
+            indent=2,
         )
