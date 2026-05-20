@@ -50,14 +50,27 @@ def _stream_silently(
     gcs_prefix: str,
     context: str,
     stats: _StreamStats,
-) -> None:
-    """Stream one file to GCS; warn-and-skip on transient ICA / HTTP / GCS errors.
+    ) -> None:
+        """Stream one file to GCS; warn-and-skip on transient ICA / HTTP / GCS errors.
 
-    Wraps `stream_ica_file_to_gcs` so one transient blip doesn't abort the
-    whole cohort mid-loop. MD5-mismatch (`ValueError`) is intentionally not
-    caught — we pass `expected_md5_hash=None` here so it's unreachable, but a
-    future caller passing a hash should crash hard on integrity violations.
-    """
+        Skips outright if the GCS blob already exists, supporting a 'delete the
+        marker and re-run' retry workflow that re-attempts only previously-failed
+        files. GCS resumable uploads only finalize on completion, so a stream
+        failure in a previous run won't leave a partial blob — an existing blob
+        means a previous run committed successfully.
+
+        Wraps `stream_ica_file_to_gcs` so one transient blip doesn't abort the
+        whole cohort mid-loop. MD5-mismatch (`ValueError`) is intentionally not
+        caught — we pass `expected_md5_hash=None` here so it's unreachable, but a
+        future caller passing a hash should crash hard on integrity violations.
+        If MD5 verification is ever wired through this function, the skip-if-exists
+        branch above needs to be gated on a "verified" sidecar or removed —
+        trusting an existing blob is only safe in the no-hash regime.
+        """
+        gcs_blob_path = f'{gcs_prefix}/{file_name}'
+        if gcs_bucket.blob(gcs_blob_path).exists():
+            stats.skipped += 1
+            return
     try:
         ica_utils.stream_ica_file_to_gcs(
             api_instance=api_instance,
