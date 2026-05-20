@@ -94,7 +94,11 @@ def _stream_silently(
         )
     except (icasdk.ApiException, requests.RequestException, gcs_exceptions.GoogleCloudError) as e:
         logger.warning(f'{context}: streaming {file_name} failed ({e}); skipping.')
-        stats.stream_failure += 1
+        stats.stream_failures.append({
+            'context': context,
+            'file_name': file_name,
+            'error': str(e),
+        })
         return
     stats.success += 1
 
