@@ -133,7 +133,11 @@ def _stream_named_file(
         logger.warning(
             f'ICA API error while looking up {file_name} in {parent_folder}: {e}; skipping.',
         )
-        stats.lookup_failure += 1
+        stats.lookup_failures.append({
+            'parent_folder': parent_folder,
+            'file_name': file_name,
+            'error': str(e),
+        })
         return
 
     _stream_silently(
