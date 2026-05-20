@@ -22,8 +22,14 @@ jobs:
         cache: 'pip'
         cache-dependency-path: pyproject.toml
 
+    - name: Install icasdk
+      run: pip install git+https://github.com/Illumina/ica-sdk-python.git
+
     - name: Install packages
       run: pip install .[test]
+
+    - name: Pin typing-extensions (icasdk compat)
+      run: pip install typing-extensions==4.13.0
 
     - name: Run tests
       run: pytest
