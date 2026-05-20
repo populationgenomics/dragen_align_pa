@@ -244,17 +244,15 @@ def run(
                     recursive=True,
                 )
             except icasdk.ApiException as e:
-                if e.status == HTTPStatus.NOT_FOUND:
-                    logger.warning(
-                        f'Batch {batch_name}: reports/ folder absent at '
-                        f'{reports_folder}; skipping.',
-                    )
-                else:
-                    stats.lookup_failure += 1
-                    logger.warning(
-                        f'Batch {batch_name}: reports/ folder not enumerable at '
-                        f'{reports_folder} ({e}); skipping.',
-                    )
+                logger.warning(
+                    f'Batch {batch_name}: reports/ folder not enumerable at '
+                    f'{reports_folder} ({e}); skipping.',
+                )
+                stats.lookup_failures.append({
+                    'parent_folder': reports_folder,
+                    'file_name': '<reports/ enumeration>',
+                    'error': str(e),
+                })
                 report_files = []
 
             for report_relative_path, report_id in report_files:
