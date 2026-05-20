@@ -280,8 +280,9 @@ def run(
         f'Cohort {cohort_name} batch-artefact download: '
         f'batches_processed={batches_processed}, '
         f'success={stats.success}, '
-        f'lookup_failures={stats.lookup_failure}, '
-        f'stream_failures={stats.stream_failure}.'
+        f'skipped={stats.skipped}, '
+        f'lookup_failures={len(stats.lookup_failures)}, '
+        f'stream_failures={len(stats.stream_failures)}.'
     )
     if stats.total_failure > 0:
         logger.warning(summary_msg)
