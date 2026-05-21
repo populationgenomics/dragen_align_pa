@@ -17,7 +17,12 @@ from hailtop.batch.job import PythonJob
 from loguru import logger
 from metamist.graphql import gql, query
 
-from dragen_align_pa.constants import BUCKET_NAME, DRAGEN_VERSION
+from dragen_align_pa.constants import (
+    BUCKET_NAME,
+    DESIGN_TO_BEDS,
+    DESIGN_TO_CANONICAL,
+    DRAGEN_VERSION,
+)
 
 PER_SG_STATE_SCHEMA_VERSION = 1
 
@@ -97,6 +102,107 @@ def run_subprocess_with_log(
         logger.error(f'STDOUT: {e.stdout}')
         logger.error(f'STDERR: {e.stderr}')
         raise
+
+
+def _resolve_sg_canonical_design(sg: SequencingGroup) -> str:
+    """Resolve one SG's canonical exome design from its assay metadata.
+
+    Reads every assay's `meta['sequencing_library']`, maps each through
+    DESIGN_TO_CANONICAL, and requires the SG to resolve to exactly one
+    canonical design.
+    """
+    raw_values: set[str] = set()
+    for assay in sg.assays or ():
+        sequencing_library = assay.meta.get('sequencing_library')
+        if sequencing_library:
+            raw_values.add(str(sequencing_library))
+    if not raw_values:
+        raise RuntimeError(
+            f"Sequencing group {sg.id} has no assay.meta['sequencing_library']; "
+            f'cannot resolve exome design.',
+        )
+
+    canonical: set[str] = set()
+    unmapped: set[str] = set()
+    for raw in raw_values:
+        match = DESIGN_TO_CANONICAL.get(raw)
+        if match is None:
+            unmapped.add(raw)
+        else:
+            canonical.add(match)
+    if unmapped:
+        raise RuntimeError(
+            f'Sequencing group {sg.id} has unmapped sequencing_library value(s): '
+            f'{sorted(unmapped)}. Add these to DESIGN_TO_CANONICAL in '
+            f'dragen_align_pa.constants.',
+        )
+    if len(canonical) != 1:
+        raise RuntimeError(
+            f'Sequencing group {sg.id} maps to multiple canonical designs: '
+            f'{sorted(canonical)}.',
+        )
+    return canonical.pop()
+
+
+def assert_cohort_design_matches_configured_bed(cohort: Cohort) -> None:
+    """Hard-fail at stage queuing if the cohort isn't a single exome design
+    or the configured bed_names aren't valid for that design.
+
+    Only runs when `workflow.sequencing_type == 'exome'`. Catches both
+    design-mixed cohorts and a config TOML pointing at the wrong design's
+    BEDs before any ICA submission.
+    """
+    if config_retrieve(['workflow', 'sequencing_type']) != 'exome':
+        return
+
+    sgs = cohort.get_sequencing_groups()
+    if not sgs:
+        raise RuntimeError(f'Cohort {cohort.id} has no sequencing groups.')
+
+    designs: dict[str, str] = {sg.id: _resolve_sg_canonical_design(sg) for sg in sgs}
+    unique_designs = set(designs.values())
+    if len(unique_designs) != 1:
+        by_design: dict[str, list[str]] = {}
+        for sg_id, d in designs.items():
+            by_design.setdefault(d, []).append(sg_id)
+        raise RuntimeError(
+            f'Cohort {cohort.id} has mixed exome designs {sorted(unique_designs)}. '
+            f'Split into one cohort per design. Breakdown: {by_design}',
+        )
+    cohort_design = unique_designs.pop()
+
+    valid_beds = DESIGN_TO_BEDS.get(cohort_design)
+    if valid_beds is None:
+        raise RuntimeError(
+            f'No DESIGN_TO_BEDS entry for design {cohort_design!r}; '
+            f'update dragen_align_pa.constants.',
+        )
+
+    bed_names: dict[str, str] = config_retrieve(
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names'],
+        default={},
+    )
+    used_basenames = [
+        str(name).strip() for name in bed_names.values() if str(name).strip()
+    ]
+    if not used_basenames:
+        raise RuntimeError(
+            f'Cohort {cohort.id} resolves to design {cohort_design!r} but '
+            f'[presets.exome.bed_names] has no non-blank entries. Set the BED '
+            f'basenames in your run config.',
+        )
+    outside_design = sorted(set(used_basenames) - valid_beds)
+    if outside_design:
+        raise RuntimeError(
+            f'Cohort {cohort.id} resolves to design {cohort_design!r}, but '
+            f'[presets.exome.bed_names] uses basename(s) {outside_design} that '
+            f"aren't in DESIGN_TO_BEDS[{cohort_design!r}] = "
+            f'{sorted(valid_beds)}. Check the config against the cohort design.',
+        )
+    logger.info(
+        f'Exome design check passed: cohort {cohort.id} → {cohort_design}, '
+        f'beds {sorted(set(used_basenames))}.',
+    )
 
 
 def initialise_python_job(

@@ -1,0 +1,12 @@
+# Mackenzie Twist Comprehensive Exome batch.
+# Layers on top of dragen_align_pa_defaults.toml when submitted via analysis-runner.
+
+[workflow]
+sequencing_type = "exome"
+input_cohorts = ["COH12430"]  # mackenzie-exome-twist-20260515-dragen
+
+# Twist ships a single BED; all three DRAGEN target slots use it.
+[dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names]
+vc_target = "Twist_VCGS_Exome_Covered_Targets_hg38.bed"
+cnv_target = "Twist_VCGS_Exome_Covered_Targets_hg38.bed"
+sv_call_regions = "Twist_VCGS_Exome_Covered_Targets_hg38.bed"

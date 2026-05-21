@@ -1,0 +1,13 @@
+# Mackenzie Agilent CREv2 (Clinical Research Exome v2) batch.
+# Layers on top of dragen_align_pa_defaults.toml when submitted via analysis-runner.
+
+[workflow]
+sequencing_type = "exome"
+input_cohorts = ["COH12422"]  # mackenzie-exome-crev2-20260515-dragen
+
+# Covered for variant calling (larger probe area = fewer probe-overhang misses).
+# Regions for CNV / SV until next sprint's review finalises the CNV choice.
+[dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names]
+vc_target = "S30409818_Covered.bed"
+cnv_target = "S30409818_Regions.bed"
+sv_call_regions = "S30409818_Regions.bed"

@@ -39,6 +39,34 @@ ICA_FILE_IDS: Final[dict[str, str]] = {
 }
 
 
+# Canonical exome design names. Each exome cohort resolves to exactly one.
+CANONICAL_DESIGN_CRE: Final = 'CRE'
+CANONICAL_DESIGN_CREV2: Final = 'CREv2'
+CANONICAL_DESIGN_TWIST: Final = 'TWIST'
+CANONICAL_DESIGNS: Final = frozenset({CANONICAL_DESIGN_CRE, CANONICAL_DESIGN_CREV2, CANONICAL_DESIGN_TWIST})
+
+# Exact-match map from metamist assay.meta['sequencing_library'] values to
+# canonical designs. Populate as new values are encountered in metamist. Exact
+# match (rather than substring) avoids prefix collisions like SSQXTCRE ⊂ SSQXTCREV2.
+DESIGN_TO_CANONICAL: Final[dict[str, str]] = {
+    'SSQXTCRE': CANONICAL_DESIGN_CRE,
+    'SSQXTCREV2': CANONICAL_DESIGN_CREV2,
+    'SSXTLICREV2': CANONICAL_DESIGN_CREV2,
+    'TwistWES1VCGS1': CANONICAL_DESIGN_TWIST,
+    'AgilentCREv2WES': CANONICAL_DESIGN_CREV2,
+}
+
+# Per canonical design: the BED basenames known to belong to it. The validator
+# in utils.assert_cohort_design_matches_configured_bed uses this to check that
+# the basenames named in [presets.exome.bed_names] match the cohort's resolved
+# design. All entries must also be registered in ICA_FILE_IDS above.
+DESIGN_TO_BEDS: Final[dict[str, frozenset[str]]] = {
+    CANONICAL_DESIGN_CRE: frozenset({'S06588914_Regions_hg38.bed'}),
+    CANONICAL_DESIGN_CREV2: frozenset({'S30409818_Regions.bed', 'S30409818_Covered.bed'}),
+    CANONICAL_DESIGN_TWIST: frozenset({'Twist_VCGS_Exome_Covered_Targets_hg38.bed'}),
+}
+
+
 def resolve_ica_file_id(name: str) -> str:
     """Look up the ICA file ID for a registered BED basename.
 
