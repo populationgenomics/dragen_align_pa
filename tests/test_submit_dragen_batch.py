@@ -102,7 +102,11 @@ def test_build_additional_args_substitutes_bed_name_tokens(monkeypatch):
         submit_dragen_batch, 'config_retrieve',
         _config_factory(
             sequencing_type='exome',
-            preset_args='--vc-target-bed {vc_target} --cnv-target-bed {cnv_target} --sv-call-regions-bed {sv_call_regions}',
+            preset_args=(
+                '--vc-target-bed {vc_target} '
+                '--cnv-target-bed {cnv_target} '
+                '--sv-call-regions-bed {sv_call_regions}'
+            ),
             bed_names={
                 'vc_target': 'covered.bed',
                 'cnv_target': 'regions.bed',

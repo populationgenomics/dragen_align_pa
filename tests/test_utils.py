@@ -54,7 +54,7 @@ def test_resolve_design_multiple_assays_same_canonical():
 
 def test_resolve_design_no_assays_raises():
     sg = _FakeSG(id='CPG_A', assays=[])
-    with pytest.raises(RuntimeError, match='no assay.meta'):
+    with pytest.raises(RuntimeError, match=r'no assay\.meta'):
         _resolve_sg_canonical_design(sg)
 
 
