@@ -21,11 +21,14 @@ from dragen_align_pa import ica_api_utils
 
 @pytest.fixture(autouse=True)
 def _clear_ica_secrets_cache():
-    """get_ica_secrets is decorated with @lru_cache(maxsize=1) — clear between
-    tests so caching from one test doesn't bleed into the next."""
+    """`get_ica_secrets` is `@lru_cache(maxsize=1)` and `_secret_client` is
+    `@cache`d — clear both between tests so caching from one test doesn't
+    bleed into the next."""
     ica_api_utils.get_ica_secrets.cache_clear()
+    ica_api_utils._secret_client.cache_clear()
     yield
     ica_api_utils.get_ica_secrets.cache_clear()
+    ica_api_utils._secret_client.cache_clear()
 
 
 @pytest.fixture(autouse=True)
@@ -49,7 +52,7 @@ def test_get_ica_secrets_returns_parsed_payload(monkeypatch):
     payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}
     mock_client = MagicMock()
     mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
-    monkeypatch.setattr(ica_api_utils, 'SECRET_CLIENT', mock_client)
+    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
 
     result = ica_api_utils.get_ica_secrets()
 
@@ -64,7 +67,7 @@ def test_get_ica_secrets_caches_across_calls(monkeypatch):
     payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}
     mock_client = MagicMock()
     mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
-    monkeypatch.setattr(ica_api_utils, 'SECRET_CLIENT', mock_client)
+    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
 
     first = ica_api_utils.get_ica_secrets()
     second = ica_api_utils.get_ica_secrets()
@@ -86,7 +89,7 @@ def test_get_ica_secrets_retries_on_deadline_exceeded(monkeypatch):
         gax_exceptions.DeadlineExceeded('Secret Manager 504'),
         _fake_access_secret_version_response(payload),
     ]
-    monkeypatch.setattr(ica_api_utils, 'SECRET_CLIENT', mock_client)
+    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
 
     result = ica_api_utils.get_ica_secrets()
 
@@ -103,7 +106,7 @@ def test_get_ica_secrets_retries_on_service_unavailable(monkeypatch):
         gax_exceptions.ServiceUnavailable('Secret Manager 503'),
         _fake_access_secret_version_response(payload),
     ]
-    monkeypatch.setattr(ica_api_utils, 'SECRET_CLIENT', mock_client)
+    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
 
     result = ica_api_utils.get_ica_secrets()
 
@@ -117,7 +120,7 @@ def test_get_ica_secrets_gives_up_after_persistent_failures(monkeypatch):
     job) sees a real failure rather than silent infinite retry."""
     mock_client = MagicMock()
     mock_client.access_secret_version.side_effect = gax_exceptions.DeadlineExceeded('persistent 504')
-    monkeypatch.setattr(ica_api_utils, 'SECRET_CLIENT', mock_client)
+    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
 
     with pytest.raises(gax_exceptions.DeadlineExceeded):
         ica_api_utils.get_ica_secrets()
@@ -135,7 +138,7 @@ def test_get_ica_secrets_does_not_retry_non_transient_errors(monkeypatch):
     and delay the real failure signal."""
     mock_client = MagicMock()
     mock_client.access_secret_version.side_effect = gax_exceptions.PermissionDenied('forbidden')
-    monkeypatch.setattr(ica_api_utils, 'SECRET_CLIENT', mock_client)
+    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
 
     with pytest.raises(gax_exceptions.PermissionDenied):
         ica_api_utils.get_ica_secrets()
@@ -151,15 +154,15 @@ def test_get_ica_secrets_cache_skips_retry_layer_on_subsequent_calls(monkeypatch
     payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}
     happy_client = MagicMock()
     happy_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
-    monkeypatch.setattr(ica_api_utils, 'SECRET_CLIENT', happy_client)
+    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: happy_client)
     first = ica_api_utils.get_ica_secrets()
     assert first == payload
 
     angry_client = MagicMock()
     angry_client.access_secret_version.side_effect = AssertionError(
-        'cache must short-circuit; SECRET_CLIENT must not be called on cache hit',
+        'cache must short-circuit; _secret_client must not be called on cache hit',
     )
-    monkeypatch.setattr(ica_api_utils, 'SECRET_CLIENT', angry_client)
+    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: angry_client)
     second = ica_api_utils.get_ica_secrets()
 
     assert second == payload

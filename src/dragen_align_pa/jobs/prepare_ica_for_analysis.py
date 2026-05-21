@@ -10,44 +10,48 @@ from loguru import logger
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.constants import BUCKET_NAME
 
+# Fail-fast here so a doomed submission surfaces with context instead of
+# crashing opaquely later at pipeline launch.
+_TERMINAL_BAD_FOLDER_STATUSES = frozenset({'ARCHIVED', 'DELETING', 'UNARCHIVING'})
 
-def run(
-    cohort: Cohort,
-    outputs: dict[str, cpg_utils.Path],
-) -> None:
-    """Prepare ICA pipeline runs by generating a folder ID for the
-    outputs of the Dragen pipeline.
 
-    Args:
-        cohort (Cohort): The Cohort being aligned and genotyped
-        outputs (dict): Dictionary specifying ICA output folder IDs per sequencing group.
+def run(cohort: Cohort, output: cpg_utils.Path) -> None:
+    """Create (or find) a single ICA folder for the cohort's pipeline outputs.
 
-    Returns:
-        dict [str, str] noting the analysis ID.
+    This pipeline writes per-batch (not per-SG) analysis folders directly under
+    this parent folder.
     """
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
-
-    path_parameters: dict[str, str] = {'projectId': project_id}
-
-    ica_analysis_output_folder: str = config_retrieve(
-        ['ica', 'data_prep', 'output_folder'],
-    )
+    output_folder: str = config_retrieve(['ica', 'data_prep', 'output_folder'])
+    folder_path: str = f'/{BUCKET_NAME}/{output_folder}'
 
     with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
-        folder_path: str = f'/{BUCKET_NAME}/{ica_analysis_output_folder}'
-        for sg_name in cohort.get_sequencing_group_ids():
-            object_id, _ = ica_utils.create_upload_object_id(
-                api_instance=api_instance,
-                path_params=path_parameters,
-                sg_name=sg_name,
-                file_name=sg_name,
-                folder_path=folder_path,
-                object_type='FOLDER',
-            )
-            logger.info(
-                f'Created folder ID {object_id} for analysis outputs for sequencing group {sg_name}',
-            )
-            with outputs[sg_name].open('w') as opath:
-                opath.write(json.dumps({'analysis_output_fid': object_id}))
+        folder_id, status = ica_utils.create_upload_object_id(
+            api_instance=api_instance,
+            path_params={'projectId': project_id},
+            folder_name=cohort.name,
+            file_name=cohort.name,
+            folder_path=folder_path,
+            object_type='FOLDER',
+        )
+    logger.info(f'Cohort output folder for {cohort.name} (status {status}): {folder_id}')
+
+    if status in _TERMINAL_BAD_FOLDER_STATUSES:
+        raise RuntimeError(
+            f'Cohort output folder for {cohort.name} is in terminal-bad status '
+            f'{status!r} (folder_id={folder_id}). DRAGEN pipeline submissions '
+            f'against this folder will fail. Manually unarchive or recreate the '
+            f"folder in ICA, then re-run the cohort.",
+        )
+    if status != 'AVAILABLE':
+        logger.warning(
+            f'Cohort output folder for {cohort.name} has non-AVAILABLE status '
+            f'{status!r} (folder_id={folder_id}). The folder is likely in a '
+            f'transient state; if subsequent pipeline submissions fail, verify '
+            f"the folder's state in ICA before retrying.",
+        )
+
+    with output.open('w') as fh:
+        json.dump({'analysis_output_fid': folder_id}, fh)

@@ -36,7 +36,6 @@ def authenticate_ica_cli() -> None:
     """
     Authenticates the icav2 CLI.
     """
-    logger.info('Authenticating ICA CLI...')
     # This command uses shell=True, but ICA_CLI_SETUP is a trusted constant
     utils.run_subprocess_with_log(ICA_CLI_SETUP, 'Authenticate ICA CLI', shell=True)  # noqa: S604
 
@@ -46,7 +45,6 @@ def upload_local_file(local_file_path: str, ica_folder_path: str) -> None:
     Uploads a local file to ICA using the icav2 CLI.
     Assumes the CLI is already authenticated.
     """
-    logger.info(f'Uploading {local_file_path} to ICA folder {ica_folder_path}...')
     utils.run_subprocess_with_log(
         [
             'icav2',
@@ -92,7 +90,6 @@ def find_ica_file_path_by_name(parent_folder: str, file_name: str) -> str:
                 f'File "{file_name}" found, but it has no "details.path" in API response.',
             )
 
-        logger.info(f'Found {file_name} at path: {file_path}')
         return file_path
 
     except json.JSONDecodeError:
@@ -118,12 +115,8 @@ def perform_upload_if_needed(cram_status: str | None, paths: dict[str, str]) -> 
     local_dir = os.path.dirname(paths['local_cram_path'])
     if not os.path.exists(local_dir):
         os.makedirs(local_dir, exist_ok=True)
-        logger.info(f'Created local directory: {local_dir}')
 
     # Download from GCS to local disk
-    logger.info(
-        f'Downloading {paths["cram_name"]} from GCS to {paths["local_cram_path"]}...',
-    )
     utils.run_subprocess_with_log(
         ['gcloud', 'storage', 'cp', paths['gcs_cram_path'], paths['local_cram_path']],
         f'Download {paths["cram_name"]}',
@@ -134,7 +127,6 @@ def perform_upload_if_needed(cram_status: str | None, paths: dict[str, str]) -> 
     # Clean up the large local file
     try:
         os.remove(paths['local_cram_path'])
-        logger.info(f'Removed local file: {paths["local_cram_path"]}')
     except OSError as e:
         logger.warning(
             f'Could not remove local file {paths["local_cram_path"]}: {e}',

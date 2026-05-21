@@ -68,9 +68,6 @@ def run(  # noqa: PLR0915
                     f"Checksum MISMATCH for '{filename}': Manifest='{manifest_checksum}', ICA='{ica_checksum}'"
                 )
                 mismatched_files.append(f'{filename} (CHECKSUM MISMATCH)')
-            else:
-                # Checksums match
-                logger.info(f"Checksum OK for '{filename}'")
 
     except FileNotFoundError as e:
         logger.error(f'Input file not found during MD5 validation: {e}')

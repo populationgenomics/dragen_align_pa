@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 def create_upload_object_id(
     api_instance: 'project_data_api.ProjectDataApi',
     path_params: dict[str, str],
-    sg_name: str,
+    folder_name: str,
     file_name: str,
     folder_path: str,
     object_type: str,
@@ -36,7 +36,7 @@ def create_upload_object_id(
     Args:
         api_instance (project_data_api.ProjectDataApi): An instance of the ProjectDataApi
         path_params (dict[str, str]): A dict with the projectId
-        sg_name (str): The name of the sequencing group
+        folder_name (str): Name used when creating a FOLDER object (ignored for FILE)
         file_name (str): The name of the file to upload e.g. CPGxxxx.CRAM
         folder_path (str): The base path to the object in ICA to create
         object_type (str): The type of the object to create. Must be one of ['FILE', 'FOLDER']
@@ -61,7 +61,6 @@ def create_upload_object_id(
         logger.info(f'Found existing {object_type} with ID {object_id} and status {status}')
         return object_id, status
 
-    logger.info(f'Creating a new {object_type} object at {folder_path}/{file_name}')
     try:
         if object_type == 'FILE':
             body = CreateData(
@@ -71,7 +70,7 @@ def create_upload_object_id(
             )
         else:
             body = CreateData(
-                name=sg_name,
+                name=folder_name,
                 folderPath=f'{folder_path}/',
                 dataType=object_type,
             )
@@ -292,7 +291,6 @@ def check_file_existence(
     Checks if the CRAM file already exists in ICA and returns its status.
     (Used by upload_data_to_ica.py)
     """
-    logger.info(f'Checking existence of {cram_name}...')
     cram_data = ica_api_utils.get_file_details_from_ica(
         api_instance,
         path_params,
@@ -304,7 +302,7 @@ def check_file_existence(
     return None
 
 
-def finalize_upload(
+def finalise_upload(
     api_instance: 'project_data_api.ProjectDataApi',
     path_params: dict[str, str],
     paths: dict[str, str],
@@ -314,7 +312,6 @@ def finalize_upload(
     Re-fetches the file ID from ICA and writes the output JSON file.
     (Used by upload_data_to_ica.py)
     """
-    logger.info(f'Re-fetching file ID for {paths["sg_name"]}...')
     cram_data = ica_api_utils.get_file_details_from_ica(
         api_instance,
         path_params,
@@ -328,8 +325,6 @@ def finalize_upload(
         raise ValueError(
             f'Failed to find file ID in ICA after upload for {paths["sg_name"]}.',
         )
-
-    logger.info(f'CRAM FID: {cram_fid}')
 
     # Write only the CRAM FID to the output JSON
     output_data = {'cram_fid': cram_fid}

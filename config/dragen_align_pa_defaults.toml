@@ -132,7 +132,7 @@ coverage_region_beds = [
     'S30409818_Regions.bed',
 ]
 
-[ica.mlr]
+[dragen_align_pa.manage_dragen_mlr]
 config_json = "fil.91c3e63114fc43dc31ed08dde927d6b4"
 mlr_hash_table = "ica://ourdna-dragen-mlr-jobs/data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9"
 analysis_instance_tier = "economy"

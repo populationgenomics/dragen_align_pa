@@ -65,7 +65,8 @@ class MonitoredTarget:
         return self.target.name
 
     def set_status(self, new_status: PipelineStatus) -> None:
-        logger.info(f'Target {self.name} status moving from {self.status.name} to {new_status.name}')
+        if new_status != self.status:
+            logger.info(f'Target {self.name}: {self.status.name} → {new_status.name}')
         self.status = new_status
 
 
@@ -327,8 +328,6 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                     target.set_status(PipelineStatus.INPROGRESS)
                     with pipeline_id_arguid_file.open('w') as f:
                         f.write(json.dumps({'pipeline_id': target.pipeline_id, 'ar_guid': target.ar_guid}))
-                else:
-                    logger.info(f'Checking status of existing {pipeline_name} ICA pipeline for {target_name}')
 
                 pipeline_status: str = monitor_dragen_pipeline.run(
                     ica_pipeline_id=target.pipeline_id,
@@ -446,7 +445,6 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
         )
         if all(is_finished(target) for target in monitored_targets):
             break
-        logger.info(f'Waiting {sleep_time_seconds}s.')
         time.sleep(sleep_time_seconds)
 
     try:

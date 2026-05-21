@@ -6,7 +6,6 @@ from typing import Literal
 
 import cpg_utils
 from cpg_flow.targets import SequencingGroup
-from cpg_utils.config import config_retrieve
 from google.cloud import storage
 from icasdk.apis.tags import project_data_api
 from loguru import logger
@@ -20,32 +19,36 @@ from dragen_align_pa.constants import (
 def run(
     sequencing_group: SequencingGroup,
     pipeline_id_arguid_path: cpg_utils.Path,
+    cohort_name: str,
 ) -> None:
-    """
-    The main Python function for the download job.
-    Coordinates helper functions to list, filter, and stream files.
+    """Stream per-sample ICA artefacts to GCS.
+
+    Resolves the ICA folder for this SG's batch output via
+    `utils.get_ica_sample_folder`, reading `pipeline_id_arguid_path` (the
+    per-SG state file written by `ManageDragenPipeline`) + `cohort_name`.
+    Only files inside the resolved folder are downloaded — batch-root
+    artefacts (`passfail.json`, `summary.json`, `reports/`) sit one level
+    up and are handled by `DownloadBatchArtefactsFromIca`.
+
+    Resolution is done inside this entrypoint (rather than in a
+    `_resolve_then_download_bulk` shim in `stages.py`) so the resolver
+    and the downloader share a single Hail PythonJob — `stages.py` is
+    reserved for cpg-flow stage definitions only.
     """
     sg_name: str = sequencing_group.name
-    ica_analysis_output_folder: str = config_retrieve(
-        ['ica', 'data_prep', 'output_folder'],
+    ica_folder_path = utils.get_ica_sample_folder(
+        pipeline_id_arguid_path,
+        sg_name=sg_name,
+        cohort_name=cohort_name,
     )
-    logger.info(f'Downloading bulk ICA data for {sg_name}.')
+    logger.info(f'Downloading bulk ICA data for {sg_name} from {ica_folder_path}')
 
-    # --- Get Pipeline ID and AR GUID ---
-    pipeline_id, ar_guid = ica_utils.get_pipeline_details(pipeline_id_arguid_path)
-    base_ica_folder_path = (
-        f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
-    )
-    logger.info(f'Targeting ICA folder: {base_ica_folder_path}')
-
-    # --- Setup GCS Client ---
     gcs_output_path_prefix = str(utils.get_output_path(filename=f'dragen_metrics/{sg_name}')).removeprefix(
-        f'gs://{BUCKET_NAME}/'
+        f'gs://{BUCKET_NAME}/',
     )
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
-    # --- Secure ICA Authentication ---
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     path_parameters: dict[str, str] = {'projectId': secrets['projectID']}
 
@@ -56,7 +59,7 @@ def run(
         files = ica_utils.list_ica_files(
             api_instance=api_instance,
             path_parameters=path_parameters,
-            base_ica_folder_path=base_ica_folder_path,
+            base_ica_folder_path=ica_folder_path,
         )
         files_to_download = [
             (name, fid) for name, fid in files
@@ -64,7 +67,6 @@ def run(
         ]
 
         for file_name, file_id in files_to_download:
-            logger.info(f'Preparing to download file: {file_name} (ID: {file_id})')
             ica_utils.stream_ica_file_to_gcs(
                 api_instance=api_instance,
                 path_parameters=path_parameters,

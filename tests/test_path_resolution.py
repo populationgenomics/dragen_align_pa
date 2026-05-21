@@ -4,7 +4,12 @@ from pathlib import Path
 import cpg_utils.config
 import pytest
 
-from dragen_align_pa.utils import PER_SG_STATE_SCHEMA_VERSION, get_batch_artefacts_path, get_ica_sample_folder
+from dragen_align_pa.utils import (
+    PER_SG_STATE_SCHEMA_VERSION,
+    get_batch_artefacts_path,
+    get_ica_sample_folder,
+    load_per_sg_state,
+)
 
 
 def _write_state(path: Path, **fields) -> None:
@@ -75,6 +80,22 @@ def test_get_ica_sample_folder_raises_keyerror_on_missing_batch_index(tmp_path: 
     }))
     with pytest.raises(KeyError, match=r'batch_index'):
         get_ica_sample_folder(state_path, sg_name='SYN00001', cohort_name='COH0001')
+
+
+def test_load_per_sg_state_reports_all_missing_keys(tmp_path: Path):
+    """When several required keys are absent, the error names ALL of them so
+    operators fix everything in one pass."""
+    state_path = tmp_path / 'SYN00001_pipeline_id_and_arguid.json'
+    state_path.write_text(json.dumps({'schema_version': PER_SG_STATE_SCHEMA_VERSION}))
+    with pytest.raises(KeyError) as excinfo:
+        load_per_sg_state(
+            state_path,
+            required_keys=('user_reference', 'pipeline_id', 'batch_index'),
+        )
+    message = str(excinfo.value)
+    assert "'user_reference'" in message
+    assert "'pipeline_id'" in message
+    assert "'batch_index'" in message
 
 
 def test_conftest_output_path_stub_accepts_category_kwarg():
