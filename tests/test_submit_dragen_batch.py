@@ -8,7 +8,7 @@ from dragen_align_pa.jobs import submit_dragen_batch
 from dragen_align_pa.jobs.submit_dragen_batch import _MAX_COVERAGE_REGION_BEDS
 
 
-def _config_factory(sequencing_type='genome', preset_args='', user_args=''):
+def _config_factory(sequencing_type='genome', preset_args='', user_args='', bed_names=None):
     """Returns a fake `config_retrieve` that exposes the bits `_build_additional_args` needs."""
     cfg = {
         ('workflow', 'sequencing_type'): sequencing_type,
@@ -19,6 +19,8 @@ def _config_factory(sequencing_type='genome', preset_args='', user_args=''):
         },
         ('dragen_align_pa', 'manage_dragen_pipeline', 'user'): {'additional_args': user_args, 'additional_files': []},
     }
+    if bed_names is not None:
+        cfg[('dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type, 'bed_names')] = bed_names
 
     def fake_retrieve(key, default=None):
         return cfg.get(tuple(key), default)
@@ -74,6 +76,117 @@ def test_build_additional_args_rejects_placeholder(monkeypatch):
     )
     with pytest.raises(ValueError, match='placeholder'):
         submit_dragen_batch._build_additional_args()
+
+
+def test_get_bed_names_returns_empty_when_block_absent(monkeypatch):
+    """Genome (and exome without a bed_names block) should return {} cleanly."""
+    monkeypatch.setattr(submit_dragen_batch, 'config_retrieve', _config_factory())
+    assert submit_dragen_batch._get_bed_names_for_seqtype() == {}
+
+
+def test_get_bed_names_rejects_blank_values(monkeypatch):
+    """Blank bed_names entries are intentional fail-fast markers in defaults."""
+    monkeypatch.setattr(
+        submit_dragen_batch, 'config_retrieve',
+        _config_factory(
+            sequencing_type='exome',
+            bed_names={'vc_target': '', 'cnv_target': 'X.bed', 'sv_call_regions': '  '},
+        ),
+    )
+    with pytest.raises(ValueError, match=r"\['sv_call_regions', 'vc_target'\]"):
+        submit_dragen_batch._get_bed_names_for_seqtype()
+
+
+def test_build_additional_args_substitutes_bed_name_tokens(monkeypatch):
+    monkeypatch.setattr(
+        submit_dragen_batch, 'config_retrieve',
+        _config_factory(
+            sequencing_type='exome',
+            preset_args='--vc-target-bed {vc_target} --cnv-target-bed {cnv_target} --sv-call-regions-bed {sv_call_regions}',
+            bed_names={
+                'vc_target': 'covered.bed',
+                'cnv_target': 'regions.bed',
+                'sv_call_regions': 'regions.bed',
+            },
+        ),
+    )
+    result = submit_dragen_batch._build_additional_args()
+    assert '--vc-target-bed covered.bed' in result
+    assert '--cnv-target-bed regions.bed' in result
+    assert '--sv-call-regions-bed regions.bed' in result
+    # No leftover `{…}` tokens.
+    assert '{' not in result
+
+
+def test_build_additional_args_rejects_unknown_role_token(monkeypatch):
+    """An args string referencing {made_up_role} that bed_names doesn't define
+    must fail fast with the role name and a list of configured roles."""
+    monkeypatch.setattr(
+        submit_dragen_batch, 'config_retrieve',
+        _config_factory(
+            sequencing_type='exome',
+            preset_args='--vc-target-bed {made_up_role}',
+            bed_names={'vc_target': 'covered.bed'},
+        ),
+    )
+    with pytest.raises(ValueError, match=r"\{made_up_role\}"):
+        submit_dragen_batch._build_additional_args()
+
+
+def test_build_common_data_inputs_adds_bed_names_to_additional_files(monkeypatch):
+    """bed_names basenames are added to additional_files (resolved via
+    ICA_FILE_IDS) and deduped against preset entries. Twist case: same
+    basename in multiple roles appears only once."""
+    _stub_registry(monkeypatch, {
+        'covered.bed': 'fil.covered',
+        'regions.bed': 'fil.regions',
+        'pon.bed': 'fil.pon',
+    })
+    cfg = {
+        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
+        ('ica', 'qc', 'coverage_region_beds'): [],
+        ('ica', 'qc', 'cross_cont_vcf'): None,
+        ('workflow', 'sequencing_type'): 'exome',
+        # preset.additional_files lists an extra (e.g. PoN) that's not a bed_names role.
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'additional_files'): ['pon.bed'],
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
+        # Three roles, two distinct basenames — dedupe should collapse.
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names'): {
+            'vc_target': 'covered.bed',
+            'cnv_target': 'regions.bed',
+            'sv_call_regions': 'regions.bed',
+        },
+    }
+    monkeypatch.setattr(
+        submit_dragen_batch, 'config_retrieve',
+        lambda key, default=None: cfg.get(tuple(key), default),
+    )
+    inputs = submit_dragen_batch._build_common_data_inputs()
+    additional = [i for i in inputs if i['parameterCode'] == 'additional_files']
+    assert len(additional) == 1
+    # Order: preset first, then bed_names in iteration order; deduped.
+    assert list(additional[0]['dataIds']) == ['fil.pon', 'fil.covered', 'fil.regions']
+
+
+def test_build_common_data_inputs_resolves_user_additional_files(monkeypatch):
+    """user.additional_files entries are also basenames that must resolve."""
+    _stub_registry(monkeypatch, {'user_extra.bed': 'fil.user_extra'})
+    cfg = {
+        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
+        ('ica', 'qc', 'coverage_region_beds'): [],
+        ('ica', 'qc', 'cross_cont_vcf'): None,
+        ('workflow', 'sequencing_type'): 'genome',
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): ['user_extra.bed'],
+    }
+    monkeypatch.setattr(
+        submit_dragen_batch, 'config_retrieve',
+        lambda key, default=None: cfg.get(tuple(key), default),
+    )
+    inputs = submit_dragen_batch._build_common_data_inputs()
+    additional = [i for i in inputs if i['parameterCode'] == 'additional_files']
+    assert len(additional) == 1
+    assert list(additional[0]['dataIds']) == ['fil.user_extra']
 
 
 def test_build_additional_args_does_not_flag_common_args_with_future_lt_tokens(monkeypatch):
