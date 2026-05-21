@@ -30,15 +30,19 @@ from dragen_align_pa.jobs.download_batch_artefacts import (
 
 
 def test_stream_stats_total_failure_sums_both_buckets():
-    s = _StreamStats(success=10, lookup_failure=3, stream_failure=2)
+    s = _StreamStats(
+        success=10,
+        lookup_failures=[{}, {}, {}],
+        stream_failures=[{}, {}],
+    )
     assert s.total_failure == 5
 
 
 def test_stream_stats_default_is_zero():
     s = _StreamStats()
     assert s.success == 0
-    assert s.lookup_failure == 0
-    assert s.stream_failure == 0
+    assert s.lookup_failures == []
+    assert s.stream_failures == []
     assert s.total_failure == 0
 
 
@@ -50,6 +54,12 @@ def test_stream_stats_default_is_zero():
 def _silent_call(stats, raise_exc=None):
     """Invoke _stream_silently with a stream that may raise."""
     stream = MagicMock() if raise_exc is None else MagicMock(side_effect=raise_exc)
+    # `_stream_silently` skips when the target blob already exists in GCS
+    # (the 'delete the marker and re-run' retry contract). Configure the
+    # default bucket mock to report the blob is absent so we exercise the
+    # streaming path, not the skip path.
+    gcs_bucket = MagicMock()
+    gcs_bucket.blob.return_value.exists.return_value = False
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr('dragen_align_pa.ica_utils.stream_ica_file_to_gcs', stream)
@@ -58,7 +68,7 @@ def _silent_call(stats, raise_exc=None):
             path_parameters={'projectId': 'p'},
             file_id='fid',
             file_name='f.txt',
-            gcs_bucket=MagicMock(),
+            gcs_bucket=gcs_bucket,
             gcs_prefix='prefix',
             context='ctx',
             stats=stats,
@@ -70,28 +80,28 @@ def test_stream_silently_success_increments_success():
     stats = _StreamStats()
     _silent_call(stats)
     assert stats.success == 1
-    assert stats.stream_failure == 0
-    assert stats.lookup_failure == 0
+    assert stats.stream_failures == []
+    assert stats.lookup_failures == []
 
 
 def test_stream_silently_swallows_api_exception():
     stats = _StreamStats()
     _silent_call(stats, raise_exc=icasdk.ApiException(status=503, reason='boom'))
     assert stats.success == 0
-    assert stats.stream_failure == 1
-    assert stats.lookup_failure == 0
+    assert len(stats.stream_failures) == 1
+    assert stats.lookup_failures == []
 
 
 def test_stream_silently_swallows_request_exception():
     stats = _StreamStats()
     _silent_call(stats, raise_exc=requests.RequestException('connection reset'))
-    assert stats.stream_failure == 1
+    assert len(stats.stream_failures) == 1
 
 
 def test_stream_silently_swallows_gcs_error():
     stats = _StreamStats()
     _silent_call(stats, raise_exc=gcs_exceptions.GoogleCloudError('5xx'))
-    assert stats.stream_failure == 1
+    assert len(stats.stream_failures) == 1
 
 
 def test_stream_silently_propagates_value_error():
@@ -119,6 +129,8 @@ def _named_call(stats, *, lookup_exc=None, stream_exc=None, file_id='fid'):
         else MagicMock(side_effect=lookup_exc)
     )
     stream = MagicMock(side_effect=stream_exc) if stream_exc else MagicMock()
+    gcs_bucket = MagicMock()
+    gcs_bucket.blob.return_value.exists.return_value = False
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr('dragen_align_pa.ica_api_utils.find_file_id_by_name', lookup)
@@ -128,7 +140,7 @@ def _named_call(stats, *, lookup_exc=None, stream_exc=None, file_id='fid'):
             path_parameters={'projectId': 'p'},
             parent_folder='/parent/',
             file_name='target.json',
-            gcs_bucket=MagicMock(),
+            gcs_bucket=gcs_bucket,
             gcs_prefix='prefix',
             stats=stats,
         )
@@ -147,16 +159,16 @@ def test_stream_named_file_legitimate_absence_does_not_count():
     stats = _StreamStats()
     _named_call(stats, lookup_exc=FileNotFoundError('not there'))
     assert stats.success == 0
-    assert stats.lookup_failure == 0
-    assert stats.stream_failure == 0
+    assert stats.lookup_failures == []
+    assert stats.stream_failures == []
 
 
 def test_stream_named_file_lookup_api_exception_increments_lookup_failure():
     stats = _StreamStats()
     _named_call(stats, lookup_exc=icasdk.ApiException(status=503, reason='lookup boom'))
-    assert stats.lookup_failure == 1
+    assert len(stats.lookup_failures) == 1
     assert stats.success == 0
-    assert stats.stream_failure == 0
+    assert stats.stream_failures == []
 
 
 def test_stream_named_file_stream_failure_after_successful_lookup_increments_stream_failure():
@@ -164,8 +176,8 @@ def test_stream_named_file_stream_failure_after_successful_lookup_increments_str
     counted as stream_failure (not lookup_failure)."""
     stats = _StreamStats()
     _named_call(stats, stream_exc=icasdk.ApiException(status=502, reason='stream boom'))
-    assert stats.stream_failure == 1
-    assert stats.lookup_failure == 0
+    assert len(stats.stream_failures) == 1
+    assert stats.lookup_failures == []
     assert stats.success == 0
 
 
@@ -230,7 +242,9 @@ def patched_environment(tmp_path: Path, monkeypatch):
     )
 
     fake_storage = MagicMock()
-    fake_storage.bucket.return_value = MagicMock()
+    fake_bucket = MagicMock()
+    fake_bucket.blob.return_value.exists.return_value = False
+    fake_storage.bucket.return_value = fake_bucket
     monkeypatch.setattr(
         'dragen_align_pa.jobs.download_batch_artefacts.storage.Client',
         lambda: fake_storage,
@@ -347,13 +361,12 @@ def test_run_writes_marker_payload_with_partial_success(patched_environment, tmp
     )
 
     payload = json.loads(marker_path.read_text())
-    assert payload == {
-        'cohort_name': 'COH0001',
-        'batches_processed': 1,
-        'success_count': 1,
-        'lookup_failure_count': 0,
-        'stream_failure_count': 1,
-    }
+    assert payload['cohort_name'] == 'COH0001'
+    assert payload['batches_processed'] == 1
+    assert payload['success_count'] == 1
+    assert payload['skipped_count'] == 0
+    assert payload['lookup_failures'] == []
+    assert len(payload['stream_failures']) == 1
 
 
 def test_run_writes_marker_for_no_op_cohort(patched_environment, tmp_path, monkeypatch):  # noqa: ARG001
@@ -384,6 +397,7 @@ def test_run_writes_marker_for_no_op_cohort(patched_environment, tmp_path, monke
         'cohort_name': 'COH0001',
         'batches_processed': 0,
         'success_count': 0,
-        'lookup_failure_count': 0,
-        'stream_failure_count': 0,
+        'skipped_count': 0,
+        'lookup_failures': [],
+        'stream_failures': [],
     }

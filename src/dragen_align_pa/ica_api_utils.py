@@ -5,18 +5,25 @@ wrappers around specific API endpoints.
 """
 
 import contextlib
+import functools
 import json
 from collections.abc import Iterator
-from functools import cache
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 import icasdk
+from google.api_core import exceptions as gax_exceptions
 from google.cloud import secretmanager
 from icasdk import ApiClient, Configuration
 from icasdk.apis.tags import project_analysis_api, project_data_api
 from icasdk.exceptions import ApiException
 from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from loguru import logger
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -32,18 +39,45 @@ SECRET_VERSION: Final = 'latest'
 
 # --- Secret Management & Auth ---
 
+# Secret Manager occasionally returns gRPC 504 (DeadlineExceeded) on transient
+# load spikes; GAPIC's default retry policy does NOT cover DeadlineExceeded,
+# so a single blip propagates and crashes whichever job is calling. We retry
+# both that and ServiceUnavailable (gRPC UNAVAILABLE / HTTP 503).
+_TRANSIENT_SECRET_MANAGER_EXCEPTIONS: Final = (
+    gax_exceptions.DeadlineExceeded,
+    gax_exceptions.ServiceUnavailable,
+)
 
-@cache
+@functools.cache
 def _secret_client() -> secretmanager.SecretManagerServiceClient:
     # Lazy so the module can be imported without GCP ADC (e.g. in CI test collection).
     return secretmanager.SecretManagerServiceClient()
 
 
+@functools.lru_cache(maxsize=1)
+@retry(
+    retry=retry_if_exception_type(_TRANSIENT_SECRET_MANAGER_EXCEPTIONS),
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    reraise=True,
+)
 def get_ica_secrets() -> dict[Literal['projectID', 'apiKey'], str]:
-    """Gets the project ID and API key used to interact with ICA
+    """Gets the project ID and API key used to interact with ICA.
+
+    Cached for the lifetime of the process (the secret payload doesn't
+    change during a run). The previous behaviour fetched fresh on every
+    monitor-loop poll and every batch submission, which meant a single
+    transient Secret Manager 504 could tear down a long-running monitor
+    job. With the cache, only the very first call hits Secret Manager; all
+    subsequent calls return the cached dict without an RPC.
+
+    Retries transient Secret Manager failures (DeadlineExceeded /
+    ServiceUnavailable) with exponential backoff before giving up. Other
+    error classes (e.g. PermissionDenied, NotFound) propagate immediately
+    — they indicate IAM / config problems that retrying won't fix.
 
     Returns:
-        dict[str, str]: A dictionary with the keys projectId and apiKey
+        dict[str, str]: A dictionary with the keys projectID and apiKey
     """
     client = _secret_client()
     secret_path: str = client.secret_version_path(
