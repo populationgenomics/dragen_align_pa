@@ -33,7 +33,6 @@ _TODO_FID: Final = f'{_TODO_FID_PREFIX}REPLACE_AFTER_ICA_UPLOAD'
 # under the same name-based contract, add them here too.
 ICA_FILE_IDS: Final[dict[str, str]] = {
     'Twist_VCGS_Exome_Covered_Targets_hg38.bed': 'fil.60130ada16264ed28a7008deb1d54636',
-    'S06588914_Regions_hg38.bed': 'fil.844dfe0ff4c74b10fbc008deabc38c7f',
     'S30409818_Regions.bed': 'fil.5d4da6b9c2c74abcb00608deb2229b88',
     'S30409818_Covered.bed': 'fil.625777f457c84b508a7108deb1d54636',
 }
