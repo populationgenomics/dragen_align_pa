@@ -90,11 +90,20 @@ cnv_segmentation_mode = "SLM"
 additional_args = "--cnv-enable-self-normalization true"
 additional_files = []
 
-# WES-only flags. Fill in WES BED + PoN file IDs per cohort.
+# WES-only flags. Your run's config TOML must set [bed_names] below; blank
+# values here are fail-fast markers that halt the run before ICA submission.
 [dragen_align_pa.manage_dragen_pipeline.presets.exome]
 cnv_segmentation_mode = "HSLM"
-additional_args = "--sv-exome true --sv-call-regions-bed <bed-name> --vc-target-bed <bed-name> --cnv-target-bed <bed-name> --cnv-target-factor-threshold 5 --cnv-enable-self-normalization false"
+additional_args = "--sv-exome true --sv-call-regions-bed {sv_call_regions} --vc-target-bed {vc_target} --cnv-target-bed {cnv_target} --cnv-target-factor-threshold 5 --cnv-enable-self-normalization false"
+# Auto-populated from bed_names below; list extras here (e.g. PoN files) as basenames.
 additional_files = []
+
+# BED basenames for each DRAGEN target slot. Set these in your run's config
+# TOML using names registered in dragen_align_pa.constants.ICA_FILE_IDS.
+[dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names]
+vc_target = ""
+cnv_target = ""
+sv_call_regions = ""
 
 # Per-run user override hooks. Appended after the preset values.
 [dragen_align_pa.manage_dragen_pipeline.user]

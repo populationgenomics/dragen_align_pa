@@ -54,14 +54,35 @@ _PRESET_PLACEHOLDER_RE = re.compile(r'<[a-zA-Z][a-zA-Z0-9_-]*>')
 _MAX_COVERAGE_REGION_BEDS = 3
 
 
+def _get_bed_names_for_seqtype() -> dict[str, str]:
+    """Resolve `[presets.<seqtype>.bed_names]` into a `{role: basename}` map.
+
+    Blank values raise — defaults.toml ships them blank as fail-fast markers
+    so an un-overridden run halts before ICA submission.
+    """
+    sequencing_type = config_retrieve(['workflow', 'sequencing_type'])
+    bed_names = config_retrieve(
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type, 'bed_names'],
+        default={},
+    )
+    if not bed_names:
+        return {}
+    blank = sorted(role for role, name in bed_names.items() if not str(name).strip())
+    if blank:
+        raise ValueError(
+            f'[dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}.bed_names] '
+            f'has blank entries for role(s) {blank}. Override per-cohort with the '
+            f'design-appropriate BED basename(s) registered in ICA_FILE_IDS.',
+        )
+    return {role: str(name) for role, name in bed_names.items()}
+
+
 def _build_additional_args() -> str:
     """Concatenate common + sequencing-type preset + user override into one args string.
 
-    Raises if any `<placeholder>` sentinel survives in the preset or user
-    args (e.g. the WES preset shipping `<bed-name>` defaults that weren't
-    filled in for this run). Placeholders are a property of fill-in-the-blank
-    preset/user strings — NOT the hardcoded common block — so we scan
-    each source individually rather than the assembled output.
+    `{role}` tokens in preset/user args are substituted from
+    `[presets.<seqtype>.bed_names]`. Any surviving `{…}` or legacy `<…>`
+    placeholders are rejected as unfilled config.
     """
     sequencing_type = config_retrieve(['workflow', 'sequencing_type'])
     if sequencing_type not in {'genome', 'exome'}:
@@ -91,11 +112,21 @@ def _build_additional_args() -> str:
     preset_args = preset.get('additional_args', '').strip()
     user_args = user.get('additional_args', '').strip()
 
-    # Scan preset and user args individually — these are the only strings
-    # where `<placeholder>` sentinels are legitimate inputs that must be
-    # filled before submission. _COMMON_ADDITIONAL_ARGS is hardcoded and
-    # may contain `<token>` substrings now or in the future without that
-    # implying an unfilled placeholder.
+    # Substitute {role} tokens from [presets.<seqtype>.bed_names]. KeyError
+    # here means args references a role that bed_names doesn't define.
+    bed_names = _get_bed_names_for_seqtype()
+    try:
+        preset_args = preset_args.format(**bed_names)
+        user_args = user_args.format(**bed_names)
+    except KeyError as e:
+        raise ValueError(
+            f'DRAGEN additional_args references {{{e.args[0]}}} but '
+            f'[presets.{sequencing_type}.bed_names] has no such role. '
+            f'Configured roles: {sorted(bed_names)}.',
+        ) from None
+
+    # Legacy `<…>` sentinels are not valid; reject any that survive.
+    # _COMMON_ADDITIONAL_ARGS is hardcoded so its content isn't scanned.
     for source_name, source in (('preset', preset_args), ('user', user_args)):
         placeholders = _PRESET_PLACEHOLDER_RE.findall(source)
         if placeholders:
@@ -394,15 +425,21 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
         default=[],
     )
     user_files = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'], default=[])
-    additional_files = list(preset_files) + list(user_files)
+    # additional_files entries are BED basenames, resolved via ICA_FILE_IDS.
+    # bed_names values are added too so the operator names a BED once.
+    bed_name_files = list(_get_bed_names_for_seqtype().values())
+    additional_file_names: list[str] = list(
+        dict.fromkeys(list(preset_files) + list(user_files) + bed_name_files)
+    )
+    additional_file_ids = [resolve_ica_file_id(name) for name in additional_file_names]
 
     inputs: list[AnalysisDataInput] = [AnalysisDataInput(parameterCode='ref_tar', dataIds=[dragen_ht_id])]
     if coverage_region_bed_ids:
         inputs.append(AnalysisDataInput(parameterCode='qc_coverage_region_beds', dataIds=coverage_region_bed_ids))
     if cross_cont_vcf:
         inputs.append(AnalysisDataInput(parameterCode='qc_cross_cont_vcf', dataIds=[cross_cont_vcf]))
-    if additional_files:
-        inputs.append(AnalysisDataInput(parameterCode='additional_files', dataIds=additional_files))
+    if additional_file_ids:
+        inputs.append(AnalysisDataInput(parameterCode='additional_files', dataIds=additional_file_ids))
     return inputs
 
 
