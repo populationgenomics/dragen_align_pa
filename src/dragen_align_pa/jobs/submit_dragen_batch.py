@@ -55,10 +55,10 @@ _MAX_COVERAGE_REGION_BEDS = 3
 
 
 def _get_bed_names_for_seqtype() -> dict[str, str]:
-    """Resolve `[presets.<seqtype>.bed_names]` into a `{role: basename}` map.
+    """Read `[presets.<seqtype>.bed_names]` and return its `{key: basename}` map.
 
-    Blank values raise — defaults.toml ships them blank as fail-fast markers
-    so an un-overridden run halts before ICA submission.
+    Empty-string values raise — defaults.toml ships them empty as fail-fast
+    markers so an un-overridden run halts before ICA submission.
     """
     sequencing_type = config_retrieve(['workflow', 'sequencing_type'])
     bed_names = config_retrieve(
@@ -67,22 +67,22 @@ def _get_bed_names_for_seqtype() -> dict[str, str]:
     )
     if not bed_names:
         return {}
-    blank = sorted(role for role, name in bed_names.items() if not str(name).strip())
-    if blank:
+    unset_entries = sorted(key for key, name in bed_names.items() if not str(name).strip())
+    if unset_entries:
         raise ValueError(
             f'[dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}.bed_names] '
-            f'has blank entries for role(s) {blank}. Override per-cohort with the '
-            f'design-appropriate BED basename(s) registered in ICA_FILE_IDS.',
+            f'is missing values for {unset_entries}. Set each to a BED basename '
+            f'registered in ICA_FILE_IDS.',
         )
-    return {role: str(name) for role, name in bed_names.items()}
+    return {key: str(name) for key, name in bed_names.items()}
 
 
 def _build_additional_args() -> str:
     """Concatenate common + sequencing-type preset + user override into one args string.
 
-    `{role}` tokens in preset/user args are substituted from
-    `[presets.<seqtype>.bed_names]`. Any surviving `{…}` or legacy `<…>`
-    placeholders are rejected as unfilled config.
+    Tokens like `{vc_target}` in preset/user args are substituted from the
+    matching entries in `[presets.<seqtype>.bed_names]`. Any surviving `{…}`
+    or legacy `<…>` placeholders are rejected as unfilled config.
     """
     sequencing_type = config_retrieve(['workflow', 'sequencing_type'])
     if sequencing_type not in {'genome', 'exome'}:
@@ -112,8 +112,8 @@ def _build_additional_args() -> str:
     preset_args = preset.get('additional_args', '').strip()
     user_args = user.get('additional_args', '').strip()
 
-    # Substitute {role} tokens from [presets.<seqtype>.bed_names]. KeyError
-    # here means args references a role that bed_names doesn't define.
+    # Substitute {...} tokens from [presets.<seqtype>.bed_names] entries.
+    # KeyError means args references a token that bed_names doesn't define.
     bed_names = _get_bed_names_for_seqtype()
     try:
         preset_args = preset_args.format(**bed_names)
@@ -121,8 +121,8 @@ def _build_additional_args() -> str:
     except KeyError as e:
         raise ValueError(
             f'DRAGEN additional_args references {{{e.args[0]}}} but '
-            f'[presets.{sequencing_type}.bed_names] has no such role. '
-            f'Configured roles: {sorted(bed_names)}.',
+            f'[presets.{sequencing_type}.bed_names] has no entry named '
+            f'{e.args[0]!r}. Configured entries: {sorted(bed_names)}.',
         ) from None
 
     # Legacy `<…>` sentinels are not valid; reject any that survive.

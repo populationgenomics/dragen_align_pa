@@ -84,8 +84,8 @@ def test_get_bed_names_returns_empty_when_block_absent(monkeypatch):
     assert submit_dragen_batch._get_bed_names_for_seqtype() == {}
 
 
-def test_get_bed_names_rejects_blank_values(monkeypatch):
-    """Blank bed_names entries are intentional fail-fast markers in defaults."""
+def test_get_bed_names_rejects_empty_values(monkeypatch):
+    """Empty bed_names entries are intentional fail-fast markers in defaults."""
     monkeypatch.setattr(
         submit_dragen_batch, 'config_retrieve',
         _config_factory(
@@ -118,25 +118,25 @@ def test_build_additional_args_substitutes_bed_name_tokens(monkeypatch):
     assert '{' not in result
 
 
-def test_build_additional_args_rejects_unknown_role_token(monkeypatch):
-    """An args string referencing {made_up_role} that bed_names doesn't define
-    must fail fast with the role name and a list of configured roles."""
+def test_build_additional_args_rejects_unknown_token(monkeypatch):
+    """An args string with a {...} token that bed_names doesn't define must
+    fail fast naming the token and listing the configured entries."""
     monkeypatch.setattr(
         submit_dragen_batch, 'config_retrieve',
         _config_factory(
             sequencing_type='exome',
-            preset_args='--vc-target-bed {made_up_role}',
+            preset_args='--vc-target-bed {unknown_entry}',
             bed_names={'vc_target': 'covered.bed'},
         ),
     )
-    with pytest.raises(ValueError, match=r"\{made_up_role\}"):
+    with pytest.raises(ValueError, match=r"\{unknown_entry\}"):
         submit_dragen_batch._build_additional_args()
 
 
 def test_build_common_data_inputs_adds_bed_names_to_additional_files(monkeypatch):
     """bed_names basenames are added to additional_files (resolved via
-    ICA_FILE_IDS) and deduped against preset entries. Twist case: same
-    basename in multiple roles appears only once."""
+    ICA_FILE_IDS) and deduped against preset entries. Twist case: a
+    basename used by multiple bed_names entries appears only once."""
     _stub_registry(monkeypatch, {
         'covered.bed': 'fil.covered',
         'regions.bed': 'fil.regions',
@@ -147,10 +147,10 @@ def test_build_common_data_inputs_adds_bed_names_to_additional_files(monkeypatch
         ('ica', 'qc', 'coverage_region_beds'): [],
         ('ica', 'qc', 'cross_cont_vcf'): None,
         ('workflow', 'sequencing_type'): 'exome',
-        # preset.additional_files lists an extra (e.g. PoN) that's not a bed_names role.
+        # preset.additional_files lists an extra (e.g. PoN) not present in bed_names.
         ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'additional_files'): ['pon.bed'],
         ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
-        # Three roles, two distinct basenames — dedupe should collapse.
+        # Three entries, two distinct basenames — dedupe should collapse.
         ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names'): {
             'vc_target': 'covered.bed',
             'cnv_target': 'regions.bed',
