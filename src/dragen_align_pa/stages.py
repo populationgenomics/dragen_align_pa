@@ -683,6 +683,7 @@ class ReheaderMlrGvcf(SequencingGroupStage):
         DownloadGvcfFromIca,
         DownloadMlrGvcfFromIca,
         DownloadDataFromIca,
+        DownloadBatchArtefactsFromIca,
         ReheaderMlrGvcf,
         SomalierExtract,
         FastqIntakeQc,
