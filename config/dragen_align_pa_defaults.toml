@@ -94,7 +94,7 @@ additional_files = []
 # values here are fail-fast markers that halt the run before ICA submission.
 [dragen_align_pa.manage_dragen_pipeline.presets.exome]
 cnv_segmentation_mode = "HSLM"
-additional_args = "--sv-exome true --sv-call-regions-bed {sv_call_regions} --vc-target-bed {vc_target} --cnv-target-bed {cnv_target} --cnv-target-factor-threshold 5 --cnv-enable-self-normalization false"
+additional_args = "--sv-exome true --sv-call-regions-bed {sv_call_regions} --vc-target-bed {vc_target} --cnv-target-bed {cnv_target} --cnv-target-factor-threshold 5 --cnv-merge-threshold 0.4 --cnv-enable-self-normalization false"
 # Auto-populated from bed_names below; list extras here (e.g. PoN files) as basenames.
 additional_files = []
 
