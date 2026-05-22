@@ -144,6 +144,38 @@ def _resolve_sg_canonical_design(sg: SequencingGroup) -> str:
     return canonical.pop()
 
 
+def get_bed_names_for_seqtype() -> dict[str, str]:
+    """Read `[presets.<seqtype>.bed_names]` and return its `{key: basename}` map.
+
+    Empty-string values raise so an un-overridden run halts before ICA
+    submission. Genome runs have no bed_names block by design and return
+    an empty dict.
+    """
+    sequencing_type = config_retrieve(['workflow', 'sequencing_type'])
+    bed_names = config_retrieve(
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type, 'bed_names'],
+        default={},
+    )
+
+    if not bed_names:
+        if sequencing_type == 'exome':
+            raise ValueError(
+                f'[dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names] '
+                f'is missing or empty. Set vc_target, cnv_target, and sv_call_regions '
+                f'in your run config to BED basenames registered in ICA_FILE_IDS.',
+            )
+        return {}
+
+    unset_entries = sorted(key for key, name in bed_names.items() if not str(name).strip())
+    if unset_entries:
+        raise ValueError(
+            f'[dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}.bed_names] '
+            f'is missing values for {unset_entries}. Set each to a BED basename '
+            f'registered in ICA_FILE_IDS.',
+        )
+    return {key: str(name) for key, name in bed_names.items()}
+
+
 def assert_cohort_design_matches_configured_bed(cohort: Cohort) -> None:
     """Hard-fail at stage queuing if the cohort isn't a single exome design
     or the configured bed_names aren't valid for that design.
@@ -178,20 +210,10 @@ def assert_cohort_design_matches_configured_bed(cohort: Cohort) -> None:
             f'update dragen_align_pa.constants.',
         )
 
-    bed_names: dict[str, str] = config_retrieve(
-        ['dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names'],
-        default={},
-    )
-    used_basenames = [
-        str(name).strip() for name in bed_names.values() if str(name).strip()
-    ]
-    if not used_basenames:
-        raise RuntimeError(
-            f'Cohort {cohort.id} resolves to design {cohort_design!r} but '
-            f'[presets.exome.bed_names] has no non-blank entries. Set the BED '
-            f'basenames in your run config.',
-        )
-    outside_design = sorted(set(used_basenames) - valid_beds)
+    # get_bed_names_for_seqtype raises if exome bed_names is missing or has
+    # any unset entries, so by the time we get here the dict is complete.
+    bed_names = get_bed_names_for_seqtype()
+    outside_design = sorted(set(bed_names.values()) - valid_beds)
     if outside_design:
         raise RuntimeError(
             f'Cohort {cohort.id} resolves to design {cohort_design!r}, but '
@@ -200,8 +222,8 @@ def assert_cohort_design_matches_configured_bed(cohort: Cohort) -> None:
             f'{sorted(valid_beds)}. Check the config against the cohort design.',
         )
     logger.info(
-        f'Exome design check passed: cohort {cohort.id} → {cohort_design}, '
-        f'beds {sorted(set(used_basenames))}.',
+        f'Exome design check passed: cohort {cohort.id} -> {cohort_design}, '
+        f'beds {sorted(set(bed_names.values()))}.',
     )
 
 

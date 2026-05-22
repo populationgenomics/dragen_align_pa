@@ -8,6 +8,7 @@ from dragen_align_pa import utils
 from dragen_align_pa.utils import (
     _resolve_sg_canonical_design,
     assert_cohort_design_matches_configured_bed,
+    get_bed_names_for_seqtype,
 )
 
 
@@ -115,13 +116,15 @@ def test_validator_rejects_mixed_designs(monkeypatch):
 
 
 def test_validator_rejects_missing_bed_names(monkeypatch):
-    """All SGs resolve to the same design, but bed_names has no non-blank
-    entries → fail before any submission."""
+    """All SGs resolve to the same design, but bed_names has no non-empty
+    entries. get_bed_names_for_seqtype raises ValueError before the validator
+    gets a chance to do its own checks; that surfaces to the operator with the
+    actionable "is missing values for [...]" message."""
     monkeypatch.setattr(utils, 'config_retrieve', _config_factory(
         bed_names={'vc_target': '', 'cnv_target': '', 'sv_call_regions': ''},
     ))
     cohort = _FakeCohort(id='COH0001', sgs=[_make_sg('CPG_A', 'SSQXTCREV2')])
-    with pytest.raises(RuntimeError, match='no non-blank entries'):
+    with pytest.raises(ValueError, match='is missing values for'):
         assert_cohort_design_matches_configured_bed(cohort)  # type: ignore[arg-type]
 
 
@@ -158,3 +161,46 @@ def test_validator_happy_path_twist(monkeypatch):
     }))
     cohort = _FakeCohort(id='COH0001', sgs=[_make_sg('CPG_A', 'TwistWES1VCGS1')])
     assert_cohort_design_matches_configured_bed(cohort)  # type: ignore[arg-type]
+
+
+# ----- get_bed_names_for_seqtype -----
+
+def test_get_bed_names_returns_empty_for_genome(monkeypatch):
+    """Genome runs have no bed_names block by design; return {} cleanly."""
+    monkeypatch.setattr(utils, 'config_retrieve', _config_factory(sequencing_type='genome'))
+    assert get_bed_names_for_seqtype() == {}
+
+
+def test_get_bed_names_raises_for_exome_with_no_block(monkeypatch):
+    """Exome runs require a populated bed_names block; missing or empty
+    block raises before any ICA submission."""
+    monkeypatch.setattr(utils, 'config_retrieve', _config_factory(sequencing_type='exome'))
+    with pytest.raises(ValueError, match='is missing or empty'):
+        get_bed_names_for_seqtype()
+
+
+def test_get_bed_names_rejects_partially_empty_values(monkeypatch):
+    """Some entries set, some empty -> raise naming only the unset ones.
+    This is what the function move is designed to catch."""
+    monkeypatch.setattr(utils, 'config_retrieve', _config_factory(
+        sequencing_type='exome',
+        bed_names={'vc_target': 'covered.bed', 'cnv_target': '', 'sv_call_regions': '  '},
+    ))
+    with pytest.raises(ValueError, match=r"\['cnv_target', 'sv_call_regions'\]"):
+        get_bed_names_for_seqtype()
+
+
+def test_get_bed_names_returns_populated_dict(monkeypatch):
+    monkeypatch.setattr(utils, 'config_retrieve', _config_factory(
+        sequencing_type='exome',
+        bed_names={
+            'vc_target': 'covered.bed',
+            'cnv_target': 'regions.bed',
+            'sv_call_regions': 'regions.bed',
+        },
+    ))
+    assert get_bed_names_for_seqtype() == {
+        'vc_target': 'covered.bed',
+        'cnv_target': 'regions.bed',
+        'sv_call_regions': 'regions.bed',
+    }

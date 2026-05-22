@@ -25,6 +25,7 @@ from loguru import logger
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.batches import IcaBatch, validate_error_strategy
 from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_file_id
+from dragen_align_pa.utils import get_bed_names_for_seqtype
 
 # DRAGEN flags that don't depend on input type (CRAM vs FASTQ) or sequencing type (WGS vs WES).
 # Sourced from the production CRAM-mode preset in the legacy submitter — anything WGS/WES-divergent
@@ -52,29 +53,6 @@ _COMMON_ADDITIONAL_ARGS = (
 _PRESET_PLACEHOLDER_RE = re.compile(r'<[a-zA-Z][a-zA-Z0-9_-]*>')
 
 _MAX_COVERAGE_REGION_BEDS = 3
-
-
-def _get_bed_names_for_seqtype() -> dict[str, str]:
-    """Read `[presets.<seqtype>.bed_names]` and return its `{key: basename}` map.
-
-    Empty-string values raise — defaults.toml ships them empty as fail-fast
-    markers so an un-overridden run halts before ICA submission.
-    """
-    sequencing_type = config_retrieve(['workflow', 'sequencing_type'])
-    bed_names = config_retrieve(
-        ['dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type, 'bed_names'],
-        default={},
-    )
-    if not bed_names:
-        return {}
-    unset_entries = sorted(key for key, name in bed_names.items() if not str(name).strip())
-    if unset_entries:
-        raise ValueError(
-            f'[dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}.bed_names] '
-            f'is missing values for {unset_entries}. Set each to a BED basename '
-            f'registered in ICA_FILE_IDS.',
-        )
-    return {key: str(name) for key, name in bed_names.items()}
 
 
 def _build_additional_args() -> str:
@@ -114,7 +92,7 @@ def _build_additional_args() -> str:
 
     # Substitute {...} tokens from [presets.<seqtype>.bed_names] entries.
     # KeyError means args references a token that bed_names doesn't define.
-    bed_names = _get_bed_names_for_seqtype()
+    bed_names = get_bed_names_for_seqtype()
     try:
         preset_args = preset_args.format(**bed_names)
         user_args = user_args.format(**bed_names)
@@ -427,7 +405,7 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     user_files = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'], default=[])
     # additional_files entries are BED basenames, resolved via ICA_FILE_IDS.
     # bed_names values are added too so the operator names a BED once.
-    bed_name_files = list(_get_bed_names_for_seqtype().values())
+    bed_name_files = list(get_bed_names_for_seqtype().values())
     additional_file_names: list[str] = list(
         dict.fromkeys(list(preset_files) + list(user_files) + bed_name_files)
     )

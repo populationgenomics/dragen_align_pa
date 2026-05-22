@@ -33,7 +33,6 @@ _TODO_FID: Final = f'{_TODO_FID_PREFIX}REPLACE_AFTER_ICA_UPLOAD'
 # under the same name-based contract, add them here too.
 ICA_FILE_IDS: Final[dict[str, str]] = {
     'Twist_VCGS_Exome_Covered_Targets_hg38.bed': _TODO_FID,
-    'S06588914_Regions_hg38.bed': _TODO_FID,
     'S30409818_Regions.bed': _TODO_FID,
     'S30409818_Covered.bed': _TODO_FID,
 }
@@ -47,7 +46,7 @@ CANONICAL_DESIGNS: Final = frozenset({CANONICAL_DESIGN_CRE, CANONICAL_DESIGN_CRE
 
 # Exact-match map from metamist assay.meta['sequencing_library'] values to
 # canonical designs. Populate as new values are encountered in metamist. Exact
-# match (rather than substring) avoids prefix collisions like SSQXTCRE ⊂ SSQXTCREV2.
+# match (not substring) avoids prefix collisions like SSQXTCRE being a prefix of SSQXTCREV2.
 DESIGN_TO_CANONICAL: Final[dict[str, str]] = {
     'SSQXTCRE': CANONICAL_DESIGN_CRE,
     'SSQXTCREV2': CANONICAL_DESIGN_CREV2,
@@ -60,8 +59,11 @@ DESIGN_TO_CANONICAL: Final[dict[str, str]] = {
 # in utils.assert_cohort_design_matches_configured_bed uses this to check that
 # the basenames named in [presets.exome.bed_names] match the cohort's resolved
 # design. All entries must also be registered in ICA_FILE_IDS above.
+# CRE (v1) intentionally has no entry: Agilent doesn't distribute a Regions
+# BED for CRE, and the Covered BED hasn't been uploaded yet. A CRE cohort run
+# will fail at the validator with "No DESIGN_TO_BEDS entry for design 'CRE'"
+# until the Covered BED is registered.
 DESIGN_TO_BEDS: Final[dict[str, frozenset[str]]] = {
-    CANONICAL_DESIGN_CRE: frozenset({'S06588914_Regions_hg38.bed'}),
     CANONICAL_DESIGN_CREV2: frozenset({'S30409818_Regions.bed', 'S30409818_Covered.bed'}),
     CANONICAL_DESIGN_TWIST: frozenset({'Twist_VCGS_Exome_Covered_Targets_hg38.bed'}),
 }
