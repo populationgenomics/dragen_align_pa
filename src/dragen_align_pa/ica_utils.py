@@ -37,7 +37,7 @@ def create_upload_object_id(
         api_instance (project_data_api.ProjectDataApi): An instance of the ProjectDataApi
         path_params (dict[str, str]): A dict with the projectId
         sg_name (str): The name of the sequencing group
-        file_name (str): The name of the file to upload e.g. CPGxxxx.CRAM
+        file_name (str): The name of the file to upload e.g. SYNxxxx.CRAM
         folder_path (str): The base path to the object in ICA to create
         object_type (str): The type of the object to create. Must be one of ['FILE', 'FOLDER']
 
