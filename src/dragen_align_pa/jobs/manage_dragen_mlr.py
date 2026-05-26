@@ -3,7 +3,7 @@ import os
 import subprocess
 from collections.abc import Callable
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
 import cpg_utils
 from cpg_flow.targets import Cohort
@@ -13,6 +13,7 @@ from loguru import logger
 from dragen_align_pa import ica_cli_utils, utils
 from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
+from dragen_align_pa.utils import load_manifest
 
 
 def _mlr_enter_project(mlr_project: str) -> None:
@@ -182,12 +183,17 @@ def _submit_mlr_run(
 
 def run(
     cohort: Cohort,
-    pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path],
-    outputs: dict[str, cpg_utils.Path],
+    manifest_path: cpg_utils.Path,
 ) -> None:
     """
     Calls the generic pipeline manager with settings for the MLR pipeline.
     """
+    manifest = load_manifest(manifest_path)
+    outputs = cast('dict[str, cpg_utils.Path]', manifest['outputs'])
+    pipeline_id_arguid_path_dict = cast(
+        'dict[str, cpg_utils.Path]',
+        manifest['pipeline_id_arguid_path_dict'],
+    )
     ica_analysis_output_folder: str = config_retrieve(
         ['ica', 'data_prep', 'output_folder'],
     )

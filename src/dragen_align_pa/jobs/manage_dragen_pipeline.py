@@ -1,11 +1,13 @@
 from collections.abc import Callable
 from functools import partial
+from typing import cast
 
 import cpg_utils
 from cpg_flow.targets import Cohort
 
 from dragen_align_pa.jobs import run_align_genotype_with_dragen
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
+from dragen_align_pa.utils import load_manifest
 
 
 def _submit_new_ica_pipeline(
@@ -27,15 +29,22 @@ def _submit_new_ica_pipeline(
 
 def run(
     cohort: Cohort,
-    outputs: dict[str, cpg_utils.Path],
-    cram_ica_fids_path: dict[str, cpg_utils.Path] | None,
-    analysis_output_fids_path: dict[str, cpg_utils.Path],
-    fastq_ids_path: cpg_utils.Path | None,
-    fastq_list_fid_and_filenames_path: dict[str, cpg_utils.Path] | None,
+    manifest_path: cpg_utils.Path,
 ) -> None:
     """
     Calls the generic pipeline manager with settings for the main Dragen pipeline.
     """
+    manifest = load_manifest(manifest_path)
+    # cast narrows the generic ManifestEntry union back to each value's known
+    # shape — write_manifest at the dispatcher is the schema source of truth.
+    outputs = cast('dict[str, cpg_utils.Path]', manifest['outputs'])
+    cram_ica_fids_path = cast('dict[str, cpg_utils.Path] | None', manifest['cram_ica_fids_path'])
+    analysis_output_fids_path = cast('dict[str, cpg_utils.Path]', manifest['analysis_output_fids_path'])
+    fastq_ids_path = cast('cpg_utils.Path | None', manifest['fastq_ids_path'])
+    fastq_list_fid_and_filenames_path = cast(
+        'dict[str, cpg_utils.Path] | None',
+        manifest['fastq_list_fid_and_filenames_path'],
+    )
 
     def _create_submit_callable(sg_name: str) -> Callable[[], str]:
         """Creates a zero-argument callable for pipeline submission."""

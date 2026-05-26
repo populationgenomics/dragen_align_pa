@@ -57,7 +57,7 @@ def somalier_extract(
         }
     )
 
-    declared_output_file = somalier_job.somalier_output.somalier_file
+    declared_output_file = somalier_job.somalier_output.somalier_file  # type: ignore[attr-defined]
 
     somalier_job.command(
         f"""

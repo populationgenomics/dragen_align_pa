@@ -44,6 +44,7 @@ from dragen_align_pa.utils import (
     get_prep_path,
     get_qc_path,
     initialise_python_job,
+    write_manifest,
 )
 
 if TYPE_CHECKING:
@@ -357,21 +358,36 @@ class ManageDragenPipeline(CohortStage):
             target=cohort, stage=PrepareIcaForDragenAnalysis
         )
 
+        # Collapse all per-SG path dicts into one tmp manifest so the PythonJob
+        # spec stays under Hail Batch's 1 MiB cap regardless of cohort size.
+        # See utils.write_manifest for the rationale.
+        manifest_path: cpg_utils.Path = get_output_path(
+            filename=f'manifests/{cohort.name}_manage_dragen_pipeline_manifest.json',
+            category='tmp',
+        )
+        write_manifest(
+            manifest_path=manifest_path,
+            payload={
+                'outputs': outputs,
+                'cram_ica_fids_path': cram_ica_fids_path,
+                'analysis_output_fids_path': analysis_output_fids_path,
+                'fastq_ids_path': fastq_ids_path,
+                'fastq_list_fid_and_filenames_path': fastq_list_fid_and_filenames_path,
+            },
+        )
+
         job: PythonJob = initialise_python_job(
             job_name=f'Manage Dragen pipeline runs for cohort: {cohort.name}',
             target=cohort,
             tool_name='Dragen',
         )
         job.image(image=get_driver_image())
+        job.spot(is_spot=False)
 
         job.call(
             manage_dragen_pipeline.run,
             cohort=cohort,
-            outputs=outputs,
-            cram_ica_fids_path=cram_ica_fids_path,
-            fastq_ids_path=fastq_ids_path,
-            fastq_list_fid_and_filenames_path=fastq_list_fid_and_filenames_path,
-            analysis_output_fids_path=analysis_output_fids_path,
+            manifest_path=manifest_path,
         )
 
         return self.make_outputs(
@@ -407,18 +423,30 @@ class ManageDragenMlr(CohortStage):
             stage=ManageDragenPipeline,
         )
 
+        manifest_path: cpg_utils.Path = get_output_path(
+            filename=f'manifests/{cohort.name}_manage_dragen_mlr_manifest.json',
+            category='tmp',
+        )
+        write_manifest(
+            manifest_path=manifest_path,
+            payload={
+                'outputs': outputs,
+                'pipeline_id_arguid_path_dict': pipeline_id_arguid_path_dict,
+            },
+        )
+
         job: PythonJob = initialise_python_job(
             job_name='MlrWithDragen',
             target=cohort,
             tool_name='ICA',
         )
         job.image(image=get_driver_image())
+        job.spot(is_spot=False)
 
         job.call(
             manage_dragen_mlr.run,
             cohort=cohort,
-            pipeline_id_arguid_path_dict=pipeline_id_arguid_path_dict,
-            outputs=outputs,
+            manifest_path=manifest_path,
         )
 
         return self.make_outputs(target=cohort, data=outputs, jobs=job)  # pyright: ignore[reportArgumentType]

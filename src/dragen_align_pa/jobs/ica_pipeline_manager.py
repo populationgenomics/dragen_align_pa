@@ -132,14 +132,14 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                                 f'for {target.name}.'
                             )
                 except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f"Could not read AR GUID from {pipeline_id_arguid_file}: {e}.")
+                    logger.warning(f'Could not read AR GUID from {pipeline_id_arguid_file}: {e}.')
 
                 pipeline_id_arguid_file.unlink()
-                logger.info(f"Deleted existing pipeline ID file: {pipeline_id_arguid_file}")
+                logger.info(f'Deleted existing pipeline ID file: {pipeline_id_arguid_file}')
 
             if pipeline_success_file.exists():
                 pipeline_success_file.unlink()
-                logger.info(f"Deleted existing success file: {pipeline_success_file}")
+                logger.info(f'Deleted existing success file: {pipeline_success_file}')
 
             # Set the ar_guid on the target object to be used for the new submission
             target.ar_guid = preserved_ar_guid_for_target
@@ -152,9 +152,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
             if is_finished(target):
                 continue
             target_name = target.name
-            pipeline_id_arguid_file = outputs[
-                pipeline_id_file_key_template.format(target_name=target_name)
-            ]
+            pipeline_id_arguid_file = outputs[pipeline_id_file_key_template.format(target_name=target_name)]
 
             if pipeline_id_arguid_file.exists() and not target.pipeline_id:
                 with pipeline_id_arguid_file.open('r') as pipeline_fid_handle:
@@ -199,9 +197,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                 elif pipeline_status == 'SUCCEEDED':
                     target.set_status(new_status=PipelineStatus.SUCCEEDED)
                     logger.info(f'{pipeline_name} pipeline {target.pipeline_id} has succeeded for {target_name}')
-                    pipeline_success_file = outputs[
-                        success_file_key_template.format(target_name=target_name)
-                    ]
+                    pipeline_success_file = outputs[success_file_key_template.format(target_name=target_name)]
                     with pipeline_success_file.open('w') as success_file:
                         success_file.write(
                             f'ICA {pipeline_name} pipeline {target.pipeline_id} has succeeded for {target_name}.'
