@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 import cpg_utils
 import pandas as pd
-from cpg_utils.config import config_retrieve, try_get_ar_guid
+from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_analysis_api
 from icasdk.model.analysis_data_input import AnalysisDataInput
 from icasdk.model.analysis_parameter_input import AnalysisParameterInput
@@ -189,6 +189,7 @@ def submit_dragen_run(
     ica_output_folder_id: str,
     api_instance: project_analysis_api.ProjectAnalysisApi,
     sg_name: str,
+    ar_guid: str,
 ) -> str:
     """Submit a Dragen alignment and genotyping run to ICA"""
     dragen_ht_id: str = config_retrieve(['ica', 'pipelines', 'dragen_ht_id'])
@@ -201,7 +202,7 @@ def submit_dragen_run(
     user_tags: list[str] = config_retrieve(['ica', 'tags', 'user_tags'])
     technical_tags: list[str] = config_retrieve(['ica', 'tags', 'technical_tags'])
     reference_tags: list[str] = config_retrieve(['ica', 'tags', 'reference_tags'])
-    user_reference: str = f'{sg_name}_{try_get_ar_guid()}_'
+    user_reference: str = f'{sg_name}_{ar_guid}_'
 
     logger.info(
         f'Loaded Dragen ICA configuration values, user reference: {user_reference}',
@@ -271,6 +272,7 @@ def run(
     fastq_ids_path: cpg_utils.Path | None,
     analysis_output_fid_path: cpg_utils.Path,
     sg_name: str,
+    ar_guid: str,
 ) -> str:
     """
     Main entrypoint for the PythonJob.
@@ -309,6 +311,7 @@ def run(
             project_id=path_params,
             api_instance=api_instance,
             sg_name=sg_name,
+            ar_guid=ar_guid,
         )
 
         logger.info(f'Submitted ICA run with pipeline ID: {analysis_run_id}')
