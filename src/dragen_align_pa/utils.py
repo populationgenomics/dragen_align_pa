@@ -3,7 +3,7 @@ import re
 import subprocess
 from collections.abc import Mapping
 from math import ceil
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import cpg_utils
 from cloudpathlib.exceptions import NoStatError
@@ -96,7 +96,7 @@ def run_subprocess_with_log(
         raise
 
 
-ManifestEntry = dict[str, cpg_utils.Path] | cpg_utils.Path | None
+ManifestEntry: TypeAlias = dict[str, cpg_utils.Path] | cpg_utils.Path | None
 
 
 def write_manifest(manifest_path: cpg_utils.Path, payload: Mapping[str, ManifestEntry]) -> None:

@@ -19,7 +19,7 @@ repos:
     # Ruff version.
     rev: v0.15.0
     hooks:
-      - id: ruff
+      - id: ruff-check
 
   # Static type analysis (as much as it's possible in python using type hints)
   - repo: https://github.com/pre-commit/mirrors-mypy
