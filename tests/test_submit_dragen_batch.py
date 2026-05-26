@@ -9,15 +9,23 @@ from dragen_align_pa.jobs import submit_dragen_batch
 from dragen_align_pa.jobs.submit_dragen_batch import _MAX_COVERAGE_REGION_BEDS
 
 
-def _config_factory(sequencing_type='genome', preset_args='', user_args='', bed_names=None):
+def _config_factory(
+    sequencing_type='genome',
+    preset_args='',
+    user_args='',
+    bed_names=None,
+    vc_target_bed_padding=0,
+):
     """Returns a fake `config_retrieve` that exposes the bits `_build_additional_args` needs."""
+    preset = {
+        'cnv_segmentation_mode': 'SLM' if sequencing_type == 'genome' else 'HSLM',
+        'additional_args': preset_args,
+        'additional_files': [],
+        'vc_target_bed_padding': vc_target_bed_padding,
+    }
     cfg = {
         ('workflow', 'sequencing_type'): sequencing_type,
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type): {
-            'cnv_segmentation_mode': 'SLM' if sequencing_type == 'genome' else 'HSLM',
-            'additional_args': preset_args,
-            'additional_files': [],
-        },
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type): preset,
         ('dragen_align_pa', 'manage_dragen_pipeline', 'user'): {'additional_args': user_args, 'additional_files': []},
     }
     if bed_names is not None:
@@ -80,6 +88,23 @@ def test_build_additional_args_user_appended_last(monkeypatch):
     result = submit_dragen_batch._build_additional_args()
     # User args appended *after* preset args.
     assert result.index('--cnv-enable-self-normalization') < result.index('--foo bar')
+
+
+def test_build_additional_args_omits_vc_padding_when_zero(monkeypatch):
+    """vc_target_bed_padding = 0 must NOT emit the flag. Stock-config runs
+    pass nothing to DRAGEN's --vc-target-bed-padding (which it would
+    treat as 0 anyway, but Alex asked for the flag to be absent)."""
+    monkeypatch.setattr(submit_dragen_batch, 'config_retrieve', _config_factory(vc_target_bed_padding=0))
+    result = submit_dragen_batch._build_additional_args()
+    assert '--vc-target-bed-padding' not in result
+
+
+def test_build_additional_args_emits_vc_padding_when_nonzero(monkeypatch):
+    """A per-cohort override that sets vc_target_bed_padding to N>0 must
+    add `--vc-target-bed-padding N` to the args (e.g. Twist runs with 50)."""
+    monkeypatch.setattr(submit_dragen_batch, 'config_retrieve', _config_factory(vc_target_bed_padding=50))
+    result = submit_dragen_batch._build_additional_args()
+    assert '--vc-target-bed-padding 50' in result
 
 
 def test_build_additional_args_rejects_placeholder(monkeypatch):

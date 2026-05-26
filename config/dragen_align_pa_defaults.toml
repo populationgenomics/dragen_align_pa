@@ -94,6 +94,11 @@ additional_files = []
 # values here are fail-fast markers that halt the run before ICA submission.
 [dragen_align_pa.manage_dragen_pipeline.presets.exome]
 cnv_segmentation_mode = "HSLM"
+# Bases added on either side of vc_target for variant calling. Maps to DRAGEN's
+# --vc-target-bed-padding flag; only affects the small variant caller (CNV and
+# SV have no DRAGEN padding flag). Set to 0 to omit the flag entirely;
+# override per-cohort if you want padding (e.g. 50 for Twist).
+vc_target_bed_padding = 0
 additional_args = "--sv-exome true --sv-call-regions-bed {sv_call_regions} --vc-target-bed {vc_target} --cnv-target-bed {cnv_target} --cnv-target-factor-threshold 5 --cnv-merge-threshold 0.4 --cnv-enable-self-normalization false"
 # Auto-populated from bed_names below; list extras here (e.g. PoN files) as basenames.
 additional_files = []

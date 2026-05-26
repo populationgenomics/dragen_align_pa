@@ -119,9 +119,15 @@ def _build_additional_args() -> str:
                 f'Fill them in your config before running.',
             )
 
+    # Optional per-preset VC target BED padding. Omit the flag when 0 so a
+    # stock-config run doesn't pass --vc-target-bed-padding 0 to DRAGEN.
+    vc_padding = int(preset.get('vc_target_bed_padding', 0))
+    vc_padding_arg = f'--vc-target-bed-padding {vc_padding}' if vc_padding > 0 else ''
+
     parts = [
         _COMMON_ADDITIONAL_ARGS.strip(),
         f"--cnv-segmentation-mode {preset['cnv_segmentation_mode']}",
+        vc_padding_arg,
         preset_args,
         user_args,
     ]
