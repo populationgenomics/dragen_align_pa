@@ -160,9 +160,9 @@ def get_bed_names_for_seqtype() -> dict[str, str]:
     if not bed_names:
         if sequencing_type == 'exome':
             raise ValueError(
-                f'[dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names] '
-                f'is missing or empty. Set vc_target, cnv_target, and sv_call_regions '
-                f'in your run config to BED basenames registered in ICA_FILE_IDS.',
+                '[dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names] '
+                'is missing or empty. Set vc_target, cnv_target, and sv_call_regions '
+                'in your run config to BED basenames registered in ICA_FILE_IDS.',
             )
         return {}
 
