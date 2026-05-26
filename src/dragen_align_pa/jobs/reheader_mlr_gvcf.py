@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from cpg_utils.config import image_path
 from cpg_utils.hail_batch import Batch, get_batch
@@ -36,7 +36,9 @@ def reheader_mlr_gvcf(
         }
     )
 
-    reheadered_gvcf_outputs = job.reheadered_gvcf
+    # mypy 1.19 narrows job.<resource_group_name> to the base Resource type,
+    # which isn't statically indexable; the runtime object is a ResourceGroup.
+    reheadered_gvcf_outputs: Any = job.reheadered_gvcf
 
     job.command(
         f"""
