@@ -1,5 +1,7 @@
+import json
 import re
 import subprocess
+from collections.abc import Mapping
 from math import ceil
 from typing import TYPE_CHECKING, Any
 
@@ -92,6 +94,45 @@ def run_subprocess_with_log(
         logger.error(f'STDOUT: {e.stdout}')
         logger.error(f'STDERR: {e.stderr}')
         raise
+
+
+ManifestEntry = dict[str, cpg_utils.Path] | cpg_utils.Path | None
+
+
+def write_manifest(manifest_path: cpg_utils.Path, payload: Mapping[str, ManifestEntry]) -> None:
+    """Persist a flat dict of per-SG path dicts (and optional scalars) to JSON on GCS.
+
+    Hail Batch caps each PythonJob spec at 1 MiB and serializes path arguments
+    inline. With ~4N paths per cohort this overflowed at ~2.2k sequencing groups;
+    threading a single manifest path through job.call() instead keeps spec growth
+    O(1) regardless of cohort size.
+
+    Each top-level value must be one of: dict[str, Path], Path, or None — the
+    only shapes the dispatcher needs to pass through to a worker.
+    """
+
+    def _encode(v: ManifestEntry) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, dict):
+            return {k: str(p) for k, p in v.items()}
+        return str(v)
+
+    manifest_path.write_text(json.dumps({k: _encode(v) for k, v in payload.items()}))
+
+
+def load_manifest(manifest_path: cpg_utils.Path) -> dict[str, ManifestEntry]:
+    """Worker-side inverse of write_manifest()."""
+
+    def _decode(v: Any) -> ManifestEntry:
+        if v is None:
+            return None
+        if isinstance(v, dict):
+            return {k: cpg_utils.to_path(p) for k, p in v.items()}
+        return cpg_utils.to_path(v)
+
+    raw: dict[str, Any] = json.loads(manifest_path.read_text())
+    return {k: _decode(v) for k, v in raw.items()}
 
 
 def initialise_python_job(
