@@ -10,6 +10,10 @@ skip_stages = ['DeleteDataInIca']
 # Can be fastq or CRAM, depending on the source of the reads for alignment
 reads_type = "fastq"
 
+# Set to false to skip the DRAGEN CYP2D6 pharmacogenomics caller.
+# Default true matches the historical pipeline configuration.
+enable_cyp2d6 = true
+
 # used to make sure we don't repeat previously completed stages
 check_expected_outputs = true
 
