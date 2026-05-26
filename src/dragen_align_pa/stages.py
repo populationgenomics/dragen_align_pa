@@ -323,6 +323,7 @@ class ManageDragenPipeline(CohortStage):
             tool_name='Dragen',
         )
         job.image(image=get_driver_image())
+        job.spot(is_spot=False)
 
         job.call(
             manage_dragen_pipeline.run,
@@ -371,6 +372,7 @@ class ManageDragenMlr(CohortStage):
             tool_name='ICA',
         )
         job.image(image=get_driver_image())
+        job.spot(is_spot=False)
 
         job.call(
             manage_dragen_mlr.run,
