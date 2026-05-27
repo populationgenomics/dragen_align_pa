@@ -3,27 +3,53 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
+from dragen_align_pa import utils
 from dragen_align_pa.batches import IcaBatch
 from dragen_align_pa.jobs import submit_dragen_batch
 from dragen_align_pa.jobs.submit_dragen_batch import _MAX_COVERAGE_REGION_BEDS
 
 
-def _config_factory(sequencing_type='genome', preset_args='', user_args=''):
+def _config_factory(
+    sequencing_type='genome',
+    preset_args='',
+    user_args='',
+    bed_names=None,
+    vc_target_bed_padding=0,
+    enable_cyp2d6=None,
+):
     """Returns a fake `config_retrieve` that exposes the bits `_build_additional_args` needs."""
+    preset = {
+        'cnv_segmentation_mode': 'SLM' if sequencing_type == 'genome' else 'HSLM',
+        'additional_args': preset_args,
+        'additional_files': [],
+        'vc_target_bed_padding': vc_target_bed_padding,
+    }
     cfg = {
         ('workflow', 'sequencing_type'): sequencing_type,
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type): {
-            'cnv_segmentation_mode': 'SLM' if sequencing_type == 'genome' else 'HSLM',
-            'additional_args': preset_args,
-            'additional_files': [],
-        },
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type): preset,
         ('dragen_align_pa', 'manage_dragen_pipeline', 'user'): {'additional_args': user_args, 'additional_files': []},
     }
+    if bed_names is not None:
+        cfg[('dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type, 'bed_names')] = bed_names
+    if enable_cyp2d6 is not None:
+        cfg[('dragen_align_pa', 'manage_dragen_pipeline', 'enable_cyp2d6')] = enable_cyp2d6
 
     def fake_retrieve(key, default=None):
         return cfg.get(tuple(key), default)
 
     return fake_retrieve
+
+
+def _patch_config(monkeypatch, fake) -> None:
+    """Patch config_retrieve on both modules that look it up.
+
+    _build_additional_args / _build_common_data_inputs read config_retrieve
+    from submit_dragen_batch's namespace; the call to get_bed_names_for_seqtype
+    they make then reads config_retrieve from utils's namespace. Tests have
+    to patch both for the fake config to take effect end-to-end.
+    """
+    monkeypatch.setattr(submit_dragen_batch, 'config_retrieve', fake)
+    monkeypatch.setattr(utils, 'config_retrieve', fake)
 
 
 def test_build_additional_args_genome(monkeypatch):
@@ -51,10 +77,25 @@ def test_build_additional_args_includes_hardcoded_common(monkeypatch):
         '--vc-enable-vcf-output false',
         '--enable-map-align-output true',
         '--enable-duplicate-marking true',
-        '--enable-cyp2d6 true',
         '--repeat-genotype-enable true',
     ):
         assert required_flag in result, f'Missing required hardcoded flag: {required_flag!r}'
+
+
+def test_build_additional_args_cyp2d6_default_on(monkeypatch):
+    """No config entry => caller stays on (DRAGEN's own default is off, so omission would silently disable it)."""
+    monkeypatch.setattr(submit_dragen_batch, 'config_retrieve', _config_factory())
+    result = submit_dragen_batch._build_additional_args()
+    assert '--enable-cyp2d6 true' in result
+
+
+def test_build_additional_args_cyp2d6_explicit_false(monkeypatch):
+    monkeypatch.setattr(
+        submit_dragen_batch, 'config_retrieve', _config_factory(enable_cyp2d6=False),
+    )
+    result = submit_dragen_batch._build_additional_args()
+    assert '--enable-cyp2d6 false' in result
+    assert '--enable-cyp2d6 true' not in result
 
 
 def test_build_additional_args_user_appended_last(monkeypatch):
@@ -67,13 +108,125 @@ def test_build_additional_args_user_appended_last(monkeypatch):
     assert result.index('--cnv-enable-self-normalization') < result.index('--foo bar')
 
 
+def test_build_additional_args_omits_vc_padding_when_zero(monkeypatch):
+    """vc_target_bed_padding = 0 must NOT emit the flag. Stock-config runs
+    pass nothing to DRAGEN's --vc-target-bed-padding (which it would
+    treat as 0 anyway, but Alex asked for the flag to be absent)."""
+    monkeypatch.setattr(submit_dragen_batch, 'config_retrieve', _config_factory(vc_target_bed_padding=0))
+    result = submit_dragen_batch._build_additional_args()
+    assert '--vc-target-bed-padding' not in result
+
+
+def test_build_additional_args_emits_vc_padding_when_nonzero(monkeypatch):
+    """A per-cohort override that sets vc_target_bed_padding to N>0 must
+    add `--vc-target-bed-padding N` to the args (e.g. Twist runs with 50)."""
+    monkeypatch.setattr(submit_dragen_batch, 'config_retrieve', _config_factory(vc_target_bed_padding=50))
+    result = submit_dragen_batch._build_additional_args()
+    assert '--vc-target-bed-padding 50' in result
+
+
 def test_build_additional_args_rejects_placeholder(monkeypatch):
-    monkeypatch.setattr(
-        submit_dragen_batch, 'config_retrieve',
-        _config_factory(sequencing_type='exome', preset_args='--sv-call-regions-bed <bed-name>'),
-    )
+    _patch_config(monkeypatch, _config_factory(
+        sequencing_type='exome',
+        preset_args='--sv-call-regions-bed <bed-name>',
+        # Populate bed_names so get_bed_names_for_seqtype doesn't raise first;
+        # we want to reach the legacy `<…>` sentinel check.
+        bed_names={
+            'vc_target': 'covered.bed',
+            'cnv_target': 'regions.bed',
+            'sv_call_regions': 'regions.bed',
+        },
+    ))
     with pytest.raises(ValueError, match='placeholder'):
         submit_dragen_batch._build_additional_args()
+
+
+def test_build_additional_args_substitutes_bed_name_tokens(monkeypatch):
+    _patch_config(monkeypatch, _config_factory(
+        sequencing_type='exome',
+        preset_args=(
+            '--vc-target-bed {vc_target} '
+            '--cnv-target-bed {cnv_target} '
+            '--sv-call-regions-bed {sv_call_regions}'
+        ),
+        bed_names={
+            'vc_target': 'covered.bed',
+            'cnv_target': 'regions.bed',
+            'sv_call_regions': 'regions.bed',
+        },
+    ))
+    result = submit_dragen_batch._build_additional_args()
+    assert '--vc-target-bed covered.bed' in result
+    assert '--cnv-target-bed regions.bed' in result
+    assert '--sv-call-regions-bed regions.bed' in result
+    # No leftover `{...}` tokens.
+    assert '{' not in result
+
+
+def test_build_additional_args_rejects_unknown_token(monkeypatch):
+    """An args string with a {...} token that bed_names doesn't define must
+    fail fast naming the token and listing the configured entries."""
+    _patch_config(monkeypatch, _config_factory(
+        sequencing_type='exome',
+        preset_args='--vc-target-bed {unknown_entry}',
+        bed_names={
+            'vc_target': 'covered.bed',
+            'cnv_target': 'regions.bed',
+            'sv_call_regions': 'regions.bed',
+        },
+    ))
+    with pytest.raises(ValueError, match=r"\{unknown_entry\}"):
+        submit_dragen_batch._build_additional_args()
+
+
+def test_build_common_data_inputs_adds_bed_names_to_additional_files(monkeypatch):
+    """bed_names basenames are added to additional_files (resolved via
+    ICA_FILE_IDS) and deduped against preset entries. Twist case: a
+    basename used by multiple bed_names entries appears only once."""
+    _stub_registry(monkeypatch, {
+        'covered.bed': 'fil.covered',
+        'regions.bed': 'fil.regions',
+        'pon.bed': 'fil.pon',
+    })
+    cfg = {
+        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
+        ('ica', 'qc', 'coverage_region_beds'): [],
+        ('ica', 'qc', 'cross_cont_vcf'): None,
+        ('workflow', 'sequencing_type'): 'exome',
+        # preset.additional_files lists an extra (e.g. PoN) not present in bed_names.
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'additional_files'): ['pon.bed'],
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
+        # Three entries, two distinct basenames -- dedupe should collapse.
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names'): {
+            'vc_target': 'covered.bed',
+            'cnv_target': 'regions.bed',
+            'sv_call_regions': 'regions.bed',
+        },
+    }
+    _patch_config(monkeypatch, lambda key, default=None: cfg.get(tuple(key), default))
+    inputs = submit_dragen_batch._build_common_data_inputs()
+    additional = [i for i in inputs if i['parameterCode'] == 'additional_files']
+    assert len(additional) == 1
+    # Order: preset first, then bed_names in iteration order; deduped.
+    assert list(additional[0]['dataIds']) == ['fil.pon', 'fil.covered', 'fil.regions']
+
+
+def test_build_common_data_inputs_resolves_user_additional_files(monkeypatch):
+    """user.additional_files entries are also basenames that must resolve."""
+    _stub_registry(monkeypatch, {'user_extra.bed': 'fil.user_extra'})
+    cfg = {
+        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
+        ('ica', 'qc', 'coverage_region_beds'): [],
+        ('ica', 'qc', 'cross_cont_vcf'): None,
+        ('workflow', 'sequencing_type'): 'genome',
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): ['user_extra.bed'],
+    }
+    _patch_config(monkeypatch, lambda key, default=None: cfg.get(tuple(key), default))
+    inputs = submit_dragen_batch._build_common_data_inputs()
+    additional = [i for i in inputs if i['parameterCode'] == 'additional_files']
+    assert len(additional) == 1
+    assert list(additional[0]['dataIds']) == ['fil.user_extra']
 
 
 def test_build_additional_args_does_not_flag_common_args_with_future_lt_tokens(monkeypatch):

@@ -25,6 +25,7 @@ from loguru import logger
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.batches import IcaBatch, validate_error_strategy
 from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_file_id
+from dragen_align_pa.utils import get_bed_names_for_seqtype
 
 # DRAGEN flags that don't depend on input type (CRAM vs FASTQ) or sequencing type (WGS vs WES).
 # Sourced from the production CRAM-mode preset in the legacy submitter — anything WGS/WES-divergent
@@ -44,7 +45,6 @@ _COMMON_ADDITIONAL_ARGS = (
     '--vc-enable-vcf-output false '
     '--enable-map-align-output true '
     '--enable-duplicate-marking true '
-    '--enable-cyp2d6 true '
     '--repeat-genotype-enable true '
 )
 
@@ -57,11 +57,9 @@ _MAX_COVERAGE_REGION_BEDS = 3
 def _build_additional_args() -> str:
     """Concatenate common + sequencing-type preset + user override into one args string.
 
-    Raises if any `<placeholder>` sentinel survives in the preset or user
-    args (e.g. the WES preset shipping `<bed-name>` defaults that weren't
-    filled in for this run). Placeholders are a property of fill-in-the-blank
-    preset/user strings — NOT the hardcoded common block — so we scan
-    each source individually rather than the assembled output.
+    Tokens like `{vc_target}` in preset/user args are substituted from the
+    matching entries in `[presets.<seqtype>.bed_names]`. Any surviving `{…}`
+    or legacy `<…>` placeholders are rejected as unfilled config.
     """
     sequencing_type = config_retrieve(['workflow', 'sequencing_type'])
     if sequencing_type not in {'genome', 'exome'}:
@@ -91,11 +89,21 @@ def _build_additional_args() -> str:
     preset_args = preset.get('additional_args', '').strip()
     user_args = user.get('additional_args', '').strip()
 
-    # Scan preset and user args individually — these are the only strings
-    # where `<placeholder>` sentinels are legitimate inputs that must be
-    # filled before submission. _COMMON_ADDITIONAL_ARGS is hardcoded and
-    # may contain `<token>` substrings now or in the future without that
-    # implying an unfilled placeholder.
+    # Substitute {...} tokens from [presets.<seqtype>.bed_names] entries.
+    # KeyError means args references a token that bed_names doesn't define.
+    bed_names = get_bed_names_for_seqtype()
+    try:
+        preset_args = preset_args.format(**bed_names)
+        user_args = user_args.format(**bed_names)
+    except KeyError as e:
+        raise ValueError(
+            f'DRAGEN additional_args references {{{e.args[0]}}} but '
+            f'[presets.{sequencing_type}.bed_names] has no entry named '
+            f'{e.args[0]!r}. Configured entries: {sorted(bed_names)}.',
+        ) from None
+
+    # Legacy `<…>` sentinels are not valid; reject any that survive.
+    # _COMMON_ADDITIONAL_ARGS is hardcoded so its content isn't scanned.
     for source_name, source in (('preset', preset_args), ('user', user_args)):
         placeholders = _PRESET_PLACEHOLDER_RE.findall(source)
         if placeholders:
@@ -110,9 +118,23 @@ def _build_additional_args() -> str:
                 f'Fill them in your config before running.',
             )
 
+    # Optional per-preset VC target BED padding. Omit the flag when 0 so a
+    # stock-config run doesn't pass --vc-target-bed-padding 0 to DRAGEN.
+    vc_padding = int(preset.get('vc_target_bed_padding', 0))
+    vc_padding_arg = f'--vc-target-bed-padding {vc_padding}' if vc_padding > 0 else ''
+
+    # CYP2D6 pharmacogenomic caller: on by default, togglable via config.
+    enable_cyp2d6 = config_retrieve(
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'enable_cyp2d6'],
+        default=True,
+    )
+    cyp2d6_arg = f'--enable-cyp2d6 {"true" if enable_cyp2d6 else "false"}'
+
     parts = [
         _COMMON_ADDITIONAL_ARGS.strip(),
         f"--cnv-segmentation-mode {preset['cnv_segmentation_mode']}",
+        cyp2d6_arg,
+        vc_padding_arg,
         preset_args,
         user_args,
     ]
@@ -394,15 +416,21 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
         default=[],
     )
     user_files = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'], default=[])
-    additional_files = list(preset_files) + list(user_files)
+    # additional_files entries are BED basenames, resolved via ICA_FILE_IDS.
+    # bed_names values are added too so the operator names a BED once.
+    bed_name_files = list(get_bed_names_for_seqtype().values())
+    additional_file_names: list[str] = list(
+        dict.fromkeys(list(preset_files) + list(user_files) + bed_name_files)
+    )
+    additional_file_ids = [resolve_ica_file_id(name) for name in additional_file_names]
 
     inputs: list[AnalysisDataInput] = [AnalysisDataInput(parameterCode='ref_tar', dataIds=[dragen_ht_id])]
     if coverage_region_bed_ids:
         inputs.append(AnalysisDataInput(parameterCode='qc_coverage_region_beds', dataIds=coverage_region_bed_ids))
     if cross_cont_vcf:
         inputs.append(AnalysisDataInput(parameterCode='qc_cross_cont_vcf', dataIds=[cross_cont_vcf]))
-    if additional_files:
-        inputs.append(AnalysisDataInput(parameterCode='additional_files', dataIds=additional_files))
+    if additional_file_ids:
+        inputs.append(AnalysisDataInput(parameterCode='additional_files', dataIds=additional_file_ids))
     return inputs
 
 
