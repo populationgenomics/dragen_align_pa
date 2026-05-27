@@ -164,6 +164,7 @@ def _build_cram_specific_inputs(
 
 def _build_common_parameters() -> list[AnalysisParameterInput]:
     """Builds the common ICA parameter inputs."""
+    enable_cyp2d6: bool = config_retrieve(['workflow', 'enable_cyp2d6'], default=True)
     return [
         AnalysisParameterInput(code='enable_map_align', value='true'),
         AnalysisParameterInput(code='enable_map_align_output', value='true'),
@@ -175,7 +176,7 @@ def _build_common_parameters() -> list[AnalysisParameterInput]:
         AnalysisParameterInput(code='enable_cnv', value='true'),
         AnalysisParameterInput(code='cnv_segmentation_mode', value='SLM'),
         AnalysisParameterInput(code='enable_sv', value='true'),
-        AnalysisParameterInput(code='enable_cyp2d6', value='true'),
+        AnalysisParameterInput(code='enable_cyp2d6', value='true' if enable_cyp2d6 else 'false'),
         AnalysisParameterInput(code='repeat_genotype_enable', value='true'),
         AnalysisParameterInput(code='dragen_reports', value='false'),
     ]
