@@ -64,7 +64,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
     success_file_key_template: str,
     pipeline_id_file_key_template: str,
     error_log_key: str,
-    submit_function_factory: Callable[[str], Callable[[], str]],
+    submit_function_factory: Callable[[str, str], Callable[[], str]],
     allow_retry: bool,
     sleep_time_seconds: int,
 ) -> None:
@@ -119,30 +119,13 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
             ]
             pipeline_success_file: cpg_utils.Path = outputs[success_file_key_template.format(target_name=target_name)]
 
-            preserved_ar_guid_for_target: str = initial_ar_guid
-
             if pipeline_id_arguid_file.exists():
-                try:
-                    with pipeline_id_arguid_file.open('r') as f:
-                        data = json.load(f)
-                        if 'ar_guid' in data:
-                            preserved_ar_guid_for_target = data['ar_guid']
-                            logger.info(
-                                f"Preserved AR GUID '{preserved_ar_guid_for_target}' from existing file "
-                                f'for {target.name}.'
-                            )
-                except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f'Could not read AR GUID from {pipeline_id_arguid_file}: {e}.')
-
                 pipeline_id_arguid_file.unlink()
                 logger.info(f'Deleted existing pipeline ID file: {pipeline_id_arguid_file}')
 
             if pipeline_success_file.exists():
                 pipeline_success_file.unlink()
                 logger.info(f'Deleted existing success file: {pipeline_success_file}')
-
-            # Set the ar_guid on the target object to be used for the new submission
-            target.ar_guid = preserved_ar_guid_for_target
 
     def is_finished(target: MonitoredTarget) -> bool:
         return target.status in {PipelineStatus.SUCCEEDED, PipelineStatus.CANCELLED, PipelineStatus.FAILED_FINAL}
@@ -173,13 +156,13 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                 delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
                 target.set_status(PipelineStatus.CANCELLED)
             else:
-                submit_callable: Callable[[], str] = submit_function_factory(target_name)
+                ar_guid_for_submit: str = target.ar_guid if target.ar_guid else initial_ar_guid
+                submit_callable: Callable[[], str] = submit_function_factory(target_name, ar_guid_for_submit)
 
                 if not target.pipeline_id:
                     logger.info(f'Submitting new {pipeline_name} ICA pipeline for {target_name}')
                     target.pipeline_id = submit_callable()
-                    # Use the preserved guid if it was set, otherwise use the initial one from the env
-                    target.ar_guid = target.ar_guid if target.ar_guid else initial_ar_guid
+                    target.ar_guid = ar_guid_for_submit
                     target.set_status(PipelineStatus.INPROGRESS)
                     with pipeline_id_arguid_file.open('w') as f:
                         f.write(json.dumps({'pipeline_id': target.pipeline_id, 'ar_guid': target.ar_guid}))
@@ -218,7 +201,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                     if target.allow_retry and not target.has_been_retried:
                         logger.info(f'Retrying {pipeline_name} pipeline for {target.name}')
                         target.pipeline_id = submit_callable()
-                        target.ar_guid = target.ar_guid if target.ar_guid else initial_ar_guid
+                        target.ar_guid = ar_guid_for_submit
                         target.has_been_retried = True
                         target.set_status(PipelineStatus.FAILED_RETRYING)
                         with pipeline_id_arguid_file.open('w') as f:

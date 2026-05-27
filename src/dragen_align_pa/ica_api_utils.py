@@ -5,6 +5,7 @@ wrappers around specific API endpoints.
 """
 
 import contextlib
+import functools
 import json
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Final, Literal
@@ -24,7 +25,6 @@ if TYPE_CHECKING:
 # --- Constants ---
 
 ICA_REST_ENDPOINT: Final = 'https://ica.illumina.com/ica/rest'
-SECRET_CLIENT: Final = secretmanager.SecretManagerServiceClient()
 SECRET_PROJECT: Final = 'cpg-common'
 SECRET_NAME: Final = 'illumina_cpg_workbench_api'
 SECRET_VERSION: Final = 'latest'
@@ -33,18 +33,25 @@ SECRET_VERSION: Final = 'latest'
 # --- Secret Management & Auth ---
 
 
+@functools.cache
+def _secret_client() -> secretmanager.SecretManagerServiceClient:
+    # Lazy so the module can be imported without GCP ADC (e.g. in CI test collection).
+    return secretmanager.SecretManagerServiceClient()
+
+
 def get_ica_secrets() -> dict[Literal['projectID', 'apiKey'], str]:
     """Gets the project ID and API key used to interact with ICA
 
     Returns:
         dict[str, str]: A dictionary with the keys projectId and apiKey
     """
-    secret_path: str = SECRET_CLIENT.secret_version_path(
+    client = _secret_client()
+    secret_path: str = client.secret_version_path(
         project=SECRET_PROJECT,
         secret=SECRET_NAME,
         secret_version=SECRET_VERSION,
     )
-    response: secretmanager.AccessSecretVersionResponse = SECRET_CLIENT.access_secret_version(
+    response: secretmanager.AccessSecretVersionResponse = client.access_secret_version(
         request={'name': secret_path},
     )
     return json.loads(response.payload.data.decode('UTF-8'))

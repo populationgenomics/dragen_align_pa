@@ -214,8 +214,8 @@ def run(
         md5_outputs_folder_id=md5_outputs_folder_id,
     )
 
-    def _create_submit_callable_factory(target_name: str) -> Callable[[], str]:
-        _ = target_name
+    def _create_submit_callable_factory(target_name: str, ar_guid: str) -> Callable[[], str]:
+        del target_name, ar_guid  # MD5 binds its ar_guid eagerly above
         return submit_callable
 
     manage_ica_pipeline_loop(

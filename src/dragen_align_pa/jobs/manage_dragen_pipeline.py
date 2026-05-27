@@ -12,6 +12,7 @@ from dragen_align_pa.utils import load_manifest
 
 def _submit_new_ica_pipeline(
     sg_name: str,
+    ar_guid: str,
     cram_ica_fids_path: cpg_utils.Path | None,
     fastq_ids_path: cpg_utils.Path | None,
     fastq_list_fid_and_filenames_path: cpg_utils.Path | None,
@@ -23,6 +24,7 @@ def _submit_new_ica_pipeline(
         analysis_output_fid_path=analysis_output_fid_path,
         fastq_list_fid_and_filenames_path=fastq_list_fid_and_filenames_path,
         sg_name=sg_name,
+        ar_guid=ar_guid,
     )
     return ica_pipeline_id
 
@@ -46,11 +48,12 @@ def run(
         manifest['fastq_list_fid_and_filenames_path'],
     )
 
-    def _create_submit_callable(sg_name: str) -> Callable[[], str]:
+    def _create_submit_callable(sg_name: str, ar_guid: str) -> Callable[[], str]:
         """Creates a zero-argument callable for pipeline submission."""
         return partial(
             _submit_new_ica_pipeline,
             sg_name=sg_name,
+            ar_guid=ar_guid,
             cram_ica_fids_path=cram_ica_fids_path[sg_name] if cram_ica_fids_path else None,
             fastq_ids_path=fastq_ids_path,
             analysis_output_fid_path=analysis_output_fids_path[sg_name],
