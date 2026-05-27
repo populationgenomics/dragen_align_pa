@@ -83,6 +83,8 @@ chunk_size = "100"
 [dragen_align_pa.manage_dragen_pipeline]
 pipeline_id = "18a4baab-a12f-415d-ba8e-10b5bf6834d0"
 batch_size = 5
+# Toggle the DRAGEN CYP2D6 pharmacogenomic caller. Defaults to on; set false to skip.
+enable_cyp2d6 = true
 
 # WGS-only flags. Empty preset is fine; cnv_segmentation_mode is divergent vs WES.
 [dragen_align_pa.manage_dragen_pipeline.presets.genome]

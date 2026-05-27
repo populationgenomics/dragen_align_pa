@@ -15,6 +15,7 @@ def _config_factory(
     user_args='',
     bed_names=None,
     vc_target_bed_padding=0,
+    enable_cyp2d6=None,
 ):
     """Returns a fake `config_retrieve` that exposes the bits `_build_additional_args` needs."""
     preset = {
@@ -30,6 +31,8 @@ def _config_factory(
     }
     if bed_names is not None:
         cfg[('dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type, 'bed_names')] = bed_names
+    if enable_cyp2d6 is not None:
+        cfg[('dragen_align_pa', 'manage_dragen_pipeline', 'enable_cyp2d6')] = enable_cyp2d6
 
     def fake_retrieve(key, default=None):
         return cfg.get(tuple(key), default)
@@ -74,10 +77,25 @@ def test_build_additional_args_includes_hardcoded_common(monkeypatch):
         '--vc-enable-vcf-output false',
         '--enable-map-align-output true',
         '--enable-duplicate-marking true',
-        '--enable-cyp2d6 true',
         '--repeat-genotype-enable true',
     ):
         assert required_flag in result, f'Missing required hardcoded flag: {required_flag!r}'
+
+
+def test_build_additional_args_cyp2d6_default_on(monkeypatch):
+    """No config entry => caller stays on (DRAGEN's own default is off, so omission would silently disable it)."""
+    monkeypatch.setattr(submit_dragen_batch, 'config_retrieve', _config_factory())
+    result = submit_dragen_batch._build_additional_args()
+    assert '--enable-cyp2d6 true' in result
+
+
+def test_build_additional_args_cyp2d6_explicit_false(monkeypatch):
+    monkeypatch.setattr(
+        submit_dragen_batch, 'config_retrieve', _config_factory(enable_cyp2d6=False),
+    )
+    result = submit_dragen_batch._build_additional_args()
+    assert '--enable-cyp2d6 false' in result
+    assert '--enable-cyp2d6 true' not in result
 
 
 def test_build_additional_args_user_appended_last(monkeypatch):

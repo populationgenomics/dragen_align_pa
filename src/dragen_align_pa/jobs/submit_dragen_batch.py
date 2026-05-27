@@ -45,7 +45,6 @@ _COMMON_ADDITIONAL_ARGS = (
     '--vc-enable-vcf-output false '
     '--enable-map-align-output true '
     '--enable-duplicate-marking true '
-    '--enable-cyp2d6 true '
     '--repeat-genotype-enable true '
 )
 
@@ -124,9 +123,17 @@ def _build_additional_args() -> str:
     vc_padding = int(preset.get('vc_target_bed_padding', 0))
     vc_padding_arg = f'--vc-target-bed-padding {vc_padding}' if vc_padding > 0 else ''
 
+    # CYP2D6 pharmacogenomic caller: on by default, togglable via config.
+    enable_cyp2d6 = config_retrieve(
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'enable_cyp2d6'],
+        default=True,
+    )
+    cyp2d6_arg = f'--enable-cyp2d6 {"true" if enable_cyp2d6 else "false"}'
+
     parts = [
         _COMMON_ADDITIONAL_ARGS.strip(),
         f"--cnv-segmentation-mode {preset['cnv_segmentation_mode']}",
+        cyp2d6_arg,
         vc_padding_arg,
         preset_args,
         user_args,
