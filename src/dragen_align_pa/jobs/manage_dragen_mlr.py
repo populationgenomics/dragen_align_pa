@@ -204,8 +204,13 @@ def run(
 
     logger.info(f'Dataset name is: {cohort.dataset.name}')
 
-    def _create_submit_callable(sg_name: str) -> Callable[[], str]:
-        """Creates a zero-argument callable for pipeline submission."""
+    def _create_submit_callable(sg_name: str, ar_guid: str) -> Callable[[], str]:
+        """Creates a zero-argument callable for pipeline submission.
+
+        MLR reads ar_guid from the upstream Dragen pipeline-id file rather than
+        the env, so the manager-supplied ar_guid is intentionally ignored here.
+        """
+        del ar_guid
         output_prefix: str = (
             f'ica://{dragen_align_project}/{BUCKET_NAME}/'
             f'{config_retrieve(["ica", "data_prep", "output_folder"])}/{sg_name}'
