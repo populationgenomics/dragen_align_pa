@@ -128,7 +128,7 @@ def _is_retryable_ica_error(exc: BaseException) -> bool:
     mode); 503 = ICA backend unavailable. 404/500/etc propagate immediately
     — retrying a permanent error just delays the real signal.
     """
-    return isinstance(exc, ApiException) and exc.status in (429, 503)
+    return isinstance(exc, ApiException) and exc.status in (429, 503)  # pyright: ignore[reportAttributeAccessIssue]
 
 
 @retry(
