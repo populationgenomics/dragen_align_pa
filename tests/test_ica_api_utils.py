@@ -169,7 +169,6 @@ def test_get_ica_secrets_cache_skips_retry_layer_on_subsequent_calls(monkeypatch
     angry_client.access_secret_version.assert_not_called()
 
 
-import icasdk
 from icasdk.exceptions import ApiException
 
 
