@@ -17,6 +17,7 @@ import pytest
 from google.api_core import exceptions as gax_exceptions
 
 from dragen_align_pa import ica_api_utils
+from icasdk.exceptions import ApiException
 
 
 @pytest.fixture(autouse=True)
@@ -167,9 +168,6 @@ def test_get_ica_secrets_cache_skips_retry_layer_on_subsequent_calls(monkeypatch
 
     assert second == payload
     angry_client.access_secret_version.assert_not_called()
-
-
-from icasdk.exceptions import ApiException
 
 
 def _mock_api_with_status(status: int) -> object:
