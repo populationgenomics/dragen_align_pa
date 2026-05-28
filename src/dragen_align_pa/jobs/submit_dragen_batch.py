@@ -1,7 +1,6 @@
 """Submit one batch of SGs to the unified DRAGEN ICA pipeline.
 
-This replaces the per-SG submission logic in the old `run_align_genotype_with_dragen.py`.
-The new pipeline (`DRAGEN378-custom-unified-F2-v1`, id 18a4baab-…) accepts a list of
+The pipeline (`DRAGEN378-custom-unified-F2-v1`, id 18a4baab-...) accepts a list of
 samples per analysis and is configured via top-level parameters + an `additional_args`
 string. Per-sample retry is orchestrated by the caller, not here.
 """

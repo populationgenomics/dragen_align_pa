@@ -66,13 +66,6 @@ batch_size = 30
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]
 dragen_version = 'dragen_3_7_8'
-# F2 instance CRAM pipeline. Read by the legacy run_align_genotype_with_dragen.py
-# submitter; kept until Segment B deletes that file.
-cram = 'cbac3d1f-737f-44f2-9a40-f7f2589b5fad'
-
-# F2 instance Fastq pipeline. Read by the legacy run_align_genotype_with_dragen.py
-# submitter; kept until Segment B deletes that file.
-fastq = '393e2423-3c0d-42f2-aa83-910a48a9c32c'
 # Dragen hash table for 3.7.8
 dragen_ht_id = 'fil.854d49a151a24edae5d708da2935b1b0'
 
@@ -152,9 +145,13 @@ gatk = ''
 
 [ica.qc]
 cross_cont_vcf = 'fil.1a7a2d0442854127e5d608da2935b1b0'
-# Legacy per-channel coverage region BED IDs. Read by run_align_genotype_with_dragen.py;
-# kept until Segment B deletes that submitter. The unified pipeline reads
-# `coverage_region_beds` below instead.
+# WGS coverage region BED file IDs (held for QC reporting).
+# TODO: not currently wired into the unified pipeline. The unified
+# submitter reads `coverage_region_beds` (basenames resolved via
+# dragen_align_pa.constants.ICA_FILE_IDS), and only WES BEDs are
+# registered there today. To restore WGS QC coverage reporting, register
+# these two file IDs in ICA_FILE_IDS under their basenames and add the
+# basenames to a WGS preset's coverage_region_beds list.
 coverage_region_1 = 'fil.ad60897bc97e4646f28c08da33ba0a20'
 coverage_region_2 = 'fil.c4ade57f5ffe4baff28d08da33ba0a20'
 # BED file basenames — resolved to ICA file IDs at submission time via
