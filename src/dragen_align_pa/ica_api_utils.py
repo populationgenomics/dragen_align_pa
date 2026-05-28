@@ -138,9 +138,11 @@ def check_ica_pipeline_status(
         pipeline_status: str = api_response.body['status']  # type: ignore[ReportUnknownVariableType]
         return pipeline_status  # type: ignore[ReportUnknownVariableType]
     except icasdk.ApiException as e:
-        raise icasdk.ApiException(
-            f'Exception when calling ProjectAnalysisApi -> get_analysis: {e}',
-        ) from e
+        logger.error(
+            f'ProjectAnalysisApi.get_analysis raised for path_params={path_params}: '
+            f'status={e.status} reason={e.reason}',
+        )
+        raise
 
 
 def check_object_already_exists(

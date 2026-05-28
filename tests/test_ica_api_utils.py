@@ -167,3 +167,34 @@ def test_get_ica_secrets_cache_skips_retry_layer_on_subsequent_calls(monkeypatch
 
     assert second == payload
     angry_client.access_secret_version.assert_not_called()
+
+
+import icasdk
+from icasdk.exceptions import ApiException
+
+
+def _mock_api_with_status(status: int) -> object:
+    """Build a stand-in for ProjectAnalysisApi whose get_analysis raises an
+    ApiException with the given HTTP status preserved on the exception."""
+    api = MagicMock()
+    api.get_analysis.side_effect = ApiException(status=status, reason='Too Many Requests')
+    return api
+
+
+def test_check_ica_pipeline_status_preserves_api_exception_status():
+    """Regression: the wrapper's old `raise ApiException(f'...{e}') from e`
+    pattern clobbered `.status` (the f-string went into the `status=`
+    positional, making it a str). Without `.status` preserved as int, any
+    downstream retry predicate `e.status in (429, 503)` is dead code.
+    The wrapper must propagate the original ApiException intact."""
+    api = _mock_api_with_status(429)
+
+    with pytest.raises(ApiException) as exc_info:
+        ica_api_utils.check_ica_pipeline_status(
+            api_instance=api,
+            path_params={'projectId': 'p', 'analysisId': 'a'},
+        )
+
+    assert exc_info.value.status == 429, (
+        f'expected .status == 429 to survive the wrapper; got {exc_info.value.status!r}'
+    )
