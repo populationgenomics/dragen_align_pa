@@ -83,6 +83,8 @@ chunk_size = "100"
 [dragen_align_pa.manage_dragen_pipeline]
 pipeline_id = "18a4baab-a12f-415d-ba8e-10b5bf6834d0"
 batch_size = 5
+# Toggle the DRAGEN CYP2D6 pharmacogenomic caller. Defaults to on; set false to skip.
+enable_cyp2d6 = true
 
 # WGS-only flags. Empty preset is fine; cnv_segmentation_mode is divergent vs WES.
 [dragen_align_pa.manage_dragen_pipeline.presets.genome]
@@ -90,11 +92,38 @@ cnv_segmentation_mode = "SLM"
 additional_args = "--cnv-enable-self-normalization true"
 additional_files = []
 
-# WES-only flags. Fill in WES BED + PoN file IDs per cohort.
+# WES-only flags. Your run's config TOML must set [bed_names] below; blank
+# values here are fail-fast markers that halt the run before ICA submission.
 [dragen_align_pa.manage_dragen_pipeline.presets.exome]
 cnv_segmentation_mode = "HSLM"
-additional_args = "--sv-exome true --sv-call-regions-bed <bed-name> --vc-target-bed <bed-name> --cnv-target-bed <bed-name> --cnv-target-factor-threshold 5 --cnv-enable-self-normalization false"
+# Bases added on either side of vc_target for variant calling. Maps to DRAGEN's
+# --vc-target-bed-padding flag; only affects the small variant caller (CNV and
+# SV have no DRAGEN padding flag). Set to 0 to omit the flag entirely;
+# override per-cohort if you want padding (e.g. 50 for Twist).
+vc_target_bed_padding = 0
+additional_args = "--sv-exome true --sv-call-regions-bed {sv_call_regions} --vc-target-bed {vc_target} --cnv-target-bed {cnv_target} --cnv-target-factor-threshold 5 --cnv-merge-threshold 0.4 --cnv-enable-self-normalization false"
+# Auto-populated from bed_names below; list extras here (e.g. PoN files) as basenames.
 additional_files = []
+
+# BED basenames for each DRAGEN target slot. Set these in your run's config
+# TOML using names registered in dragen_align_pa.constants.ICA_FILE_IDS.
+#
+# Registered BEDs today:
+#   Twist_VCGS_Exome_Covered_Targets_hg38.bed   -- Twist exome design.
+#                                                  The narrower target coordinates
+#                                                  (Twist doesn't distribute a
+#                                                  probe-Covered BED for this design).
+#   S30409818_Regions.bed                       -- Agilent CREv2 Regions.
+#                                                  Target coordinates (narrower).
+#   S30409818_Covered.bed                       -- Agilent CREv2 Covered.
+#                                                  The full coordinate space of the probes
+#                                                  themselves, including flanking bases the
+#                                                  probes physically cover beyond the target
+#                                                  coords. Broader than Regions.
+[dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names]
+vc_target = ""
+cnv_target = ""
+sv_call_regions = ""
 
 # Per-run user override hooks. Appended after the preset values.
 [dragen_align_pa.manage_dragen_pipeline.user]
@@ -132,7 +161,7 @@ coverage_region_beds = [
     'S30409818_Regions.bed',
 ]
 
-[ica.mlr]
+[dragen_align_pa.manage_dragen_mlr]
 config_json = "fil.91c3e63114fc43dc31ed08dde927d6b4"
 mlr_hash_table = "ica://ourdna-dragen-mlr-jobs/data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9"
 analysis_instance_tier = "economy"

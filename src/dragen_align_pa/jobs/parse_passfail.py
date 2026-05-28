@@ -4,11 +4,9 @@
 `sample_id → "Success" | "Fail"`. In our pipeline `sample_id` == `sg_name`:
 - FASTQ mode: `MakeFastqFileList` writes RGSM = SG name in every row.
 - CRAM mode: the original CRAM's RG SM tag is preserved through the unified
-  pipeline's input handling (validated in design doc §7 "Open items deferred
-  to implementation" and confirmed during the small-cohort validation runs
-  in Task 25 step V3 — if a CRAM cohort surfaces RGSM != sg_name, the
+  pipeline's input handling. If a CRAM cohort surfaces RGSM != sg_name, the
   defensive filter in `_on_succeeded` warns and drops the unexpected keys
-  before they reach the retry path).
+  before they reach the retry path.
 """
 
 import json
@@ -38,25 +36,33 @@ def fetch_passfail_from_ica(
 ) -> dict[str, str] | None:
     """Fetch passfail.json from an ICA folder and parse it in-memory.
 
-    Returns None if passfail.json is not present in the folder OR if any
-    transient ICA/network error prevents the fetch — callers (the
-    transactional `on_succeeded` in Task 15) treat None as "retry next poll".
-    The file is small (KB-scale), so we never stage to GCS or disk.
+    Returns the parsed `{sample_id: status}` mapping on success, or `None`
+    **only** when passfail.json is legitimately absent (a catastrophically-
+    failed batch that didn't produce one). The file is small (KB-scale), so
+    we never stage to GCS or disk.
+
+    Transient errors **raise** so the caller (the transactional `on_succeeded`
+    in `manage_dragen_pipeline.py`) leaves the batch's status as INPROGRESS
+    and re-fires on the next poll cycle — eventually escalating to
+    FAILED_FINAL via the on_succeeded failure cap if the issue is persistent.
+    Without this distinction, a transient network blip would be silently
+    treated as "no passfail.json", marking every SG in the batch as Fail and
+    triggering a wasted retry pass on samples that actually succeeded.
 
     Failure handling:
-    - `FileNotFoundError` from the lookup → return None (legitimate: a
-      catastrophically-failed batch may not have produced passfail.json).
+    - `FileNotFoundError` from the lookup → return None (legitimate absence).
     - `icasdk.ApiException` from lookup, URL minting, or any other ICA call
-      → log a warning and return None.
+      → log and re-raise.
     - `requests.RequestException` from the GET (network, timeout, etc.) →
-      log a warning and return None.
-    - `requests.HTTPError` with 403 → presigned URL expired between
-      minting and reading; mint a fresh URL once and retry. Any second
-      403 → log and return None.
+      log and re-raise.
+    - `requests.HTTPError` with 403 → presigned URL expired between minting
+      and reading; mint a fresh URL once and retry. A second 403 surfaces
+      via `response.raise_for_status()` and is re-raised by the
+      `RequestException` catch.
     - `json.JSONDecodeError` on `response.json()` → the presigned URL
-      occasionally serves a non-JSON body (e.g. an upstream proxy
-      returning a maintenance HTML page with status 200, slipping past
-      `raise_for_status`). Treated as transient: log and return None.
+      occasionally serves a non-JSON body (e.g. an upstream proxy returning
+      a maintenance HTML page with status 200, slipping past
+      `raise_for_status`). Log and re-raise.
     """
     try:
         file_id = ica_api_utils.find_file_id_by_name(
@@ -69,7 +75,7 @@ def fetch_passfail_from_ica(
         return None
     except icasdk.ApiException as e:
         logger.warning(f'ICA API error finding passfail.json in {ica_folder_path}: {e}')
-        return None
+        raise
 
     def _mint_and_fetch() -> requests.Response:
         url_response = api_instance.create_download_url_for_data(
@@ -89,10 +95,10 @@ def fetch_passfail_from_ica(
         response.raise_for_status()
     except icasdk.ApiException as e:
         logger.warning(f'ICA API error minting download URL for passfail.json in {ica_folder_path}: {e}')
-        return None
+        raise
     except requests.RequestException as e:
         logger.warning(f'Network error fetching passfail.json from {ica_folder_path}: {e}')
-        return None
+        raise
 
     logger.info(f'Fetched passfail.json from {ica_folder_path}')
     try:
@@ -100,6 +106,6 @@ def fetch_passfail_from_ica(
     except json.JSONDecodeError as e:
         logger.warning(
             f'passfail.json at {ica_folder_path} returned non-JSON body '
-            f'(status={response.status_code}): {e}. Treating as transient.',
+            f'(status={response.status_code}): {e}',
         )
-        return None
+        raise

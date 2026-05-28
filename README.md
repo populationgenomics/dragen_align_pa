@@ -66,10 +66,10 @@ The required column headers are: Filenames, Checksum, Sample ID, Lane, Machine I
 ##### An example of the required manifest CSV structure showing only required columns
 | Filenames | Checksum | Sample ID | Lane | Machine ID | Flow cell |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| CPG0001_R1.fastq.gz | d41d8cd98f00b204e9800998ecf8427e | CPG0001 | 1 | M0001 | AABBCC |
-| CPG0001_R2.fastq.gz | 9800998ecf8427e1d8cd98f00b204e98 | CPG0001 | 1 | M0001 | AABBCC |
-| CPG0002_R1.fastq.gz | 1234567890abcdef1234567890abcdef | CPG0002 | 1 | M0001 | AABBCC |
-| CPG0002_R2.fastq.gz | fedcba0987654321fedcba0987654321 | CPG0002 | 1 | M0001 | AABBCC |
+| CPG_0001_R1.fastq.gz | d41d8cd98f00b204e9800998ecf8427e | CPG_0001 | 1 | M0001 | AABBCC |
+| CPG_0001_R2.fastq.gz | 9800998ecf8427e1d8cd98f00b204e98 | CPG_0001 | 1 | M0001 | AABBCC |
+| CPG_0002_R1.fastq.gz | 1234567890abcdef1234567890abcdef | CPG_0002 | 1 | M0001 | AABBCC |
+| CPG_0002_R2.fastq.gz | fedcba0987654321fedcba0987654321 | CPG_0002 | 1 | M0001 | AABBCC |
 
 ## How to Run the Pipeline
 

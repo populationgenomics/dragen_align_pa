@@ -53,9 +53,9 @@ This pipeline's logic is heavily abstracted to handle its stateful, external-pla
             "type": "FILE",
             "dataModelType": "FASTQ",
             "details": {
-              "name": "CPG0001.cram",
+              "name": "CPG_0001.cram",
               "status": "AVAILABLE",
-              "path": "/primary-data/gcs-bucket-name/test-cram-upload/CPG0001/CPG0001.cram",
+              "path": "/primary-data/gcs-bucket-name/test-cram-upload/CPG_0001/CPG_0001.cram",
               "fileSizeInBytes": 15482341312,
               "timeCreated": "2025-10-25T10:00:00Z",
               "timeModified": "2025-10-25T10:15:00Z",
@@ -78,9 +78,9 @@ This pipeline's logic is heavily abstracted to handle its stateful, external-pla
             "type": "FOLDER",
             "dataModelType": "ANALYSIS_OUTPUT_FOLDER",
             "details": {
-              "name": "CPG0001",
+              "name": "CPG_0001",
               "status": "AVAILABLE",
-              "path": "/primary-data/gcs-bucket-name/test-dragen-378/CPG0001",
+              "path": "/primary-data/gcs-bucket-name/test-dragen-378/CPG_0001",
               "timeCreated": "2025-10-26T14:30:00Z",
               "timeModified": "2025-10-26T14:30:00Z"
             },

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 def create_upload_object_id(
     api_instance: 'project_data_api.ProjectDataApi',
     path_params: dict[str, str],
-    sg_name: str,
+    folder_name: str,
     file_name: str,
     folder_path: str,
     object_type: str,
@@ -36,7 +36,7 @@ def create_upload_object_id(
     Args:
         api_instance (project_data_api.ProjectDataApi): An instance of the ProjectDataApi
         path_params (dict[str, str]): A dict with the projectId
-        sg_name (str): The name of the sequencing group
+        folder_name (str): Name used when creating a FOLDER object (ignored for FILE)
         file_name (str): The name of the file to upload e.g. CPGxxxx.CRAM
         folder_path (str): The base path to the object in ICA to create
         object_type (str): The type of the object to create. Must be one of ['FILE', 'FOLDER']
@@ -61,7 +61,6 @@ def create_upload_object_id(
         logger.info(f'Found existing {object_type} with ID {object_id} and status {status}')
         return object_id, status
 
-    logger.info(f'Creating a new {object_type} object at {folder_path}/{file_name}')
     try:
         if object_type == 'FILE':
             body = CreateData(
@@ -71,7 +70,7 @@ def create_upload_object_id(
             )
         else:
             body = CreateData(
-                name=sg_name,
+                name=folder_name,
                 folderPath=f'{folder_path}/',
                 dataType=object_type,
             )
@@ -205,66 +204,81 @@ def stream_ica_file_to_gcs(
         raise
 
 
-def list_and_filter_ica_files(
+def list_ica_files(
     api_instance: 'project_data_api.ProjectDataApi',
     path_parameters: dict[str, str],
     base_ica_folder_path: str,
+    *,
+    recursive: bool = False,
 ) -> list[tuple[str, str]]:
-    """
-    Lists all files in the ICA folder, handles pagination,
-    and filters out CRAMs/GVCFs.
-    (Used by download_ica_pipeline_outputs.py)
-    """
-    files_to_download: list[tuple[str, str]] = []
-    page_token: str | None = None
-    logger.info('Listing files in ICA folder...')
+    """List files under an ICA folder. Pagination is handled internally.
 
-    while True:
-        query_params = {  # pyright: ignore[reportUnknownVariableType]
-            'parentFolderPath': base_ica_folder_path,
-            'type': 'FILE',
-            'pageSize': '1000',
-        }
-        if page_token:
-            query_params['pageToken'] = page_token
+    Returns ``(name_or_relative_path, file_id)`` tuples.
 
-        try:
+    With ``recursive=False`` (default), lists only files directly inside
+    ``base_ica_folder_path``; the first tuple element is the leaf file
+    name. With ``recursive=True``, walks subfolders and returns relative
+    paths (e.g. ``'report_files/samples/foo.csv'``) — pass the relative
+    path directly to ``stream_ica_file_to_gcs`` as ``file_name`` and the
+    GCS object key preserves the nested layout.
+
+    No extension filtering — callers compose any filter they need (e.g.
+    ``[(n, f) for n, f in list_ica_files(...) if not n.endswith(...)]``).
+
+    Folder traversal uses separate ``type=FOLDER`` queries — the ICA SDK's
+    ``get_project_data_list`` does not expose a recursive flag. The walk
+    is not transactional: if a subfolder query fails after some files
+    have been collected, those collected entries are discarded and the
+    ``icasdk.ApiException`` propagates. Callers should re-run on failure.
+    """
+    base = base_ica_folder_path.rstrip('/') + '/'
+
+    def _list_children(parent: str, type_: str) -> list[dict]:
+        items: list[dict] = []
+        page_token: str | None = None
+        while True:
+            query_params: dict[str, object] = {
+                'parentFolderPath': parent,
+                'type': type_,
+                'pageSize': '1000',
+            }
+            if page_token:
+                query_params['pageToken'] = page_token
             api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
                 path_params=path_parameters,  # pyright: ignore[reportArgumentType]
                 query_params=query_params,  # type: ignore[reportArgumentType]
             )
-        except icasdk.ApiException as e:
-            logger.error(
-                f'Exception when calling ProjectDataApi->get_project_data_list: {e}',
-            )
-            raise
+            items.extend(api_response.body.get('items', []))  # pyright: ignore[reportUnknownArgumentType]
+            page_token = api_response.body.get('nextPageToken')  # pyright: ignore[reportUnknownVariableType]
+            if not page_token:
+                break
+        return items
 
-        # --- Filter files ---
-        for item in api_response.body['items']:  # pyright: ignore[reportUnknownVariableType]
+    files: list[tuple[str, str]] = []
+
+    def _walk(parent: str, relative_prefix: str) -> None:
+        for item in _list_children(parent, 'FILE'):
             details = item['data'].get('details', {})  # pyright: ignore[reportUnknownVariableType]
-            file_name = details.get('name')  # pyright: ignore[reportUnknownVariableType]
-            file_id = item['data'].get('id')  # pyright: ignore[reportUnknownVariableType]
-
-            if not file_name or not file_id:
-                logger.warning(f'Skipping item with missing name or id: {item}')
+            name = details.get('name')  # pyright: ignore[reportUnknownVariableType]
+            fid = item['data'].get('id')  # pyright: ignore[reportUnknownVariableType]
+            if not name or not fid:
+                logger.warning(f'Skipping item with missing name or id under {parent}: {item}')
                 continue
+            files.append((f'{relative_prefix}{name}', fid))  # pyright: ignore[reportUnknownArgumentType]
 
-            # Exclude CRAMs, GVCFs, and their indices
-            if not file_name.endswith(
-                ('.cram', '.cram.crai', '.gvcf.gz', '.gvcf.gz.tbi'),
-            ):
-                files_to_download.append(
-                    (file_name, file_id),
-                )  # pyright: ignore[reportUnknownArgumentType]
+        if not recursive:
+            return
 
-        page_token = api_response.body.get(
-            'nextPageToken',
-        )  # pyright: ignore[reportUnknownVariableType]
-        if not page_token:
-            break  # Exit loop if no more pages
+        for item in _list_children(parent, 'FOLDER'):
+            details = item['data'].get('details', {})  # pyright: ignore[reportUnknownVariableType]
+            name = details.get('name')  # pyright: ignore[reportUnknownVariableType]
+            if not name:
+                continue
+            _walk(f'{parent}{name}/', f'{relative_prefix}{name}/')
 
-    logger.info(f'Found {len(files_to_download)} files to download.')
-    return files_to_download
+    _walk(base, '')
+    logger.info(f'List under {base} (recursive={recursive}) found {len(files)} files.')
+    return files
 
 
 def check_file_existence(
@@ -277,7 +291,6 @@ def check_file_existence(
     Checks if the CRAM file already exists in ICA and returns its status.
     (Used by upload_data_to_ica.py)
     """
-    logger.info(f'Checking existence of {cram_name}...')
     cram_data = ica_api_utils.get_file_details_from_ica(
         api_instance,
         path_params,
@@ -289,7 +302,7 @@ def check_file_existence(
     return None
 
 
-def finalize_upload(
+def finalise_upload(
     api_instance: 'project_data_api.ProjectDataApi',
     path_params: dict[str, str],
     paths: dict[str, str],
@@ -299,7 +312,6 @@ def finalize_upload(
     Re-fetches the file ID from ICA and writes the output JSON file.
     (Used by upload_data_to_ica.py)
     """
-    logger.info(f'Re-fetching file ID for {paths["sg_name"]}...')
     cram_data = ica_api_utils.get_file_details_from_ica(
         api_instance,
         path_params,
@@ -313,8 +325,6 @@ def finalize_upload(
         raise ValueError(
             f'Failed to find file ID in ICA after upload for {paths["sg_name"]}.',
         )
-
-    logger.info(f'CRAM FID: {cram_fid}')
 
     # Write only the CRAM FID to the output JSON
     output_data = {'cram_fid': cram_fid}

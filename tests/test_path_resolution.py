@@ -4,7 +4,12 @@ from pathlib import Path
 import cpg_utils.config
 import pytest
 
-from dragen_align_pa.utils import PER_SG_STATE_SCHEMA_VERSION, get_batch_artefacts_path, get_ica_sample_folder
+from dragen_align_pa.utils import (
+    PER_SG_STATE_SCHEMA_VERSION,
+    get_batch_artefacts_path,
+    get_ica_sample_folder,
+    load_per_sg_state,
+)
 
 
 def _write_state(path: Path, **fields) -> None:
@@ -31,9 +36,9 @@ def test_get_ica_sample_folder_renders_expected_path(tmp_path: Path, monkeypatch
     monkeypatch.setattr('dragen_align_pa.utils.config_retrieve', fake_config_retrieve)
     monkeypatch.setattr('dragen_align_pa.utils.BUCKET_NAME', 'cpg-test-dataset-test')
 
-    result = get_ica_sample_folder(state_path, sg_name='SYN00001')
+    result = get_ica_sample_folder(state_path, sg_name='SYN00001', cohort_name='COH0001')
     expected = (
-        '/cpg-test-dataset-test/test-dragen-378/'
+        '/cpg-test-dataset-test/test-dragen-378/COH0001/'
         'COH0001-batch0000_test-guid_-00000000-1111-2222-3333-444444444444/SYN00001/'
     )
     assert result == expected
@@ -50,12 +55,14 @@ def test_get_ica_sample_folder_rejects_old_schema(tmp_path: Path):
         # missing schema_version, user_reference, batch_index
     }))
     with pytest.raises(ValueError, match='schema_version'):
-        get_ica_sample_folder(state_path, sg_name='SYN00001')
+        get_ica_sample_folder(state_path, sg_name='SYN00001', cohort_name='COH0001')
 
 
 def test_get_ica_sample_folder_raises_on_missing_state(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
-        get_ica_sample_folder(tmp_path / 'does-not-exist.json', sg_name='SYN00001')
+        get_ica_sample_folder(
+            tmp_path / 'does-not-exist.json', sg_name='SYN00001', cohort_name='COH0001',
+        )
 
 
 def test_get_ica_sample_folder_raises_keyerror_on_missing_batch_index(tmp_path: Path):
@@ -71,8 +78,24 @@ def test_get_ica_sample_folder_raises_keyerror_on_missing_batch_index(tmp_path: 
         'user_reference': 'COH0001-batch0000_test-guid_',
         # missing batch_index
     }))
-    with pytest.raises(KeyError, match='batch_index'):
-        get_ica_sample_folder(state_path, sg_name='SYN00001')
+    with pytest.raises(KeyError, match=r'batch_index'):
+        get_ica_sample_folder(state_path, sg_name='SYN00001', cohort_name='COH0001')
+
+
+def test_load_per_sg_state_reports_all_missing_keys(tmp_path: Path):
+    """When several required keys are absent, the error names ALL of them so
+    operators fix everything in one pass."""
+    state_path = tmp_path / 'SYN00001_pipeline_id_and_arguid.json'
+    state_path.write_text(json.dumps({'schema_version': PER_SG_STATE_SCHEMA_VERSION}))
+    with pytest.raises(KeyError) as excinfo:
+        load_per_sg_state(
+            state_path,
+            required_keys=('user_reference', 'pipeline_id', 'batch_index'),
+        )
+    message = str(excinfo.value)
+    assert "'user_reference'" in message
+    assert "'pipeline_id'" in message
+    assert "'batch_index'" in message
 
 
 def test_conftest_output_path_stub_accepts_category_kwarg():

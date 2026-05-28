@@ -1,6 +1,5 @@
 import os
 import time
-from collections.abc import Callable
 from functools import partial
 from typing import Literal
 
@@ -71,8 +70,8 @@ def _create_md5_output_folder(
     object_id, _ = ica_utils.create_upload_object_id(
         api_instance=api_instance,
         path_params=path_parameters,
-        sg_name=cohort_name,
-        file_name=cohort_name,  # Folder name is the cohort name
+        folder_name=cohort_name,
+        file_name=cohort_name,
         folder_path=folder_path,
         object_type='FOLDER',
     )
@@ -173,7 +172,6 @@ def run(
         max_retries = 5
         retry_delay_seconds = 15
         for attempt in range(max_retries):
-            logger.info(f"Attempt {attempt + 1}/{max_retries} to find uploaded file '{fastq_list_filename}'...")
             fastq_list_file_details = ica_api_utils.get_file_details_from_ica(
                 api_instance=api_instance,
                 path_params=path_parameters,
@@ -214,10 +212,6 @@ def run(
         md5_outputs_folder_id=md5_outputs_folder_id,
     )
 
-    def _create_submit_callable_factory(target_name: str) -> Callable[[], str]:
-        _ = target_name
-        return submit_callable
-
     manage_ica_pipeline_loop(
         targets_to_process=[cohort],
         outputs=outputs,
@@ -226,7 +220,7 @@ def run(
         success_file_key_template='md5sum_pipeline_success',
         pipeline_id_file_key_template='md5sum_pipeline_run',
         error_log_key=f'{cohort_name}_md5_errors',
-        submit_function_factory=_create_submit_callable_factory,
+        submit_function_factory=lambda _target_name: submit_callable,
         allow_retry=True,
         sleep_time_seconds=300,
     )

@@ -90,7 +90,7 @@ def run(
         ica_cli_utils.perform_upload_if_needed(cram_status, paths)
 
         # 5. --- Get Final File ID and Write Output ---
-        ica_utils.finalize_upload(
+        ica_utils.finalise_upload(
             api_instance=api_instance,
             path_params=path_params,
             paths=paths,

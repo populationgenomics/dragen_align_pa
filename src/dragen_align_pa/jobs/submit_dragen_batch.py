@@ -23,8 +23,9 @@ from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
-from dragen_align_pa.batches import Batch, validate_error_strategy
+from dragen_align_pa.batches import IcaBatch, validate_error_strategy
 from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_file_id
+from dragen_align_pa.utils import get_bed_names_for_seqtype
 
 # DRAGEN flags that don't depend on input type (CRAM vs FASTQ) or sequencing type (WGS vs WES).
 # Sourced from the production CRAM-mode preset in the legacy submitter — anything WGS/WES-divergent
@@ -44,7 +45,6 @@ _COMMON_ADDITIONAL_ARGS = (
     '--vc-enable-vcf-output false '
     '--enable-map-align-output true '
     '--enable-duplicate-marking true '
-    '--enable-cyp2d6 true '
     '--repeat-genotype-enable true '
 )
 
@@ -57,11 +57,9 @@ _MAX_COVERAGE_REGION_BEDS = 3
 def _build_additional_args() -> str:
     """Concatenate common + sequencing-type preset + user override into one args string.
 
-    Raises if any `<placeholder>` sentinel survives in the preset or user
-    args (e.g. the WES preset shipping `<bed-name>` defaults that weren't
-    filled in for this run). Placeholders are a property of fill-in-the-blank
-    preset/user strings — NOT the hardcoded common block — so we scan
-    each source individually rather than the assembled output.
+    Tokens like `{vc_target}` in preset/user args are substituted from the
+    matching entries in `[presets.<seqtype>.bed_names]`. Any surviving `{…}`
+    or legacy `<…>` placeholders are rejected as unfilled config.
     """
     sequencing_type = config_retrieve(['workflow', 'sequencing_type'])
     if sequencing_type not in {'genome', 'exome'}:
@@ -91,11 +89,21 @@ def _build_additional_args() -> str:
     preset_args = preset.get('additional_args', '').strip()
     user_args = user.get('additional_args', '').strip()
 
-    # Scan preset and user args individually — these are the only strings
-    # where `<placeholder>` sentinels are legitimate inputs that must be
-    # filled before submission. _COMMON_ADDITIONAL_ARGS is hardcoded and
-    # may contain `<token>` substrings now or in the future without that
-    # implying an unfilled placeholder.
+    # Substitute {...} tokens from [presets.<seqtype>.bed_names] entries.
+    # KeyError means args references a token that bed_names doesn't define.
+    bed_names = get_bed_names_for_seqtype()
+    try:
+        preset_args = preset_args.format(**bed_names)
+        user_args = user_args.format(**bed_names)
+    except KeyError as e:
+        raise ValueError(
+            f'DRAGEN additional_args references {{{e.args[0]}}} but '
+            f'[presets.{sequencing_type}.bed_names] has no entry named '
+            f'{e.args[0]!r}. Configured entries: {sorted(bed_names)}.',
+        ) from None
+
+    # Legacy `<…>` sentinels are not valid; reject any that survive.
+    # _COMMON_ADDITIONAL_ARGS is hardcoded so its content isn't scanned.
     for source_name, source in (('preset', preset_args), ('user', user_args)):
         placeholders = _PRESET_PLACEHOLDER_RE.findall(source)
         if placeholders:
@@ -110,9 +118,23 @@ def _build_additional_args() -> str:
                 f'Fill them in your config before running.',
             )
 
+    # Optional per-preset VC target BED padding. Omit the flag when 0 so a
+    # stock-config run doesn't pass --vc-target-bed-padding 0 to DRAGEN.
+    vc_padding = int(preset.get('vc_target_bed_padding', 0))
+    vc_padding_arg = f'--vc-target-bed-padding {vc_padding}' if vc_padding > 0 else ''
+
+    # CYP2D6 pharmacogenomic caller: on by default, togglable via config.
+    enable_cyp2d6 = config_retrieve(
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'enable_cyp2d6'],
+        default=True,
+    )
+    cyp2d6_arg = f'--enable-cyp2d6 {"true" if enable_cyp2d6 else "false"}'
+
     parts = [
         _COMMON_ADDITIONAL_ARGS.strip(),
         f"--cnv-segmentation-mode {preset['cnv_segmentation_mode']}",
+        cyp2d6_arg,
+        vc_padding_arg,
         preset_args,
         user_args,
     ]
@@ -138,7 +160,7 @@ def _build_top_level_parameters(error_strategy: str = 'auto') -> list[AnalysisPa
 
 
 def _build_cram_data_inputs(
-    batch: Batch,
+    batch: IcaBatch,
     per_sg_state_paths: dict[str, cpg_utils.Path],
 ) -> tuple[list[AnalysisDataInput], list[str]]:
     """Construct ICA data inputs for a CRAM-mode batch.
@@ -291,7 +313,7 @@ def _upload_per_batch_fastq_list(
     file_id, file_status = ica_utils.create_upload_object_id(
         api_instance=api_instance,
         path_params={'projectId': project_id},
-        sg_name=cohort_name,
+        folder_name=cohort_name,
         file_name=file_name,
         folder_path=folder_path,
         object_type='FILE',
@@ -318,7 +340,7 @@ def _upload_per_batch_fastq_list(
 def _build_fastq_data_inputs(
     api_instance: project_data_api.ProjectDataApi,
     project_id: str,
-    batch: Batch,
+    batch: IcaBatch,
     fastq_ids_path: cpg_utils.Path,
     per_sg_fastq_list_paths: dict[str, cpg_utils.Path],
 ) -> tuple[list[AnalysisDataInput], str]:
@@ -379,7 +401,7 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     if len(coverage_region_bed_names) > _MAX_COVERAGE_REGION_BEDS:
         raise ValueError(
             f'ica.qc.coverage_region_beds has {len(coverage_region_bed_names)} entries; '
-            f'DRAGEN supports at most {_MAX_COVERAGE_REGION_BEDS} (design spec §3). '
+            f'DRAGEN supports at most {_MAX_COVERAGE_REGION_BEDS}. '
             f'Trim the list in your TOML.',
         )
     # Resolve human-readable BED basenames to ICA file IDs. Doing this at the
@@ -394,26 +416,31 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
         default=[],
     )
     user_files = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'], default=[])
-    additional_files = list(preset_files) + list(user_files)
+    # additional_files entries are BED basenames, resolved via ICA_FILE_IDS.
+    # bed_names values are added too so the operator names a BED once.
+    bed_name_files = list(get_bed_names_for_seqtype().values())
+    additional_file_names: list[str] = list(
+        dict.fromkeys(list(preset_files) + list(user_files) + bed_name_files)
+    )
+    additional_file_ids = [resolve_ica_file_id(name) for name in additional_file_names]
 
     inputs: list[AnalysisDataInput] = [AnalysisDataInput(parameterCode='ref_tar', dataIds=[dragen_ht_id])]
     if coverage_region_bed_ids:
         inputs.append(AnalysisDataInput(parameterCode='qc_coverage_region_beds', dataIds=coverage_region_bed_ids))
     if cross_cont_vcf:
         inputs.append(AnalysisDataInput(parameterCode='qc_cross_cont_vcf', dataIds=[cross_cont_vcf]))
-    if additional_files:
-        inputs.append(AnalysisDataInput(parameterCode='additional_files', dataIds=additional_files))
+    if additional_file_ids:
+        inputs.append(AnalysisDataInput(parameterCode='additional_files', dataIds=additional_file_ids))
     return inputs
 
 
 def run(
-    batch: Batch,
+    batch: IcaBatch,
     analysis_output_fid_path: cpg_utils.Path,
     cram_state_paths: dict[str, cpg_utils.Path] | None,
     fastq_ids_path: cpg_utils.Path | None,
     per_sg_fastq_list_paths: dict[str, cpg_utils.Path] | None,
     error_strategy: str = 'auto',
-    ar_guid_override: str | None = None,
 ) -> dict[str, str | list[str]]:
     """Submit one batch to the unified DRAGEN pipeline.
 
@@ -443,7 +470,11 @@ def run(
     3. The caller (`manage_dragen_pipeline.py::_build_submit_callable`)
        persists in this order: per-SG state files first (best-effort
        projections of batches.json) → `batches.json` (the commit point).
-       See Task 15 for the rationale.
+       The order is intentional: if we crash between the two writes,
+       batches.json still shows the batch as PENDING, the next pass
+       re-submits, and per-SG state gets overwritten — reconverging
+       cleanly rather than presenting downstream readers with a state
+       file referencing an unacknowledged batch.
     """
     # Fail-fast input-mode validation, BEFORE any GCS / ICA / secrets IO,
     # so misuse surfaces cheaply at the orchestrator layer. Exactly one of
@@ -474,25 +505,12 @@ def run(
     with analysis_output_fid_path.open('r') as fh:
         analysis_output_fid: str = json.load(fh)['analysis_output_fid']
 
-    if ar_guid_override is not None:
-        # `force_resubmit` lifts the prior batch's AR GUID out of per-SG state
-        # so the new submission keeps the same ICA folder identity (spec §4 line 213).
-        # `is not None` (not truthiness) so an empty-string override raises clearly
-        # rather than silently falling through to the env GUID.
-        if not ar_guid_override:
-            raise ValueError(
-                f'ar_guid_override was empty string for batch {batch.name}; '
-                f'callers should pass None to use the env GUID.',
-            )
-        ar_guid = ar_guid_override
-        logger.info(f'Reusing preserved AR GUID for batch {batch.name}: {ar_guid}')
-    else:
-        ar_guid = try_get_ar_guid()
-        if not ar_guid:
-            raise RuntimeError(
-                'try_get_ar_guid() returned None/empty — analysis-runner GUID is missing from env. '
-                'This breaks ICA folder naming and per-SG state files. Refusing to submit.',
-            )
+    ar_guid = try_get_ar_guid()
+    if not ar_guid:
+        raise RuntimeError(
+            'try_get_ar_guid() returned None/empty — analysis-runner GUID is missing from env. '
+            'This breaks ICA folder naming and per-SG state files. Refusing to submit.',
+        )
     user_reference = f'{batch.name}_{ar_guid}_'
 
     pipeline_id_config: str = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'pipeline_id'])
