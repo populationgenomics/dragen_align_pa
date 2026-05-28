@@ -195,3 +195,20 @@ def test_check_ica_pipeline_status_preserves_api_exception_status():
     assert exc_info.value.status == 429, (
         f'expected .status == 429 to survive the wrapper; got {exc_info.value.status!r}'
     )
+
+
+def test_submit_nextflow_analysis_preserves_api_exception_status():
+    """Same defect as test_check_ica_pipeline_status_preserves_api_exception_status,
+    different call site. submit_nextflow_analysis is the natural next target for
+    the retry decorator; ensure .status survives so the predicate can match."""
+    api = MagicMock()
+    api.create_nextflow_analysis.side_effect = ApiException(status=503, reason='Service Unavailable')
+
+    with pytest.raises(ApiException) as exc_info:
+        ica_api_utils.submit_nextflow_analysis(
+            api_instance=api,
+            path_params={'projectId': 'p'},
+            body=MagicMock(),
+        )
+
+    assert exc_info.value.status == 503

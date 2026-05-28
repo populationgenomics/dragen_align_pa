@@ -200,9 +200,11 @@ def check_object_already_exists(
         # Statuses are ["PARTIAL", "AVAILABLE", "ARCHIVING", "ARCHIVED", "UNARCHIVING", "DELETING", ]
         raise NotImplementedError(f'Checking for file status "{status}" is not implemented yet.')
     except icasdk.ApiException as e:
-        raise icasdk.ApiException(
-            f'Exception when calling ProjectDataApi -> get_project_data_list: {e}',
-        ) from e
+        logger.error(
+            f'ProjectDataApi.get_project_data_list raised for path_params={path_params}, '
+            f'file_name={file_name!r}: status={e.status} reason={e.reason}',
+        )
+        raise
 
 
 def find_file_id_by_name(
@@ -315,6 +317,8 @@ def submit_nextflow_analysis(
         analysis_id: str = api_response.body['id']  # type: ignore[ReportUnknownVariableType]
         return analysis_id
     except icasdk.ApiException as e:
-        raise icasdk.ApiException(
-            f'Exception when calling ProjectAnalysisApi->create_nextflow_analysis: {e}',
-        ) from e
+        logger.error(
+            f'ProjectAnalysisApi.create_nextflow_analysis raised for path_params={path_params}: '
+            f'status={e.status} reason={e.reason}',
+        )
+        raise
