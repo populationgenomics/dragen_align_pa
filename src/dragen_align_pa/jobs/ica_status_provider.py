@@ -42,7 +42,7 @@ class ParallelPerIdStatusProvider:
     def __init__(
         self,
         concurrency: int,
-        refresh_timeout_seconds: int,
+        refresh_timeout_seconds: float,
         project_id: str | None = None,
     ) -> None:
         self._concurrency = concurrency

@@ -116,3 +116,31 @@ def test_refresh_clears_stale_map_each_cycle():
             provider.refresh({'b'})  # 'a' is no longer in_flight
             assert provider.get_status('a') == 'UNKNOWN'
             assert provider.get_status('b') == 'INPROGRESS'
+
+
+def test_refresh_marks_timed_out_ids_as_unknown(monkeypatch):
+    """A worker hanging past refresh_timeout_seconds must not stall the
+    cycle. wait(timeout=...) returns the done set; stragglers are cancelled
+    (no-op if already running, but their absence from the map means
+    get_status returns 'UNKNOWN' → no transition this cycle, safe)."""
+    ica_api_utils_mod = __import__('dragen_align_pa.ica_api_utils', fromlist=['_'])
+    import time as time_module
+
+    def slow_check(api_instance, path_params):
+        if path_params['analysisId'] == 'slow':
+            time_module.sleep(2.0)  # hangs past the 0.1s cycle timeout
+        return 'INPROGRESS'
+
+    with patch.object(ica_api_utils_mod, 'check_ica_pipeline_status', side_effect=slow_check), \
+         patch.object(ica_api_utils_mod, 'get_ica_api_client',
+                      return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()),
+                                             __exit__=MagicMock(return_value=None))), \
+         patch.object(ica_api_utils_mod, 'get_ica_secrets',
+                      return_value={'projectID': 'proj', 'apiKey': 'k'}):
+        # Tiny timeout so the test runs in <1s.
+        with ParallelPerIdStatusProvider(concurrency=4, refresh_timeout_seconds=0.1) as provider:
+            provider.refresh({'fast-1', 'fast-2', 'slow'})
+
+            assert provider.get_status('fast-1') == 'INPROGRESS'
+            assert provider.get_status('fast-2') == 'INPROGRESS'
+            assert provider.get_status('slow') == 'UNKNOWN'
