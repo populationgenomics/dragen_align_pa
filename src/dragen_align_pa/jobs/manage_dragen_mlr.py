@@ -13,6 +13,7 @@ from loguru import logger
 from dragen_align_pa import ica_cli_utils, utils
 from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
+from dragen_align_pa.jobs.ica_status_provider import ParallelPerIdStatusProvider
 from dragen_align_pa.utils import load_per_sg_state
 
 
@@ -213,15 +214,24 @@ def run(
             output_prefix=output_prefix,
         )
 
-    manage_ica_pipeline_loop(
-        targets_to_process=cohort.get_sequencing_groups(),
-        outputs=outputs,
-        pipeline_name='MLR',
-        is_mlr_pipeline=True,
-        success_file_key_template='{target_name}_mlr_success',
-        pipeline_id_file_key_template='{target_name}_mlr_pipeline_id',
-        error_log_key=f'{cohort.name}_mlr_errors',
-        submit_function_factory=_create_submit_callable,
-        allow_retry=False,
-        sleep_time_seconds=330,
-    )
+    mlr_project_id: str = config_retrieve(['ica', 'projects', 'dragen_mlr_project_id'])
+    with ParallelPerIdStatusProvider(
+        concurrency=config_retrieve(['ica', 'polling', 'concurrency'], default=16),
+        refresh_timeout_seconds=config_retrieve(
+            ['ica', 'polling', 'refresh_timeout_seconds'], default=180,
+        ),
+        project_id=mlr_project_id,
+    ) as status_provider:
+        manage_ica_pipeline_loop(
+            targets_to_process=cohort.get_sequencing_groups(),
+            outputs=outputs,
+            pipeline_name='MLR',
+            is_mlr_pipeline=True,
+            success_file_key_template='{target_name}_mlr_success',
+            pipeline_id_file_key_template='{target_name}_mlr_pipeline_id',
+            error_log_key=f'{cohort.name}_mlr_errors',
+            submit_function_factory=_create_submit_callable,
+            allow_retry=False,
+            sleep_time_seconds=330,
+            status_provider=status_provider,
+        )
