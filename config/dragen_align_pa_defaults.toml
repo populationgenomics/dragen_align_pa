@@ -150,6 +150,16 @@ dragmap = 'fol.df2129db2c88419cbe0408dd600dce1f'
 # GATK reference FASTA
 gatk = ''
 
+# Parallel per-id status polling tuning (see ICA status-polling spec).
+# concurrency: ThreadPoolExecutor.max_workers per StatusProvider. Doubles as
+#   urllib3.PoolManager.connection_pool_maxsize on the shared ApiClient so
+#   the fan-out doesn't bottleneck at urllib3's default 4-sockets-per-host.
+# refresh_timeout_seconds: per-cycle wall-clock cap. Stranded futures are
+#   cancelled; their ids stay absent from the map and read as 'UNKNOWN'.
+[ica.polling]
+concurrency = 16
+refresh_timeout_seconds = 180
+
 [ica.qc]
 cross_cont_vcf = 'fil.1a7a2d0442854127e5d608da2935b1b0'
 # Legacy per-channel coverage region BED IDs. Read by run_align_genotype_with_dragen.py;

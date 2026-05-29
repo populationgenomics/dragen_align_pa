@@ -26,9 +26,9 @@ _ORIGINAL_OUTPUT_PATH = cpg_utils.config.output_path
 
 _TEST_CONFIG: dict[tuple, object] = {
     ('workflow', 'reads_type'): 'cram',
-    # Match the production TOML value verbatim so any future test that doesn't
-    # explicitly monkeypatch DRAGEN_VERSION still gets a path-shape match.
     ('ica', 'pipelines', 'dragen_version'): 'dragen_3_7_8',
+    ('ica', 'polling', 'concurrency'): 16,
+    ('ica', 'polling', 'refresh_timeout_seconds'): 180,
 }
 
 
