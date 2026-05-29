@@ -17,6 +17,7 @@ import pytest
 from google.api_core import exceptions as gax_exceptions
 
 from dragen_align_pa import ica_api_utils
+from icasdk.exceptions import ApiException
 
 
 @pytest.fixture(autouse=True)
@@ -167,3 +168,123 @@ def test_get_ica_secrets_cache_skips_retry_layer_on_subsequent_calls(monkeypatch
 
     assert second == payload
     angry_client.access_secret_version.assert_not_called()
+
+
+def _mock_api_with_status(status: int) -> object:
+    """Build a stand-in for ProjectAnalysisApi whose get_analysis raises an
+    ApiException with the given HTTP status preserved on the exception."""
+    api = MagicMock()
+    api.get_analysis.side_effect = ApiException(status=status, reason='Too Many Requests')
+    return api
+
+
+def test_check_ica_pipeline_status_preserves_api_exception_status():
+    """Regression: the wrapper's old `raise ApiException(f'...{e}') from e`
+    pattern clobbered `.status` (the f-string went into the `status=`
+    positional, making it a str). Without `.status` preserved as int, any
+    downstream retry predicate `e.status in (429, 503)` is dead code.
+    The wrapper must propagate the original ApiException intact."""
+    api = _mock_api_with_status(429)
+
+    with pytest.raises(ApiException) as exc_info:
+        ica_api_utils.check_ica_pipeline_status(
+            api_instance=api,
+            path_params={'projectId': 'p', 'analysisId': 'a'},
+        )
+
+    assert exc_info.value.status == 429, (
+        f'expected .status == 429 to survive the wrapper; got {exc_info.value.status!r}'
+    )
+
+
+def test_submit_nextflow_analysis_preserves_api_exception_status():
+    """Same defect as test_check_ica_pipeline_status_preserves_api_exception_status,
+    different call site. submit_nextflow_analysis is the natural next target for
+    the retry decorator; ensure .status survives so the predicate can match."""
+    api = MagicMock()
+    api.create_nextflow_analysis.side_effect = ApiException(status=503, reason='Service Unavailable')
+
+    with pytest.raises(ApiException) as exc_info:
+        ica_api_utils.submit_nextflow_analysis(
+            api_instance=api,
+            path_params={'projectId': 'p'},
+            body=MagicMock(),
+        )
+
+    assert exc_info.value.status == 503
+
+
+def test_check_ica_pipeline_status_retries_on_429_then_succeeds():
+    """A transient 429 must be retried; the second attempt's success
+    populates the return value. Without this, a single ICA blip tears
+    down the cohort monitor (the originating production symptom)."""
+    api = MagicMock()
+    succeeding_response = MagicMock()
+    succeeding_response.body = {'status': 'INPROGRESS'}
+    api.get_analysis.side_effect = [
+        ApiException(status=429, reason='Too Many Requests'),
+        succeeding_response,
+    ]
+
+    result = ica_api_utils.check_ica_pipeline_status(
+        api_instance=api,
+        path_params={'projectId': 'p', 'analysisId': 'a'},
+    )
+
+    assert result == 'INPROGRESS'
+    assert api.get_analysis.call_count == 2
+
+
+def test_check_ica_pipeline_status_retries_on_503_then_succeeds():
+    """503 (ICA backend unavailable) is the other transient class the
+    retry must absorb."""
+    api = MagicMock()
+    succeeding_response = MagicMock()
+    succeeding_response.body = {'status': 'SUCCEEDED'}
+    api.get_analysis.side_effect = [
+        ApiException(status=503, reason='Service Unavailable'),
+        succeeding_response,
+    ]
+
+    result = ica_api_utils.check_ica_pipeline_status(
+        api_instance=api,
+        path_params={'projectId': 'p', 'analysisId': 'a'},
+    )
+
+    assert result == 'SUCCEEDED'
+    assert api.get_analysis.call_count == 2
+
+
+def test_check_ica_pipeline_status_does_not_retry_non_transient_status():
+    """A 404 (analysis not found) is a real not-retryable error — retrying
+    just delays the failure signal. Other non-(429|503) ApiExceptions must
+    propagate on the first occurrence."""
+    api = MagicMock()
+    api.get_analysis.side_effect = ApiException(status=404, reason='Not Found')
+
+    with pytest.raises(ApiException) as exc_info:
+        ica_api_utils.check_ica_pipeline_status(
+            api_instance=api,
+            path_params={'projectId': 'p', 'analysisId': 'a'},
+        )
+
+    assert exc_info.value.status == 404
+    assert api.get_analysis.call_count == 1
+
+
+def test_check_ica_pipeline_status_gives_up_after_persistent_429():
+    """If every attempt 429s, eventually we surface the original
+    ApiException to the caller (the StatusProvider then logs it at DEBUG
+    and the id reads as UNKNOWN)."""
+    api = MagicMock()
+    api.get_analysis.side_effect = ApiException(status=429, reason='Too Many Requests')
+
+    with pytest.raises(ApiException) as exc_info:
+        ica_api_utils.check_ica_pipeline_status(
+            api_instance=api,
+            path_params={'projectId': 'p', 'analysisId': 'a'},
+        )
+
+    assert exc_info.value.status == 429
+    # 5 attempts total (stop_after_attempt(5)).
+    assert api.get_analysis.call_count == 5
