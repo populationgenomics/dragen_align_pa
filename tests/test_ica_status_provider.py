@@ -144,3 +144,16 @@ def test_refresh_marks_timed_out_ids_as_unknown(monkeypatch):
             assert provider.get_status('fast-1') == 'INPROGRESS'
             assert provider.get_status('fast-2') == 'INPROGRESS'
             assert provider.get_status('slow') == 'UNKNOWN'
+
+
+def test_close_shuts_down_the_executor():
+    """The provider's executor must shut down cleanly when the cohort run
+    exits (normal or exception path). The `with` block in
+    manage_ica_pipeline_loop relies on this so Hail Batch workers don't
+    leak threads."""
+    provider = ParallelPerIdStatusProvider(concurrency=2, refresh_timeout_seconds=10)
+    assert not provider._executor._shutdown  # type: ignore[attr-defined]
+
+    provider.close()
+
+    assert provider._executor._shutdown  # type: ignore[attr-defined]
