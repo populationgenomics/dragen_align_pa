@@ -515,7 +515,14 @@ def run(
 
     pipeline_id_config: str = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'pipeline_id'])
     user_tags: list[str] = config_retrieve(['ica', 'tags', 'user_tags'])
-    technical_tags: list[str] = config_retrieve(['ica', 'tags', 'technical_tags'])
+    # AR-GUID is appended to technicalTags so operators can filter the ICA UI
+    # by cohort run (and so a future bulk-list polling strategy can scope its
+    # query). ar_guid is guaranteed non-empty by the try_get_ar_guid() guard
+    # above (line ~508).
+    technical_tags: list[str] = [
+        *config_retrieve(['ica', 'tags', 'technical_tags']),
+        ar_guid,
+    ]
     reference_tags: list[str] = config_retrieve(['ica', 'tags', 'reference_tags'])
 
     with ica_api_utils.get_ica_api_client() as api_client:

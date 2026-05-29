@@ -1,3 +1,5 @@
+import json
+from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -496,3 +498,87 @@ def test_build_fastq_data_inputs_handles_duplicate_fastq_rows(tmp_path, monkeypa
     # Most-recent-wins: NEW IDs preserved, OLD discarded.
     assert sorted(ica_ids) == ['fil.NEW_R1', 'fil.NEW_R2']
     assert len(set(ica_ids)) == len(ica_ids), 'duplicate ICA IDs leaked into dataIds'
+
+
+def test_run_includes_ar_guid_in_technical_tags(tmp_path, monkeypatch):
+    """The AR-GUID must be appended to technicalTags at submit time so
+    operators can filter the ICA UI by cohort run, and so a future
+    bulk-list polling strategy can scope its query by tag."""
+    # Write a minimal analysis_output_fid_path JSON file.
+    analysis_output_fid_path = tmp_path / 'output_fid.json'
+    analysis_output_fid_path.write_text(json.dumps({'analysis_output_fid': 'fol.output123'}))
+
+    # Write a minimal CRAM state file for CPG_A.
+    cram_state_path = tmp_path / 'CPG_A_cram.json'
+    cram_state_path.write_text(json.dumps({
+        'schema_version': 1,
+        'sg_name': 'CPG_A',
+        'cram_fid': 'fil.cramfile',
+        'cram_index_fid': 'fil.craifile',
+        'ar_guid': 'AR-GUID-TEST',
+    }))
+
+    cfg = {
+        ('ica', 'tags', 'technical_tags'): ['existing-tag'],
+        ('ica', 'tags', 'user_tags'): ['user-tag'],
+        ('ica', 'tags', 'reference_tags'): ['ref-tag'],
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'pipeline_id'): 'pipe-id-000',
+    }
+    monkeypatch.setattr(
+        submit_dragen_batch, 'config_retrieve',
+        lambda key, default=None: cfg.get(tuple(key), default),
+    )
+
+    # Stub try_get_ar_guid to return a known AR-GUID.
+    monkeypatch.setattr(submit_dragen_batch, 'try_get_ar_guid', lambda: 'AR-GUID-TEST')
+
+    # Stub secrets / project ID.
+    monkeypatch.setattr(
+        submit_dragen_batch.ica_api_utils, 'get_ica_secrets',
+        lambda: {'projectID': 'proj-test', 'apiKey': 'key-test'},
+    )
+
+    # Capture the body passed to submit_nextflow_analysis.
+    captured: dict[str, object] = {}
+
+    def fake_submit(**kwargs):
+        captured['body'] = kwargs['body']
+        return 'analysis-captured-id'
+
+    monkeypatch.setattr(submit_dragen_batch.ica_api_utils, 'submit_nextflow_analysis', fake_submit)
+
+    # Stub internal data-input and parameter builders to avoid full config wiring.
+    monkeypatch.setattr(submit_dragen_batch, '_build_common_data_inputs', list)
+    monkeypatch.setattr(
+        submit_dragen_batch, '_build_cram_data_inputs',
+        lambda batch, per_sg_state_paths: ([], ['fil.cramfile']),
+    )
+    monkeypatch.setattr(
+        submit_dragen_batch, '_build_top_level_parameters',
+        lambda error_strategy: [],
+    )
+
+    # Stub get_ica_api_client as a context manager returning a MagicMock.
+    @contextmanager
+    def fake_api_client():
+        yield MagicMock()
+
+    monkeypatch.setattr(submit_dragen_batch.ica_api_utils, 'get_ica_api_client', fake_api_client)
+
+    batch = IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
+    submit_dragen_batch.run(
+        batch=batch,
+        analysis_output_fid_path=analysis_output_fid_path,
+        cram_state_paths={'CPG_A': cram_state_path},
+        fastq_ids_path=None,
+        per_sg_fastq_list_paths=None,
+    )
+
+    body = captured['body']
+    # icasdk models are DynamicSchema (frozendict-based); access via dict keys.
+    technical_tags = list(body['tags']['technicalTags'])
+    assert 'AR-GUID-TEST' in technical_tags, (
+        f'AR-GUID not found in technicalTags: {technical_tags!r}'
+    )
+    # Original config tags must still be present.
+    assert 'existing-tag' in technical_tags

@@ -199,9 +199,20 @@ def submit_dragen_run(
         ['ica', 'pipelines', config_retrieve(['workflow', 'reads_type'])],
     )
     user_tags: list[str] = config_retrieve(['ica', 'tags', 'user_tags'])
-    technical_tags: list[str] = config_retrieve(['ica', 'tags', 'technical_tags'])
     reference_tags: list[str] = config_retrieve(['ica', 'tags', 'reference_tags'])
-    user_reference: str = f'{sg_name}_{try_get_ar_guid()}_'
+    # AR-GUID must be present to form a meaningful user_reference; we don't
+    # support submission without one (matches submit_dragen_batch.py).
+    ar_guid = try_get_ar_guid()
+    if not ar_guid:
+        raise RuntimeError(
+            'try_get_ar_guid() returned None/empty — analysis-runner GUID is '
+            'missing from env. Refusing to submit.',
+        )
+    technical_tags: list[str] = [
+        *config_retrieve(['ica', 'tags', 'technical_tags']),
+        ar_guid,
+    ]
+    user_reference: str = f'{sg_name}_{ar_guid}_'
 
     logger.info(
         f'Loaded Dragen ICA configuration values, user reference: {user_reference}',
