@@ -299,207 +299,212 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
         provider = status_provider
         owns_provider = False
 
-    while not all(is_finished(target) for target in monitored_targets):
-        # Pre-pass: hydrate pipeline IDs from disk for any target that doesn't
-        # have one yet. This must happen before the in_flight computation so
-        # that newly-resumed targets (whose pipeline_id file was written in a
-        # prior run) are included in the refresh batch on the very first cycle.
-        for t in monitored_targets:
-            if not is_finished(t) and not t.pipeline_id:
-                _pid_file = outputs[pipeline_id_file_key_template.format(target_name=t.name)]
-                if _pid_file.exists():
-                    with _pid_file.open('r') as _fh:
-                        _info = json.load(_fh)
-                        t.pipeline_id = _info['pipeline_id']
-                        t.ar_guid = _info['ar_guid']
-                        if t.status == PipelineStatus.PENDING:
-                            t.status = PipelineStatus.INPROGRESS
+    try:
+        while not all(is_finished(target) for target in monitored_targets):
+            # Pre-pass: hydrate pipeline IDs from disk for any target that doesn't
+            # have one yet. This must happen before the in_flight computation so
+            # that newly-resumed targets (whose pipeline_id file was written in a
+            # prior run) are included in the refresh batch on the very first cycle.
+            for t in monitored_targets:
+                if not is_finished(t) and not t.pipeline_id:
+                    _pid_file = outputs[pipeline_id_file_key_template.format(target_name=t.name)]
+                    if _pid_file.exists():
+                        with _pid_file.open('r') as _fh:
+                            _info = json.load(_fh)
+                            t.pipeline_id = _info['pipeline_id']
+                            t.ar_guid = _info['ar_guid']
+                            if t.status == PipelineStatus.PENDING:
+                                t.status = PipelineStatus.INPROGRESS
 
-        in_flight = {
-            t.pipeline_id
-            for t in monitored_targets
-            if t.pipeline_id and not is_finished(t)
-        }
-        provider.refresh(in_flight)
+            in_flight = {
+                t.pipeline_id
+                for t in monitored_targets
+                if t.pipeline_id and not is_finished(t)
+            }
+            provider.refresh(in_flight)
 
-        for target in monitored_targets:
-            if is_finished(target):
-                continue
-            target_name = target.name
-            pipeline_id_arguid_file = outputs[
-                pipeline_id_file_key_template.format(target_name=target_name)
-            ]
-
-            if pipeline_id_arguid_file.exists() and not target.pipeline_id:
-                with pipeline_id_arguid_file.open('r') as pipeline_fid_handle:
-                    pipeline_info = json.load(pipeline_fid_handle)
-                    target.pipeline_id = pipeline_info['pipeline_id']
-                    target.ar_guid = pipeline_info['ar_guid']
-                    # If we are loading the pipeline ID from file, we assume it is at least in progress
-                    if target.status == PipelineStatus.PENDING:
-                        target.status = PipelineStatus.INPROGRESS
-
-            # Cancel a pipeline if requested
-            if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False) and target.pipeline_id:
-                logger.info(f'Cancelling {pipeline_name} pipeline run: {target.pipeline_id} for {target_name}')
-                # Match `_handle_management_flags`'s pre-loop cancel behaviour:
-                # if the ICA abort API fails, log it but still mark the target
-                # CANCELLED locally. User intent (cancel_cohort_run=true) takes
-                # precedence over the API result — without this catch, an ICA
-                # blip during cancel would propagate out of the loop as a
-                # generic exception, bypassing the orchestrator's CohortCancelled
-                # translation at the end of run().
-                try:
-                    cancel_ica_pipeline_run.run(
-                        ica_pipeline_id=target.pipeline_id,
-                        is_mlr=is_mlr_pipeline,
-                    )
-                except Exception as e:  # noqa: BLE001
-                    logger.error(
-                        f'ICA abort API call failed for {target_name} '
-                        f'(pipeline {target.pipeline_id}): {e}. '
-                        f'Marking CANCELLED locally anyway — user intent overrides the API result.',
-                    )
-                delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
-                target.set_status(PipelineStatus.CANCELLED)
-                _fire_status_change(target, PipelineStatus.CANCELLED)
-            else:
-                submit_callable: Callable[[], str] = submit_function_factory(target_name)
-
-                if not target.pipeline_id:
-                    logger.info(f'Submitting new {pipeline_name} ICA pipeline for {target_name}')
-                    target.pipeline_id = submit_callable()
-                    # Use the preserved guid if it was set, otherwise use the initial one from the env
-                    target.ar_guid = target.ar_guid if target.ar_guid else initial_ar_guid
-                    target.set_status(PipelineStatus.INPROGRESS)
-                    with pipeline_id_arguid_file.open('w') as f:
-                        f.write(json.dumps({'pipeline_id': target.pipeline_id, 'ar_guid': target.ar_guid}))
-
-                pipeline_status: str = provider.get_status(target.pipeline_id)
-
-                if pipeline_status == 'UNKNOWN':
-                    # No fresh status this cycle (worker failed or timed out);
-                    # leave the target's in-memory state untouched and retry
-                    # next cycle.
+            for target in monitored_targets:
+                if is_finished(target):
                     continue
-                if pipeline_status == 'INPROGRESS':
-                    target.set_status(new_status=PipelineStatus.INPROGRESS)
+                target_name = target.name
+                pipeline_id_arguid_file = outputs[
+                    pipeline_id_file_key_template.format(target_name=target_name)
+                ]
 
-                elif pipeline_status == 'SUCCEEDED':
-                    # Transactional SUCCEEDED transition: run the post-success callback
-                    # FIRST (e.g. fetch passfail.json + persist into the cohort batches
-                    # file). Only when it returns cleanly do we mark the target SUCCEEDED
-                    # and write the success marker. If the callback raises, leave state
-                    # as INPROGRESS so the next poll cycle re-fires it — this prevents
-                    # divergent state where the loop has set SUCCEEDED but the caller's
-                    # side-state (e.g. batches.json) was not updated.
-                    #
-                    # Capped at MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES per target: a
-                    # persistently failing callback (e.g. permanent IAM error) escalates
-                    # to FAILED_FINAL rather than spinning the loop forever.
-                    if not _process_succeeded_transition(target, on_succeeded, on_status_change):
-                        continue
-                    target.set_status(new_status=PipelineStatus.SUCCEEDED)
-                    logger.info(f'{pipeline_name} pipeline {target.pipeline_id} has succeeded for {target_name}')
-                    pipeline_success_file = outputs[
-                        success_file_key_template.format(target_name=target_name)
-                    ]
-                    with pipeline_success_file.open('w') as success_file:
-                        success_file.write(
-                            f'ICA {pipeline_name} pipeline {target.pipeline_id} has succeeded for {target_name}.'
+                if pipeline_id_arguid_file.exists() and not target.pipeline_id:
+                    with pipeline_id_arguid_file.open('r') as pipeline_fid_handle:
+                        pipeline_info = json.load(pipeline_fid_handle)
+                        target.pipeline_id = pipeline_info['pipeline_id']
+                        target.ar_guid = pipeline_info['ar_guid']
+                        # If we are loading the pipeline ID from file, we assume it is at least in progress
+                        if target.status == PipelineStatus.PENDING:
+                            target.status = PipelineStatus.INPROGRESS
+
+                # Cancel a pipeline if requested
+                cancel_requested = config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False)
+                if cancel_requested and target.pipeline_id:
+                    logger.info(f'Cancelling {pipeline_name} pipeline run: {target.pipeline_id} for {target_name}')
+                    # Match `_handle_management_flags`'s pre-loop cancel behaviour:
+                    # if the ICA abort API fails, log it but still mark the target
+                    # CANCELLED locally. User intent (cancel_cohort_run=true) takes
+                    # precedence over the API result — without this catch, an ICA
+                    # blip during cancel would propagate out of the loop as a
+                    # generic exception, bypassing the orchestrator's CohortCancelled
+                    # translation at the end of run().
+                    try:
+                        cancel_ica_pipeline_run.run(
+                            ica_pipeline_id=target.pipeline_id,
+                            is_mlr=is_mlr_pipeline,
                         )
-
-                elif pipeline_status in ['ABORTING', 'ABORTED']:
-                    logger.info(f'{pipeline_name} pipeline {target.pipeline_id} has been cancelled for {target_name}.')
-                    target.set_status(new_status=PipelineStatus.CANCELLED)
-                    target.pipeline_id = None
+                    except Exception as e:  # noqa: BLE001
+                        logger.error(
+                            f'ICA abort API call failed for {target_name} '
+                            f'(pipeline {target.pipeline_id}): {e}. '
+                            f'Marking CANCELLED locally anyway — user intent overrides the API result.',
+                        )
                     delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
+                    target.set_status(PipelineStatus.CANCELLED)
                     _fire_status_change(target, PipelineStatus.CANCELLED)
+                else:
+                    submit_callable: Callable[[], str] = submit_function_factory(target_name)
 
-                elif pipeline_status in ['FAILED', 'FAILEDFINAL']:
-                    logger.error(f'{pipeline_name} pipeline {target.pipeline_id} has failed for {target_name}.')
-                    delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
-                    target.pipeline_id = None
-
-                    # Determine if we should retry
-                    if target.allow_retry and not target.has_been_retried:
-                        logger.info(f'Retrying {pipeline_name} pipeline for {target.name}')
+                    if not target.pipeline_id:
+                        logger.info(f'Submitting new {pipeline_name} ICA pipeline for {target_name}')
                         target.pipeline_id = submit_callable()
+                        # Use the preserved guid if it was set, otherwise use the initial one from the env
                         target.ar_guid = target.ar_guid if target.ar_guid else initial_ar_guid
-                        target.has_been_retried = True
-                        target.set_status(PipelineStatus.FAILED_RETRYING)
+                        target.set_status(PipelineStatus.INPROGRESS)
                         with pipeline_id_arguid_file.open('w') as f:
                             f.write(json.dumps({'pipeline_id': target.pipeline_id, 'ar_guid': target.ar_guid}))
-                    else:
-                        target.set_status(PipelineStatus.FAILED_FINAL)
-                        _fire_status_change(target, PipelineStatus.FAILED_FINAL)
-                        logger.error(
-                            f'{target_name} failed {pipeline_name} pipeline {target.pipeline_id} and '
-                            f'retry is not allowed or already attempted.'
-                        )
 
-        status_counts: Counter[PipelineStatus] = Counter(target.status for target in monitored_targets)
-        if status_counts[PipelineStatus.CANCELLED] > 0:
-            cancelled_pipelines: list[str] = [
-                target.name for target in monitored_targets if target.status == PipelineStatus.CANCELLED
-            ]
-            logger.warning(f'Cancelled {pipeline_name} pipelines: {", ".join(cancelled_pipelines)}')
-            if status_counts[PipelineStatus.FAILED_FINAL] > 0:
+                    pipeline_status: str = provider.get_status(target.pipeline_id)
+
+                    if pipeline_status == 'UNKNOWN':
+                        # No fresh status this cycle (worker failed or timed out);
+                        # leave the target's in-memory state untouched and retry
+                        # next cycle.
+                        continue
+                    if pipeline_status == 'INPROGRESS':
+                        target.set_status(new_status=PipelineStatus.INPROGRESS)
+
+                    elif pipeline_status == 'SUCCEEDED':
+                        # Transactional SUCCEEDED transition: run the post-success callback
+                        # FIRST (e.g. fetch passfail.json + persist into the cohort batches
+                        # file). Only when it returns cleanly do we mark the target SUCCEEDED
+                        # and write the success marker. If the callback raises, leave state
+                        # as INPROGRESS so the next poll cycle re-fires it — this prevents
+                        # divergent state where the loop has set SUCCEEDED but the caller's
+                        # side-state (e.g. batches.json) was not updated.
+                        #
+                        # Capped at MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES per target: a
+                        # persistently failing callback (e.g. permanent IAM error) escalates
+                        # to FAILED_FINAL rather than spinning the loop forever.
+                        if not _process_succeeded_transition(target, on_succeeded, on_status_change):
+                            continue
+                        target.set_status(new_status=PipelineStatus.SUCCEEDED)
+                        logger.info(f'{pipeline_name} pipeline {target.pipeline_id} has succeeded for {target_name}')
+                        pipeline_success_file = outputs[
+                            success_file_key_template.format(target_name=target_name)
+                        ]
+                        with pipeline_success_file.open('w') as success_file:
+                            success_file.write(
+                                f'ICA {pipeline_name} pipeline {target.pipeline_id} has succeeded for {target_name}.'
+                            )
+
+                    elif pipeline_status in ['ABORTING', 'ABORTED']:
+                        logger.info(
+                            f'{pipeline_name} pipeline {target.pipeline_id} has been cancelled for {target_name}.'
+                        )
+                        target.set_status(new_status=PipelineStatus.CANCELLED)
+                        target.pipeline_id = None
+                        delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
+                        _fire_status_change(target, PipelineStatus.CANCELLED)
+
+                    elif pipeline_status in ['FAILED', 'FAILEDFINAL']:
+                        logger.error(f'{pipeline_name} pipeline {target.pipeline_id} has failed for {target_name}.')
+                        delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
+                        target.pipeline_id = None
+
+                        # Determine if we should retry
+                        if target.allow_retry and not target.has_been_retried:
+                            logger.info(f'Retrying {pipeline_name} pipeline for {target.name}')
+                            target.pipeline_id = submit_callable()
+                            target.ar_guid = target.ar_guid if target.ar_guid else initial_ar_guid
+                            target.has_been_retried = True
+                            target.set_status(PipelineStatus.FAILED_RETRYING)
+                            with pipeline_id_arguid_file.open('w') as f:
+                                f.write(json.dumps({'pipeline_id': target.pipeline_id, 'ar_guid': target.ar_guid}))
+                        else:
+                            target.set_status(PipelineStatus.FAILED_FINAL)
+                            _fire_status_change(target, PipelineStatus.FAILED_FINAL)
+                            logger.error(
+                                f'{target_name} failed {pipeline_name} pipeline {target.pipeline_id} and '
+                                f'retry is not allowed or already attempted.'
+                            )
+
+            status_counts: Counter[PipelineStatus] = Counter(target.status for target in monitored_targets)
+            if status_counts[PipelineStatus.CANCELLED] > 0:
+                cancelled_pipelines: list[str] = [
+                    target.name for target in monitored_targets if target.status == PipelineStatus.CANCELLED
+                ]
+                logger.warning(f'Cancelled {pipeline_name} pipelines: {", ".join(cancelled_pipelines)}')
+                if status_counts[PipelineStatus.FAILED_FINAL] > 0:
+                    try:
+                        with open('tmp_errors.log') as tmp_log_handle:
+                            lines: list[str] = tmp_log_handle.readlines()
+                            with outputs[error_log_key].open('a') as gcp_error_log_file:
+                                gcp_error_log_file.write('\n'.join(lines))
+                    except (OSError, gcs_exceptions.GoogleCloudError) as e:
+                        logger.error(f'Error reading tmp_errors.log: {e}')
+                logger.info(
+                    f'{pipeline_name} pipeline status: '
+                    f'{status_counts[PipelineStatus.SUCCEEDED]} completed, '
+                    f'{status_counts[PipelineStatus.INPROGRESS]} in progress, '
+                    f'{status_counts[PipelineStatus.FAILED_FINAL]} failed, '
+                    f'{status_counts[PipelineStatus.CANCELLED]} cancelled. '
+                )
+                raise Exception(
+                    f'The following {pipeline_name} pipelines have been cancelled: {", ".join(cancelled_pipelines)}'
+                )
+
+            n_failed: int = status_counts[PipelineStatus.FAILED_FINAL]
+            if n_failed > 0 and float(n_failed) / float(total_targets) > 0.05:  # noqa: PLR2004
+                failed_pipelines: list[str] = [
+                    target.name for target in monitored_targets if target.status == PipelineStatus.FAILED_FINAL
+                ]
+                logger.error(
+                    f'More than 5% of {pipeline_name} pipelines have failed. '
+                    f'Failing pipelines: {" ".join(failed_pipelines)}'
+                )
                 try:
                     with open('tmp_errors.log') as tmp_log_handle:
-                        lines: list[str] = tmp_log_handle.readlines()
-                        with outputs[error_log_key].open('a') as gcp_error_log_file:
+                        lines = tmp_log_handle.readlines()
+                        with outputs[error_log_key].open('w') as gcp_error_log_file:
                             gcp_error_log_file.write('\n'.join(lines))
                 except (OSError, gcs_exceptions.GoogleCloudError) as e:
-                    logger.error(f'Error reading tmp_errors.log: {e}')
+                    logger.error(f'Failed to persist tmp_errors.log to {error_log_key} before 5% failure exit: {e}')
+                raise Exception(
+                    f'More than 5% of {pipeline_name} pipelines have failed. '
+                    f'Failing pipelines: {" ".join(failed_pipelines)}'
+                )
+            status_counts = Counter(target.status for target in monitored_targets)
             logger.info(
                 f'{pipeline_name} pipeline status: '
                 f'{status_counts[PipelineStatus.SUCCEEDED]} completed, '
                 f'{status_counts[PipelineStatus.INPROGRESS]} in progress, '
                 f'{status_counts[PipelineStatus.FAILED_FINAL]} failed, '
-                f'{status_counts[PipelineStatus.CANCELLED]} cancelled. '
+                f'{status_counts[PipelineStatus.CANCELLED]} cancelled.'
             )
-            raise Exception(
-                f'The following {pipeline_name} pipelines have been cancelled: {", ".join(cancelled_pipelines)}'
-            )
-
-        n_failed: int = status_counts[PipelineStatus.FAILED_FINAL]
-        if n_failed > 0 and float(n_failed) / float(total_targets) > 0.05:  # noqa: PLR2004
-            failed_pipelines: list[str] = [
-                target.name for target in monitored_targets if target.status == PipelineStatus.FAILED_FINAL
-            ]
-            logger.error(
-                f'More than 5% of {pipeline_name} pipelines have failed. '
-                f'Failing pipelines: {" ".join(failed_pipelines)}'
-            )
-            try:
-                with open('tmp_errors.log') as tmp_log_handle:
-                    lines = tmp_log_handle.readlines()
-                    with outputs[error_log_key].open('w') as gcp_error_log_file:
-                        gcp_error_log_file.write('\n'.join(lines))
-            except (OSError, gcs_exceptions.GoogleCloudError) as e:
-                logger.error(f'Failed to persist tmp_errors.log to {error_log_key} before 5% failure exit: {e}')
-            raise Exception(
-                f'More than 5% of {pipeline_name} pipelines have failed. '
-                f'Failing pipelines: {" ".join(failed_pipelines)}'
-            )
-        status_counts = Counter(target.status for target in monitored_targets)
-        logger.info(
-            f'{pipeline_name} pipeline status: '
-            f'{status_counts[PipelineStatus.SUCCEEDED]} completed, '
-            f'{status_counts[PipelineStatus.INPROGRESS]} in progress, '
-            f'{status_counts[PipelineStatus.FAILED_FINAL]} failed, '
-            f'{status_counts[PipelineStatus.CANCELLED]} cancelled.'
-        )
-        if all(is_finished(target) for target in monitored_targets):
-            break
-        time.sleep(sleep_time_seconds)
-
-    if owns_provider:
-        # close() is not on the StatusProvider Protocol surface — only on the
-        # concrete ParallelPerIdStatusProvider. Caller-injected providers may
-        # be other shapes; we only close our own default-constructed one.
-        provider.close()  # type: ignore[attr-defined]
+            if all(is_finished(target) for target in monitored_targets):
+                break
+            time.sleep(sleep_time_seconds)
+    finally:
+        if owns_provider:
+            # close() is not on the StatusProvider Protocol surface — only on
+            # the concrete ParallelPerIdStatusProvider. Caller-injected
+            # providers may be other shapes; we only close our own
+            # default-constructed one.
+            provider.close()  # type: ignore[attr-defined]
 
     try:
         with open('tmp_errors.log') as tmp_log_handle:
