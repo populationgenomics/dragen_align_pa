@@ -280,21 +280,24 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                 f'Continuing — in-memory transition stands.',
             )
 
-    # The status_provider owns the parallel per-id fan-out across in-flight
-    # targets. Pass-through allows the orchestrator (or tests) to inject a
-    # fake; otherwise we instantiate one driven by [ica.polling] config.
-    owns_provider = status_provider is None
+    # Resolve the StatusProvider once into a non-Optional local binding so
+    # Pyright can narrow it across the loop body. If the caller passed one,
+    # they own its lifetime; otherwise we default-construct and close on exit.
     if status_provider is None:
         # MLR uses a different project than DRAGEN — caller can pass a
         # pre-configured provider with project_id set; the default path
         # reads from secrets in refresh() and falls back to the DRAGEN
         # project, which is correct for the DRAGEN call site.
-        status_provider = ParallelPerIdStatusProvider(
+        provider: StatusProvider = ParallelPerIdStatusProvider(
             concurrency=config_retrieve(['ica', 'polling', 'concurrency'], default=16),
             refresh_timeout_seconds=config_retrieve(
                 ['ica', 'polling', 'refresh_timeout_seconds'], default=180,
             ),
         )
+        owns_provider = True
+    else:
+        provider = status_provider
+        owns_provider = False
 
     while not all(is_finished(target) for target in monitored_targets):
         # Pre-pass: hydrate pipeline IDs from disk for any target that doesn't
@@ -317,7 +320,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
             for t in monitored_targets
             if t.pipeline_id and not is_finished(t)
         }
-        status_provider.refresh(in_flight)
+        provider.refresh(in_flight)
 
         for target in monitored_targets:
             if is_finished(target):
@@ -372,7 +375,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                     with pipeline_id_arguid_file.open('w') as f:
                         f.write(json.dumps({'pipeline_id': target.pipeline_id, 'ar_guid': target.ar_guid}))
 
-                pipeline_status: str = status_provider.get_status(target.pipeline_id)
+                pipeline_status: str = provider.get_status(target.pipeline_id)
 
                 if pipeline_status == 'UNKNOWN':
                     # No fresh status this cycle (worker failed or timed out);
@@ -493,8 +496,10 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
         time.sleep(sleep_time_seconds)
 
     if owns_provider:
-        # close() shuts down the ThreadPoolExecutor; idempotent + safe.
-        status_provider.close()  # type: ignore[union-attr,attr-defined]
+        # close() is not on the StatusProvider Protocol surface — only on the
+        # concrete ParallelPerIdStatusProvider. Caller-injected providers may
+        # be other shapes; we only close our own default-constructed one.
+        provider.close()  # type: ignore[attr-defined]
 
     try:
         with open('tmp_errors.log') as tmp_log_handle:
