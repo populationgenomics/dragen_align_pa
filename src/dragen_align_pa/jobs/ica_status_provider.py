@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import concurrent.futures as cf
 import time
-from typing import Protocol
+from typing import Protocol, Self
 
 from icasdk.apis.tags import project_analysis_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
+
+# ratio above which partial-fetch failure is escalated from WARNING to ERROR
+_ERROR_THRESHOLD = 0.5
 
 
 class StatusProvider(Protocol):
@@ -54,7 +57,7 @@ class ParallelPerIdStatusProvider:
             thread_name_prefix='ica-status',
         )
 
-    def __enter__(self) -> ParallelPerIdStatusProvider:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:  # noqa: ANN001
@@ -111,7 +114,7 @@ class ParallelPerIdStatusProvider:
         elapsed = time.monotonic() - t0
         if n_failed > 0:
             ratio = n_failed / max(len(in_flight_ids), 1)
-            log = logger.error if ratio > 0.5 else logger.warning
+            log = logger.error if ratio > _ERROR_THRESHOLD else logger.warning
             log(
                 f'ica status refresh: n_ok={n_ok} n_failed={n_failed} '
                 f'elapsed={elapsed:.1f}s',
