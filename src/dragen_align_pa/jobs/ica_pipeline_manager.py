@@ -20,7 +20,11 @@ from cpg_utils.config import config_retrieve, try_get_ar_guid
 from loguru import logger
 
 from dragen_align_pa.batches import IcaBatch
-from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline
+from dragen_align_pa.jobs import cancel_ica_pipeline_run
+from dragen_align_pa.jobs.ica_status_provider import (
+    ParallelPerIdStatusProvider,
+    StatusProvider,
+)
 from dragen_align_pa.utils import delete_pipeline_id_file
 
 ProcessingTarget: TypeAlias = Cohort | SequencingGroup | IcaBatch
@@ -135,6 +139,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
     sleep_time_seconds: int,
     on_succeeded: Callable[[MonitoredTarget], None] | None = None,
     on_status_change: Callable[[MonitoredTarget, PipelineStatus], None] | None = None,
+    status_provider: StatusProvider | None = None,
 ) -> None:
     """
     Generic loop to manage ICA pipeline execution for a cohort.
@@ -275,7 +280,45 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                 f'Continuing — in-memory transition stands.',
             )
 
+    # The status_provider owns the parallel per-id fan-out across in-flight
+    # targets. Pass-through allows the orchestrator (or tests) to inject a
+    # fake; otherwise we instantiate one driven by [ica.polling] config.
+    owns_provider = status_provider is None
+    if status_provider is None:
+        # MLR uses a different project than DRAGEN — caller can pass a
+        # pre-configured provider with project_id set; the default path
+        # reads from secrets in refresh() and falls back to the DRAGEN
+        # project, which is correct for the DRAGEN call site.
+        status_provider = ParallelPerIdStatusProvider(
+            concurrency=config_retrieve(['ica', 'polling', 'concurrency'], default=16),
+            refresh_timeout_seconds=config_retrieve(
+                ['ica', 'polling', 'refresh_timeout_seconds'], default=180,
+            ),
+        )
+
     while not all(is_finished(target) for target in monitored_targets):
+        # Pre-pass: hydrate pipeline IDs from disk for any target that doesn't
+        # have one yet. This must happen before the in_flight computation so
+        # that newly-resumed targets (whose pipeline_id file was written in a
+        # prior run) are included in the refresh batch on the very first cycle.
+        for t in monitored_targets:
+            if not is_finished(t) and not t.pipeline_id:
+                _pid_file = outputs[pipeline_id_file_key_template.format(target_name=t.name)]
+                if _pid_file.exists():
+                    with _pid_file.open('r') as _fh:
+                        _info = json.load(_fh)
+                        t.pipeline_id = _info['pipeline_id']
+                        t.ar_guid = _info['ar_guid']
+                        if t.status == PipelineStatus.PENDING:
+                            t.status = PipelineStatus.INPROGRESS
+
+        in_flight = {
+            t.pipeline_id
+            for t in monitored_targets
+            if t.pipeline_id and not is_finished(t)
+        }
+        status_provider.refresh(in_flight)
+
         for target in monitored_targets:
             if is_finished(target):
                 continue
@@ -329,11 +372,13 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                     with pipeline_id_arguid_file.open('w') as f:
                         f.write(json.dumps({'pipeline_id': target.pipeline_id, 'ar_guid': target.ar_guid}))
 
-                pipeline_status: str = monitor_dragen_pipeline.run(
-                    ica_pipeline_id=target.pipeline_id,
-                    is_mlr=is_mlr_pipeline,
-                )
+                pipeline_status: str = status_provider.get_status(target.pipeline_id)
 
+                if pipeline_status == 'UNKNOWN':
+                    # No fresh status this cycle (worker failed or timed out);
+                    # leave the target's in-memory state untouched and retry
+                    # next cycle.
+                    continue
                 if pipeline_status == 'INPROGRESS':
                     target.set_status(new_status=PipelineStatus.INPROGRESS)
 
@@ -446,6 +491,10 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
         if all(is_finished(target) for target in monitored_targets):
             break
         time.sleep(sleep_time_seconds)
+
+    if owns_provider:
+        # close() shuts down the ThreadPoolExecutor; idempotent + safe.
+        status_provider.close()  # type: ignore[union-attr,attr-defined]
 
     try:
         with open('tmp_errors.log') as tmp_log_handle:

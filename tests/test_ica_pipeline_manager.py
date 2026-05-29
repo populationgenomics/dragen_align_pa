@@ -6,12 +6,15 @@ in isolation; the SUCCEEDED-branch logic is extracted into a small helper
 exercised directly.
 """
 
+from unittest.mock import MagicMock
+
 from dragen_align_pa.batches import IcaBatch
 from dragen_align_pa.jobs.ica_pipeline_manager import (
     MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES,
     MonitoredTarget,
     PipelineStatus,
     _process_succeeded_transition,
+    manage_ica_pipeline_loop,
 )
 
 
@@ -118,3 +121,63 @@ def test_on_succeeded_swallows_status_change_callback_failure_during_escalation(
 def test_max_consecutive_on_succeeded_failures_constant_is_sane():
     """Sanity bound on the cap — must be > 0 and not absurd."""
     assert 1 <= MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES <= 20
+
+
+class _FakeStatusProvider:
+    """Records refresh calls and returns canned statuses."""
+
+    def __init__(self, status_by_id: dict[str, str]) -> None:
+        self.status_by_id = status_by_id
+        self.refresh_calls: list[set[str]] = []
+        self.get_status_calls: list[str] = []
+
+    def refresh(self, in_flight_ids):
+        self.refresh_calls.append(set(in_flight_ids))
+
+    def get_status(self, pipeline_id):
+        self.get_status_calls.append(pipeline_id)
+        return self.status_by_id.get(pipeline_id, 'UNKNOWN')
+
+
+def test_loop_reads_status_via_provider(tmp_path):
+    """manage_ica_pipeline_loop must call refresh(in_flight_ids) once per
+    cycle and get_status(target.pipeline_id) once per target — not
+    monitor_dragen_pipeline.run, which is the path being replaced."""
+    batch = IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
+    pipeline_id_file = tmp_path / 'COH0001-batch0000_pipeline_id.json'
+    success_file = tmp_path / 'COH0001-batch0000_success.json'
+    error_log = tmp_path / 'errors.log'
+
+    outputs = {
+        'COH0001-batch0000_pipeline_id': pipeline_id_file,
+        'COH0001-batch0000_success': success_file,
+        'COH0001_errors': error_log,
+    }
+
+    # Pre-seed the pipeline-id file so the loop skips its submission branch.
+    pipeline_id_file.write_text('{"pipeline_id": "analysis-XYZ", "ar_guid": "guid"}')
+
+    fake_provider = _FakeStatusProvider({'analysis-XYZ': 'SUCCEEDED'})
+
+    def factory(_target_name):
+        # The loop should NOT call this because pipeline_id is already on disk
+        # and the provider reports SUCCEEDED.
+        return MagicMock(return_value='analysis-XYZ')
+
+    manage_ica_pipeline_loop(
+        targets_to_process=[batch],
+        outputs=outputs,
+        pipeline_name='Dragen',
+        is_mlr_pipeline=False,
+        success_file_key_template='{target_name}_success',
+        pipeline_id_file_key_template='{target_name}_pipeline_id',
+        error_log_key='COH0001_errors',
+        submit_function_factory=factory,
+        allow_retry=False,
+        sleep_time_seconds=0,  # loop exits after one pass since SUCCEEDED is terminal
+        status_provider=fake_provider,
+    )
+
+    # refresh called once with the single in-flight id; get_status called for it.
+    assert fake_provider.refresh_calls == [{'analysis-XYZ'}]
+    assert fake_provider.get_status_calls == ['analysis-XYZ']
