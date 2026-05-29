@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 import icasdk
+from cpg_utils.config import config_retrieve
 from google.api_core import exceptions as gax_exceptions
 from google.cloud import secretmanager
 from icasdk import ApiClient, Configuration
@@ -106,6 +107,16 @@ def get_ica_api_client() -> Iterator[ApiClient]:
 
     configuration = Configuration(host=ICA_REST_ENDPOINT)
     configuration.api_key['ApiKeyAuth'] = api_key
+    # urllib3 PoolManager defaults to maxsize=4 per host. At
+    # ParallelPerIdStatusProvider's max_workers=16, the unmodified default
+    # silently degrades the fan-out to ~4 in-flight (urllib3 logs
+    # "Connection pool is full, discarding connection") — wasting the
+    # parallelism. Drive from [ica.polling] concurrency so a single knob
+    # tunes both.
+    configuration.connection_pool_maxsize = config_retrieve(
+        ['ica', 'polling', 'concurrency'],
+        default=16,
+    )
 
     with ApiClient(configuration=configuration) as api_client:
         try:

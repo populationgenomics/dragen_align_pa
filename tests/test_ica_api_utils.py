@@ -288,3 +288,34 @@ def test_check_ica_pipeline_status_gives_up_after_persistent_429():
     assert exc_info.value.status == 429
     # 5 attempts total (stop_after_attempt(5)).
     assert api.get_analysis.call_count == 5
+
+
+def test_get_ica_api_client_sets_connection_pool_maxsize(monkeypatch):
+    """urllib3.PoolManager defaults maxsize=4. At 16 workers, that
+    silently degrades the polling fan-out to ~4 in-flight. The context
+    manager must set connection_pool_maxsize from [ica.polling]
+    concurrency so the parallel polling design actually parallelises."""
+    captured: dict[str, object] = {}
+
+    class _FakeApiClient:
+        def __init__(self, configuration):
+            captured['pool_maxsize'] = configuration.connection_pool_maxsize
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a: object) -> None:
+            return None
+
+    monkeypatch.setattr('dragen_align_pa.ica_api_utils.ApiClient', _FakeApiClient)
+    monkeypatch.setattr(
+        ica_api_utils,
+        'get_ica_secrets',
+        lambda: {'projectID': 'p', 'apiKey': 'k'},
+    )
+
+    with ica_api_utils.get_ica_api_client():
+        pass
+
+    # Should match [ica.polling] concurrency from _TEST_CONFIG (16).
+    assert captured['pool_maxsize'] == 16
