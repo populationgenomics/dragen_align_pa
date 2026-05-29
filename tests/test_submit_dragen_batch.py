@@ -1,5 +1,6 @@
 import json
 from contextlib import contextmanager
+from typing import Any
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -539,7 +540,7 @@ def test_run_includes_ar_guid_in_technical_tags(tmp_path, monkeypatch):
     )
 
     # Capture the body passed to submit_nextflow_analysis.
-    captured: dict[str, object] = {}
+    captured: dict[str, Any] = {}
 
     def fake_submit(**kwargs):
         captured['body'] = kwargs['body']
