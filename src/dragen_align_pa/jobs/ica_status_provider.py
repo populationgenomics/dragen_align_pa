@@ -48,7 +48,6 @@ class ParallelPerIdStatusProvider:
         refresh_timeout_seconds: float,
         project_id: str | None = None,
     ) -> None:
-        self._concurrency = concurrency
         self._refresh_timeout_s = refresh_timeout_seconds
         self._project_id = project_id  # set by caller for MLR (different project)
         self._status_map: dict[str, str] = {}
@@ -108,6 +107,8 @@ class ParallelPerIdStatusProvider:
                     logger.debug(f'status fetch failed for {pid}: {exc}')
                     n_failed += 1
             for fut in not_done:
+                pid = futures[fut]
+                logger.debug(f'status fetch timed out for {pid}')
                 fut.cancel()
                 n_failed += 1
 
