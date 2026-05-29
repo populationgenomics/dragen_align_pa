@@ -62,3 +62,57 @@ def test_refresh_populates_map_with_per_id_statuses():
             assert provider.get_status('a') == 'INPROGRESS'
             assert provider.get_status('b') == 'SUCCEEDED'
             assert provider.get_status('c') == 'FAILED'
+
+
+import icasdk
+from icasdk.exceptions import ApiException
+
+
+def test_refresh_marks_failed_ids_as_unknown_without_propagating():
+    """A subset of workers raises ApiException (exhausted retries from the
+    inner wrapper, simulated here as a bare exception). refresh() must
+    NOT propagate; affected ids stay absent → get_status returns 'UNKNOWN';
+    successful ids still populate."""
+    def fake_check(api_instance, path_params):
+        if path_params['analysisId'] == 'broken':
+            raise ApiException(status=429, reason='Too Many Requests')
+        return 'INPROGRESS'
+
+    ica_api_utils_mod = __import__('dragen_align_pa.ica_api_utils', fromlist=['_'])
+
+    with patch.object(ica_api_utils_mod, 'check_ica_pipeline_status', side_effect=fake_check), \
+         patch.object(ica_api_utils_mod, 'get_ica_api_client',
+                      return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()),
+                                             __exit__=MagicMock(return_value=None))), \
+         patch.object(ica_api_utils_mod, 'get_ica_secrets',
+                      return_value={'projectID': 'proj', 'apiKey': 'k'}):
+        with ParallelPerIdStatusProvider(concurrency=4, refresh_timeout_seconds=10) as provider:
+            provider.refresh({'good-1', 'good-2', 'broken'})
+
+            assert provider.get_status('good-1') == 'INPROGRESS'
+            assert provider.get_status('good-2') == 'INPROGRESS'
+            assert provider.get_status('broken') == 'UNKNOWN'
+
+
+def test_refresh_clears_stale_map_each_cycle():
+    """Successive refresh() calls must not leak ids from a previous cycle —
+    if an id transitions to terminal and is no longer in_flight, it must
+    not still show as INPROGRESS from a stale cycle."""
+    ica_api_utils_mod = __import__('dragen_align_pa.ica_api_utils', fromlist=['_'])
+
+    def fake_check(api_instance, path_params):
+        return 'INPROGRESS'
+
+    with patch.object(ica_api_utils_mod, 'check_ica_pipeline_status', side_effect=fake_check), \
+         patch.object(ica_api_utils_mod, 'get_ica_api_client',
+                      return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()),
+                                             __exit__=MagicMock(return_value=None))), \
+         patch.object(ica_api_utils_mod, 'get_ica_secrets',
+                      return_value={'projectID': 'proj', 'apiKey': 'k'}):
+        with ParallelPerIdStatusProvider(concurrency=4, refresh_timeout_seconds=10) as provider:
+            provider.refresh({'a', 'b'})
+            assert provider.get_status('a') == 'INPROGRESS'
+
+            provider.refresh({'b'})  # 'a' is no longer in_flight
+            assert provider.get_status('a') == 'UNKNOWN'
+            assert provider.get_status('b') == 'INPROGRESS'
