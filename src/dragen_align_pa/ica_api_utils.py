@@ -24,7 +24,8 @@ from tenacity import (
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    wait_random,
+    wait_fixed,
+    wait_random_exponential,
 )
 
 if TYPE_CHECKING:
@@ -49,6 +50,7 @@ _TRANSIENT_SECRET_MANAGER_EXCEPTIONS: Final = (
     gax_exceptions.DeadlineExceeded,
     gax_exceptions.ServiceUnavailable,
 )
+
 
 @functools.cache
 def _secret_client() -> secretmanager.SecretManagerServiceClient:
@@ -139,7 +141,7 @@ def _is_retryable_ica_error(exc: BaseException) -> bool:
     # together (a self-inflicted second wave). max=30 (not 60) keeps a
     # single id's worst-case retry budget (~60s) comfortably inside MLR's
     # 330s outer cycle.
-    wait=wait_exponential(multiplier=1, min=2, max=30) + wait_random(0, 5),
+    wait=wait_random_exponential(multiplier=1, min=2, max=30) + wait_fixed(2),
     reraise=True,
 )
 def check_ica_pipeline_status(
