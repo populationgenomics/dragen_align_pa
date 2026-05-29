@@ -11,7 +11,7 @@ why these blips propagate unhandled.
 """
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from google.api_core import exceptions as gax_exceptions
@@ -319,3 +319,87 @@ def test_get_ica_api_client_sets_connection_pool_maxsize(monkeypatch):
 
     # Should match [ica.polling] concurrency from _TEST_CONFIG (16).
     assert captured['pool_maxsize'] == 16
+
+
+def test_add_technical_tag_appends_and_dedupes(monkeypatch):
+    """The helper reads the current Analysis, appends the AR-GUID to
+    technicalTags (deduped), and PUTs the updated object. It MUST NOT
+    clobber tags written by popgen-cli."""
+    existing_get = MagicMock()
+    existing_get.body = {
+        'id': 'analysis-id',
+        'tags': {
+            'technicalTags': ['popgen-existing'],
+            'userTags': ['user-existing'],
+            'referenceTags': [],
+        },
+        'reference': 'existing-reference',
+    }
+    existing_get.headers = {'ETag': 'etag-abc'}
+
+    api = MagicMock()
+    api.get_analysis.return_value = existing_get
+    api.update_analysis.return_value = MagicMock(body={'id': 'analysis-id'})
+
+    monkeypatch.setattr(
+        ica_api_utils,
+        'get_ica_api_client',
+        lambda: MagicMock(
+            __enter__=MagicMock(return_value=MagicMock()),
+            __exit__=MagicMock(return_value=None),
+        ),
+    )
+    monkeypatch.setattr(
+        'dragen_align_pa.ica_api_utils.project_analysis_api.ProjectAnalysisApi',
+        lambda _client: api,
+    )
+
+    ica_api_utils.add_technical_tag(
+        project_id='proj-1',
+        analysis_id='analysis-id',
+        tag='AR-GUID-12345',
+    )
+
+    update_kwargs = api.update_analysis.call_args.kwargs
+    assert 'AR-GUID-12345' in update_kwargs['body'].tags.technicalTags
+    assert 'popgen-existing' in update_kwargs['body'].tags.technicalTags
+    # No duplication if called twice — verify dedupe:
+    ica_api_utils.add_technical_tag(
+        project_id='proj-1',
+        analysis_id='analysis-id',
+        tag='AR-GUID-12345',
+    )
+    # Two calls total; the second body still has exactly one AR-GUID entry.
+    second_kwargs = api.update_analysis.call_args_list[1].kwargs
+    tags = second_kwargs['body'].tags.technicalTags
+    assert tags.count('AR-GUID-12345') == 1
+
+
+def test_add_technical_tag_logs_and_swallows_on_persistent_failure(monkeypatch):
+    """Best-effort: on any ApiException after retry, log a warning and
+    return cleanly. Correctness of the polling design does not depend on
+    the tag, so a failed tag-write must not break MLR submission."""
+    api = MagicMock()
+    api.get_analysis.side_effect = ApiException(status=500, reason='Server Error')
+
+    monkeypatch.setattr(
+        ica_api_utils,
+        'get_ica_api_client',
+        lambda: MagicMock(
+            __enter__=MagicMock(return_value=MagicMock()),
+            __exit__=MagicMock(return_value=None),
+        ),
+    )
+    monkeypatch.setattr(
+        'dragen_align_pa.ica_api_utils.project_analysis_api.ProjectAnalysisApi',
+        lambda _client: api,
+    )
+
+    with patch('dragen_align_pa.ica_api_utils.logger') as mock_logger:
+        # Must not raise.
+        ica_api_utils.add_technical_tag(
+            project_id='proj-1',
+            analysis_id='analysis-id',
+            tag='AR-GUID-12345',
+        )
+        assert mock_logger.warning.call_count >= 1

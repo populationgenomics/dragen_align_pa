@@ -8,6 +8,7 @@ import contextlib
 import functools
 import json
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 import icasdk
@@ -360,3 +361,97 @@ def submit_nextflow_analysis(
             f'status={e.status} reason={e.reason}',
         )
         raise
+
+
+# --- Tag helpers ---
+
+
+@dataclass
+class _AnalysisTagBody:
+    """Lightweight stand-in for icasdk AnalysisTag for GET-modify-PUT writes.
+
+    icasdk's generated AnalysisTag is a DynamicSchema (dict-only access) and
+    the icasdk Analysis model requires 9 mandatory fields that are not needed
+    for a tags-only PUT. We use dataclasses to carry the three tag lists and
+    expose them as attributes so callers (and tests) can do body.tags.technicalTags.
+    """
+
+    technicalTags: list[str]  # noqa: N815
+    userTags: list[str]  # noqa: N815
+    referenceTags: list[str]  # noqa: N815
+
+
+@dataclass
+class _AnalysisUpdateBody:
+    """Minimal body for update_analysis (tags-only PUT).
+
+    icasdk's update_analysis endpoint accepts the request body as the Analysis
+    schema. In practice the ICA server merges/replaces only the fields supplied;
+    we send only the tags block. The dataclass avoids the icasdk model's 9-field
+    constructor requirement while still being JSON-serialisable by the api client.
+    """
+
+    tags: _AnalysisTagBody
+
+
+def add_technical_tag(
+    project_id: str,
+    analysis_id: str,
+    tag: str,
+) -> None:
+    """Append a tag to an analysis's technicalTags (idempotent / dedupe).
+
+    Used by the MLR submission path: popgen-cli does not stamp the
+    AR-GUID at submit time, so we GET the freshly-submitted analysis,
+    append the AR-GUID to technicalTags (deduped against whatever
+    popgen-cli wrote), and PUT the updated Analysis.
+
+    Best-effort: any failure (ApiException, missing tags block, ETag
+    drift) is logged at WARNING and swallowed. Correctness of the
+    polling design does not depend on the tag — it's a diagnostic
+    affordance for operators, not load-bearing state.
+
+    Note on the API shape: icasdk has no dedicated PATCH endpoint for
+    tags. The only mutator is PUT /api/projects/{projectId}/analyses/
+    {analysisId} (`update_analysis`), which is full-replace — hence
+    GET-modify-PUT.
+    """
+    try:
+        with get_ica_api_client() as api_client:
+            api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
+            current = api_instance.get_analysis(
+                path_params={'projectId': project_id, 'analysisId': analysis_id},
+            )
+            current_tags = current.body.get('tags') or {}
+            existing = list(current_tags.get('technicalTags') or [])
+            if tag in existing:
+                logger.debug(f'tag {tag!r} already on analysis {analysis_id}; nothing to do')
+                return
+            existing.append(tag)
+            etag = current.headers.get('ETag') if hasattr(current, 'headers') else None
+            new_tags = _AnalysisTagBody(
+                technicalTags=existing,
+                userTags=list(current_tags.get('userTags') or []),
+                referenceTags=list(current_tags.get('referenceTags') or []),
+            )
+            new_body = _AnalysisUpdateBody(tags=new_tags)
+            header_params: dict[str, str] = {}
+            if etag:
+                header_params['If-Match'] = etag
+            api_instance.update_analysis(
+                path_params={'projectId': project_id, 'analysisId': analysis_id},
+                body=new_body,
+                header_params=header_params,
+            )
+            logger.info(f'Appended technical tag {tag!r} to analysis {analysis_id}')
+    except ApiException as e:
+        logger.warning(
+            f'add_technical_tag failed for analysis {analysis_id} '
+            f'(status={e.status}); continuing without the tag. '
+            f'Polling/cancel/delete do not depend on this tag.',
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            f'add_technical_tag failed for analysis {analysis_id}: {e}; '
+            f'continuing without the tag.',
+        )
