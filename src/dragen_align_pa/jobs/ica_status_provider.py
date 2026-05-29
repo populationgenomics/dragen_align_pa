@@ -70,7 +70,52 @@ class ParallelPerIdStatusProvider:
         Failures are absorbed and do not propagate. Affected ids stay
         absent from the map → get_status returns 'UNKNOWN'.
         """
-        raise NotImplementedError('Implemented in next task.')
+        self._status_map.clear()
+        if not in_flight_ids:
+            return
+
+        secrets = ica_api_utils.get_ica_secrets()
+        project_id = self._project_id or secrets['projectID']
+        t0 = time.monotonic()
+
+        with ica_api_utils.get_ica_api_client() as api_client:
+            api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
+
+            def _fetch_one(pid: str) -> tuple[str, str]:
+                status = ica_api_utils.check_ica_pipeline_status(
+                    api_instance=api_instance,
+                    path_params={'projectId': project_id, 'analysisId': pid},
+                )
+                return pid, status
+
+            futures = {
+                self._executor.submit(_fetch_one, pid): pid
+                for pid in in_flight_ids
+            }
+            done, not_done = cf.wait(futures, timeout=self._refresh_timeout_s)
+            n_ok = 0
+            n_failed = 0
+            for fut in done:
+                pid = futures[fut]
+                try:
+                    _id, status = fut.result()
+                    self._status_map[pid] = status
+                    n_ok += 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(f'status fetch failed for {pid}: {exc}')
+                    n_failed += 1
+            for fut in not_done:
+                fut.cancel()
+                n_failed += 1
+
+        elapsed = time.monotonic() - t0
+        if n_failed > 0:
+            ratio = n_failed / max(len(in_flight_ids), 1)
+            log = logger.error if ratio > 0.5 else logger.warning
+            log(
+                f'ica status refresh: n_ok={n_ok} n_failed={n_failed} '
+                f'elapsed={elapsed:.1f}s',
+            )
 
     def get_status(self, pipeline_id: str) -> str:
         """Return the most recently observed status, or 'UNKNOWN' if absent."""

@@ -34,3 +34,31 @@ def test_parallel_per_id_status_provider_returns_unknown_before_first_refresh():
     the loop's elif chain falls through, no transition that cycle."""
     with ParallelPerIdStatusProvider(concurrency=2, refresh_timeout_seconds=10) as provider:
         assert provider.get_status('any-id') == 'UNKNOWN'
+
+
+def test_refresh_populates_map_with_per_id_statuses():
+    """Happy path: every in-flight id has its status fetched and stored."""
+    statuses = {'a': 'INPROGRESS', 'b': 'SUCCEEDED', 'c': 'FAILED'}
+
+    def fake_check(api_instance, path_params):
+        return statuses[path_params['analysisId']]
+
+    with patch.object(
+        ica_api_utils := __import__('dragen_align_pa.ica_api_utils', fromlist=['_']),
+        'check_ica_pipeline_status',
+        side_effect=fake_check,
+    ), patch.object(
+        ica_api_utils,
+        'get_ica_api_client',
+        return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=None)),
+    ), patch.object(
+        ica_api_utils,
+        'get_ica_secrets',
+        return_value={'projectID': 'proj', 'apiKey': 'k'},
+    ):
+        with ParallelPerIdStatusProvider(concurrency=4, refresh_timeout_seconds=10) as provider:
+            provider.refresh({'a', 'b', 'c'})
+
+            assert provider.get_status('a') == 'INPROGRESS'
+            assert provider.get_status('b') == 'SUCCEEDED'
+            assert provider.get_status('c') == 'FAILED'
