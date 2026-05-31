@@ -41,7 +41,6 @@ ICA_FILE_IDS: Final[dict[str, str]] = {
 # Canonical exome design names. Each exome cohort resolves to exactly one.
 CANONICAL_DESIGN_CREV2: Final = 'CREv2'
 CANONICAL_DESIGN_TWIST: Final = 'TWIST'
-CANONICAL_DESIGNS: Final = frozenset({CANONICAL_DESIGN_CREV2, CANONICAL_DESIGN_TWIST})
 
 # Exact-match map from metamist assay.meta['sequencing_library'] values to
 # canonical designs. Populate as new values are encountered in metamist. Exact

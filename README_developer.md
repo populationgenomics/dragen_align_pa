@@ -159,18 +159,18 @@ Both paths converge, providing the necessary inputs to `ManageDragenPipeline`.
 
 ## 4\. ICA Pipeline Contracts
 
-The pipeline is configured to use two different underlying DRAGEN pipeline definitions in ICA, which have different input parameter contracts. The logic in `run_align_genotype_with_dragen.py` correctly handles this branching.
+A single unified DRAGEN pipeline definition in ICA (`DRAGEN378-custom-unified-F2-v1`, id
+`18a4baab-a12f-415d-ba8e-10b5bf6834d0`, set via `[dragen_align_pa.manage_dragen_pipeline] pipeline_id`)
+handles both CRAM and FASTQ inputs and both WGS and WES. Submission logic lives in
+`submit_dragen_batch.py`.
 
-  * **FASTQ Pipeline** (e.g., `dragen_3_7_8`):
-
-      * Expects a *single*, multi-value input: `qc_coverage_region_beds`.
-      * The code correctly passes `[qc_cov_region_1_id, qc_cov_region_2_id]` to this single parameter.
-      * Associated arguments (e.g., `--qc-coverage-reports-1`) are passed via the `additional_args` parameter.
-
-  * **CRAM Pipeline**:
-
-      * Expects *two distinct*, single-value inputs: `qc_coverage_region_1` and `qc_coverage_region_2`.
-      * The code correctly passes the file IDs to these separate parameters.
+  * Per-channel QC coverage BEDs are passed as a single multi-value input, `qc_coverage_region_beds`.
+  * BED files are named in config by basename (e.g. in `[ica.qc] coverage_region_beds` and the
+    `[…presets.exome.bed_names]` slots) and resolved to ICA file IDs at submission time via
+    `dragen_align_pa.constants.ICA_FILE_IDS`. An unregistered basename fails fast at submitter startup.
+  * WGS/WES-divergent flags (e.g. `cnv_segmentation_mode`, SV/CNV target BEDs, `--vc-target-bed-padding`)
+    come from the `genome`/`exome` presets under `[dragen_align_pa.manage_dragen_pipeline.presets]` and
+    are assembled into the DRAGEN `additional_args` string.
 
 
 ---
