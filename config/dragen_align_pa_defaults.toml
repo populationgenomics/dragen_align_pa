@@ -179,3 +179,6 @@ coverage_region_beds = [
 config_json = "fil.91c3e63114fc43dc31ed08dde927d6b4"
 mlr_hash_table = "ica://ourdna-dragen-mlr-jobs/data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9"
 analysis_instance_tier = "economy"
+
+[dragen_align_pa.reheader_mlr_gvcf]
+storage = "16GB"

@@ -318,7 +318,8 @@ class ManageDragenPipeline(CohortStage):
             per_sg_fastq_list_paths = inputs.as_dict(target=cohort, stage=MakeFastqFileList)
 
         analysis_output_fid_path: cpg_utils.Path = inputs.as_path(
-            target=cohort, stage=PrepareIcaForDragenAnalysis,
+            target=cohort,
+            stage=PrepareIcaForDragenAnalysis,
         )
 
         job: PythonJob = initialise_python_job(
@@ -417,7 +418,10 @@ class DownloadCramFromIca(SequencingGroupStage):
             job_name='DownloadCramFromIca',
             sequencing_group=sequencing_group,
             file_spec=FileTypeSpec(
-                gcs_prefix='cram', data_suffix='cram', index_suffix='cram.crai', md5_suffix='md5sum',
+                gcs_prefix='cram',
+                data_suffix='cram',
+                index_suffix='cram.crai',
+                md5_suffix='md5sum',
             ),
             pipeline_id_arguid_path=pipeline_id_arguid_path,
             cohort_name=cohort.name,
@@ -645,7 +649,11 @@ class SomalierExtract(SequencingGroupStage):
         return self.make_outputs(sequencing_group, data=out_somalier_path, skipped=True)
 
 
-@stage(required_stages=[DownloadGvcfFromIca, DownloadMlrGvcfFromIca], analysis_type='gvcf', analysis_keys=['gvcf'])
+@stage(
+    required_stages=[DownloadGvcfFromIca, DownloadMlrGvcfFromIca, SomalierExtract],
+    analysis_type='gvcf',
+    analysis_keys=['gvcf'],
+)
 class ReheaderMlrGvcf(SequencingGroupStage):
     """
     Reheader the MLR gVCF to insert correct reference block information that the MLR process removes.
@@ -709,7 +717,8 @@ class DeleteDataInIca(CohortStage):
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:
         cohort_analysis_output_fid_path: cpg_utils.Path = inputs.as_path(
-            target=cohort, stage=PrepareIcaForDragenAnalysis,
+            target=cohort,
+            stage=PrepareIcaForDragenAnalysis,
         )
 
         cram_fid_paths_dict: dict[str, cpg_utils.Path] | None = None
@@ -718,7 +727,9 @@ class DeleteDataInIca(CohortStage):
             cram_fid_paths_dict = inputs.as_path_by_target(stage=UploadDataToIca)
         elif READS_TYPE == 'fastq':
             fastq_ids_list_path = inputs.as_path(
-                target=cohort, stage=FastqIntakeQc, key='fastq_ids_outpath',
+                target=cohort,
+                stage=FastqIntakeQc,
+                key='fastq_ids_outpath',
             )
 
         output_path: cpg_utils.Path = self.expected_outputs(cohort=cohort)
