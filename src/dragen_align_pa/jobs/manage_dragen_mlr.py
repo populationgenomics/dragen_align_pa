@@ -10,7 +10,7 @@ from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve
 from loguru import logger
 
-from dragen_align_pa import ica_cli_utils, utils
+from dragen_align_pa import ica_api_utils, ica_cli_utils, utils
 from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
 from dragen_align_pa.jobs.ica_status_provider import ParallelPerIdStatusProvider
@@ -127,6 +127,7 @@ def _submit_mlr_run(
     sg_name: str,
     cohort_name: str,
     mlr_project: str,
+    mlr_project_id: str,
     mlr_config_json: str,
     mlr_hash_table: str,
     output_prefix: str,
@@ -135,7 +136,10 @@ def _submit_mlr_run(
     Submits the DRAGEN MLR pipeline by running individual CLI commands
     and parsing the JSON output file.
     """
-    data = load_per_sg_state(pipeline_id_arguid_path, required_keys=('pipeline_id', 'user_reference'))
+    data = load_per_sg_state(
+        pipeline_id_arguid_path,
+        required_keys=('pipeline_id', 'user_reference', 'ar_guid'),
+    )
     pipeline_id = data['pipeline_id']
     user_reference = data['user_reference']
 
@@ -176,6 +180,17 @@ def _submit_mlr_run(
         mlr_analysis_id = _mlr_parse_submission_output(sg_name, mlr_run_id)
 
         logger.info(f'MLR pipeline ID for {sg_name} is {mlr_analysis_id}')
+
+        # Best-effort: stamp the AR-GUID into the MLR analysis's technicalTags so
+        # operators can filter the ICA UI by cohort run. popgen-cli has no tag
+        # flag, so this goes through icasdk's full-replace update_analysis
+        # (GET-modify-PUT). add_technical_tag swallows its own failures — no code
+        # path reads technicalTags for routing, so a missed tag is harmless.
+        ica_api_utils.add_technical_tag(
+            project_id=mlr_project_id,
+            analysis_id=mlr_analysis_id,
+            tag=data['ar_guid'],
+        )
         return mlr_analysis_id
 
     except (subprocess.CalledProcessError, FileNotFoundError, ValueError, json.JSONDecodeError) as e:
@@ -199,6 +214,7 @@ def run(
     mlr_config_json: str = config_retrieve(['dragen_align_pa', 'manage_dragen_mlr', 'config_json'])
     mlr_hash_table: str = config_retrieve(['dragen_align_pa', 'manage_dragen_mlr', 'mlr_hash_table'])
     output_prefix: str = f'ica://{dragen_align_project}/{BUCKET_NAME}/{ica_analysis_output_folder}'
+    mlr_project_id: str = config_retrieve(['ica', 'projects', 'dragen_mlr_project_id'])
 
     def _create_submit_callable(sg_name: str) -> Callable[[], str]:
         """Creates a zero-argument callable for pipeline submission."""
@@ -209,12 +225,12 @@ def run(
             sg_name=sg_name,
             cohort_name=cohort.name,
             mlr_project=mlr_project,
+            mlr_project_id=mlr_project_id,
             mlr_config_json=mlr_config_json,
             mlr_hash_table=mlr_hash_table,
             output_prefix=output_prefix,
         )
 
-    mlr_project_id: str = config_retrieve(['ica', 'projects', 'dragen_mlr_project_id'])
     with ParallelPerIdStatusProvider(
         concurrency=config_retrieve(['ica', 'polling', 'concurrency'], default=16),
         refresh_timeout_seconds=config_retrieve(
