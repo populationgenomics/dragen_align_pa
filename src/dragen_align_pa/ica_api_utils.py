@@ -7,8 +7,7 @@ wrappers around specific API endpoints.
 import contextlib
 import functools
 import json
-from collections.abc import Iterator
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 import icasdk
@@ -40,6 +39,9 @@ ICA_REST_ENDPOINT: Final = 'https://ica.illumina.com/ica/rest'
 SECRET_PROJECT: Final = 'cpg-common'
 SECRET_NAME: Final = 'illumina_cpg_workbench_api'
 SECRET_VERSION: Final = 'latest'
+
+# HTTP 412 Precondition Failed — the If-Match ETag drifted between our GET and PUT.
+_HTTP_PRECONDITION_FAILED: Final = 412
 
 
 # --- Secret Management & Auth ---
@@ -366,32 +368,18 @@ def submit_nextflow_analysis(
 # --- Tag helpers ---
 
 
-@dataclass
-class _AnalysisTagBody:
-    """Lightweight stand-in for icasdk AnalysisTag for GET-modify-PUT writes.
+def _to_plain_json(obj: Any) -> Any:
+    """Recursively convert an icasdk schema instance to plain JSON types.
 
-    icasdk's generated AnalysisTag is a DynamicSchema (dict-only access) and
-    the icasdk Analysis model requires 9 mandatory fields that are not needed
-    for a tags-only PUT. We use dataclasses to carry the three tag lists and
-    expose them as attributes so callers (and tests) can do body.tags.technicalTags.
+    GET responses deserialize into immutable frozendict-backed schema
+    instances. To mutate one field and PUT it back we need a mutable copy
+    built from plain dict/list/scalar values.
     """
-
-    technicalTags: list[str]  # noqa: N815
-    userTags: list[str]  # noqa: N815
-    referenceTags: list[str]  # noqa: N815
-
-
-@dataclass
-class _AnalysisUpdateBody:
-    """Minimal body for update_analysis (tags-only PUT).
-
-    icasdk's update_analysis endpoint accepts the request body as the Analysis
-    schema. In practice the ICA server merges/replaces only the fields supplied;
-    we send only the tags block. The dataclass avoids the icasdk model's 9-field
-    constructor requirement while still being JSON-serialisable by the api client.
-    """
-
-    tags: _AnalysisTagBody
+    if isinstance(obj, Mapping):
+        return {key: _to_plain_json(value) for key, value in obj.items()}
+    if isinstance(obj, (list, tuple)) and not isinstance(obj, (str, bytes)):
+        return [_to_plain_json(item) for item in obj]
+    return obj
 
 
 def add_technical_tag(
@@ -404,46 +392,63 @@ def add_technical_tag(
     Used by the MLR submission path: popgen-cli does not stamp the
     AR-GUID at submit time, so we GET the freshly-submitted analysis,
     append the AR-GUID to technicalTags (deduped against whatever
-    popgen-cli wrote), and PUT the updated Analysis.
+    popgen-cli wrote), and PUT the updated Analysis back.
 
-    Best-effort: any failure (ApiException, missing tags block, ETag
-    drift) is logged at WARNING and swallowed. Correctness of the
-    polling design does not depend on the tag — it's a diagnostic
-    affordance for operators, not load-bearing state.
+    The PUT body must be the *complete* analysis object. icasdk's
+    `update_analysis` is a full-replace PUT whose request body validates
+    against the `Analysis` schema, and that schema has ten required
+    fields (id, pipeline, reference, status, ...). Sending only a tags
+    block — or a hand-rolled stand-in object — fails icasdk's local
+    serialization before any HTTP call is made. We therefore round-trip
+    the full object the GET returned, mutating only technicalTags.
 
-    Note on the API shape: icasdk has no dedicated PATCH endpoint for
-    tags. The only mutator is PUT /api/projects/{projectId}/analyses/
-    {analysisId} (`update_analysis`), which is full-replace — hence
-    GET-modify-PUT.
+    A single retry handles a 412 (If-Match ETag drift) from a concurrent
+    writer. Best-effort otherwise: any failure is logged at WARNING and
+    swallowed. Correctness of the polling design does not depend on the
+    tag — it's a diagnostic affordance for operators, not load-bearing
+    state.
     """
     try:
         with get_ica_api_client() as api_client:
             api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
-            current = api_instance.get_analysis(
-                path_params={'projectId': project_id, 'analysisId': analysis_id},
-            )
-            current_tags = current.body.get('tags') or {}
-            existing = list(current_tags.get('technicalTags') or [])
-            if tag in existing:
-                logger.debug(f'tag {tag!r} already on analysis {analysis_id}; nothing to do')
+            for attempt in (1, 2):
+                current = api_instance.get_analysis(
+                    path_params={'projectId': project_id, 'analysisId': analysis_id},
+                )
+                body = _to_plain_json(current.body)
+                tags = body.get('tags')
+                if not isinstance(tags, dict):
+                    tags = {}
+                    body['tags'] = tags
+                existing: list[str] = list(tags.get('technicalTags') or [])
+                if tag in existing:
+                    logger.debug(
+                        f'tag {tag!r} already on analysis {analysis_id}; nothing to do',
+                    )
+                    return
+                existing.append(tag)
+                tags['technicalTags'] = existing
+
+                header_params: dict[str, str] = {}
+                etag = current.headers.get('ETag') if hasattr(current, 'headers') else None
+                if etag:
+                    header_params['If-Match'] = etag
+                try:
+                    api_instance.update_analysis(
+                        path_params={'projectId': project_id, 'analysisId': analysis_id},
+                        body=body,
+                        header_params=header_params,
+                    )
+                except ApiException as put_exc:
+                    if put_exc.status == _HTTP_PRECONDITION_FAILED and attempt == 1:
+                        logger.debug(
+                            f'update_analysis 412 (ETag drift) for {analysis_id}; '
+                            f're-reading and retrying once',
+                        )
+                        continue
+                    raise
+                logger.info(f'Appended technical tag {tag!r} to analysis {analysis_id}')
                 return
-            existing.append(tag)
-            etag = current.headers.get('ETag') if hasattr(current, 'headers') else None
-            new_tags = _AnalysisTagBody(
-                technicalTags=existing,
-                userTags=list(current_tags.get('userTags') or []),
-                referenceTags=list(current_tags.get('referenceTags') or []),
-            )
-            new_body = _AnalysisUpdateBody(tags=new_tags)
-            header_params: dict[str, str] = {}
-            if etag:
-                header_params['If-Match'] = etag
-            api_instance.update_analysis(
-                path_params={'projectId': project_id, 'analysisId': analysis_id},
-                body=new_body,
-                header_params=header_params,
-            )
-            logger.info(f'Appended technical tag {tag!r} to analysis {analysis_id}')
     except ApiException as e:
         logger.warning(
             f'add_technical_tag failed for analysis {analysis_id} '

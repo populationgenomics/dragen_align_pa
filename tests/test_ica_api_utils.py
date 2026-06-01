@@ -18,6 +18,10 @@ from google.api_core import exceptions as gax_exceptions
 
 from dragen_align_pa import ica_api_utils
 from icasdk.exceptions import ApiException
+from icasdk.model.analysis import Analysis
+from icasdk.paths.api_projects_project_id_analyses_analysis_id.put import (
+    request_body_analysis,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -321,26 +325,8 @@ def test_get_ica_api_client_sets_connection_pool_maxsize(monkeypatch):
     assert captured['pool_maxsize'] == 16
 
 
-def test_add_technical_tag_appends_and_dedupes(monkeypatch):
-    """The helper reads the current Analysis, appends the AR-GUID to
-    technicalTags (deduped), and PUTs the updated object. It MUST NOT
-    clobber tags written by popgen-cli."""
-    existing_get = MagicMock()
-    existing_get.body = {
-        'id': 'analysis-id',
-        'tags': {
-            'technicalTags': ['popgen-existing'],
-            'userTags': ['user-existing'],
-            'referenceTags': [],
-        },
-        'reference': 'existing-reference',
-    }
-    existing_get.headers = {'ETag': 'etag-abc'}
-
-    api = MagicMock()
-    api.get_analysis.return_value = existing_get
-    api.update_analysis.return_value = MagicMock(body={'id': 'analysis-id'})
-
+def _stub_ica_api(monkeypatch, api):
+    """Wire add_technical_tag to use a mock ProjectAnalysisApi."""
     monkeypatch.setattr(
         ica_api_utils,
         'get_ica_api_client',
@@ -353,6 +339,45 @@ def test_add_technical_tag_appends_and_dedupes(monkeypatch):
         'dragen_align_pa.ica_api_utils.project_analysis_api.ProjectAnalysisApi',
         lambda _client: api,
     )
+
+
+def _full_analysis_body() -> dict:
+    """A minimal-but-complete analysis as ICA's GET returns it.
+
+    `update_analysis` is a full-replace PUT whose body validates against
+    the `Analysis` schema (ten required fields), so the helper must PUT
+    the whole object back, not a tags-only fragment.
+    """
+    return {
+        'id': 'analysis-id',
+        'reference': 'existing-reference',
+        'userReference': 'uref',
+        'status': 'SUCCEEDED',
+        'tenantId': 'tenant-1',
+        'ownerId': 'owner-1',
+        'timeCreated': '2026-01-01T00:00:00Z',
+        'timeModified': '2026-01-01T00:00:00Z',
+        'pipeline': {'id': 'pipe-1', 'urn': 'urn:x'},
+        'tags': {
+            'technicalTags': ['popgen-existing'],
+            'userTags': ['user-existing'],
+            'referenceTags': [],
+        },
+    }
+
+
+def test_add_technical_tag_appends_and_dedupes(monkeypatch):
+    """The helper reads the current Analysis, appends the AR-GUID to
+    technicalTags (deduped), and PUTs the *complete* object back. It MUST
+    NOT clobber tags written by popgen-cli, nor drop other analysis fields."""
+    existing_get = MagicMock()
+    existing_get.body = _full_analysis_body()
+    existing_get.headers = {'ETag': 'etag-abc'}
+
+    api = MagicMock()
+    api.get_analysis.return_value = existing_get
+    api.update_analysis.return_value = MagicMock(body={'id': 'analysis-id'})
+    _stub_ica_api(monkeypatch, api)
 
     ica_api_utils.add_technical_tag(
         project_id='proj-1',
@@ -361,39 +386,96 @@ def test_add_technical_tag_appends_and_dedupes(monkeypatch):
     )
 
     update_kwargs = api.update_analysis.call_args.kwargs
-    assert 'AR-GUID-12345' in update_kwargs['body'].tags.technicalTags
-    assert 'popgen-existing' in update_kwargs['body'].tags.technicalTags
-    # No duplication if called twice — verify dedupe:
+    body = update_kwargs['body']
+    # Full object preserved (not a tags-only fragment).
+    assert body['id'] == 'analysis-id'
+    assert body['status'] == 'SUCCEEDED'
+    assert body['tags']['technicalTags'] == ['popgen-existing', 'AR-GUID-12345']
+    assert body['tags']['userTags'] == ['user-existing']
+    # If-Match carries the GET's ETag for optimistic concurrency.
+    assert update_kwargs['header_params'] == {'If-Match': 'etag-abc'}
+
+    # No duplication if the same tag is already present — verify dedupe:
+    existing_get.body = body  # second GET returns what we just PUT
     ica_api_utils.add_technical_tag(
         project_id='proj-1',
         analysis_id='analysis-id',
         tag='AR-GUID-12345',
     )
-    # Two calls total; the second body still has exactly one AR-GUID entry.
-    second_kwargs = api.update_analysis.call_args_list[1].kwargs
-    tags = second_kwargs['body'].tags.technicalTags
-    assert tags.count('AR-GUID-12345') == 1
+    # The tag is already present, so no second PUT happens.
+    assert api.update_analysis.call_count == 1
+
+
+def test_add_technical_tag_body_serializes_through_icasdk(monkeypatch):
+    """Regression guard for the original defect: the helper used a plain
+    dataclass body that failed icasdk's local serialization (Analysis needs
+    ten required fields) — every call was a swallowed no-op. Run the body
+    the helper builds through the real request-body serializer and assert
+    it produces a wire payload carrying the tag."""
+    valid_uuid = '12345678-1234-1234-1234-123456789abc'
+    ts = '2026-01-01T00:00:00Z'
+    analysis = Analysis(
+        id=valid_uuid, reference='ref', tenantId=valid_uuid, ownerId=valid_uuid,
+        timeCreated=ts, timeModified=ts, status='SUCCEEDED', userReference='uref',
+        pipeline={
+            'id': valid_uuid, 'urn': 'urn:x', 'timeCreated': ts, 'timeModified': ts,
+            'ownerId': valid_uuid, 'tenantId': valid_uuid, 'code': 'c',
+            'description': 'd', 'language': 'NEXTFLOW', 'pipelineTags': {'technicalTags': []},
+            'analysisStorage': {
+                'id': valid_uuid, 'timeCreated': ts, 'timeModified': ts,
+                'ownerId': valid_uuid, 'tenantId': valid_uuid, 'name': 'Small',
+                'description': 'd',
+            },
+        },
+        tags={'technicalTags': ['popgen'], 'userTags': [], 'referenceTags': []},
+    )
+    existing_get = MagicMock(body=analysis, headers={'ETag': 'e'})
+    api = MagicMock()
+    api.get_analysis.return_value = existing_get
+    api.update_analysis.return_value = MagicMock()
+    _stub_ica_api(monkeypatch, api)
+
+    ica_api_utils.add_technical_tag(
+        project_id='p', analysis_id='analysis-id', tag='AR-GUID-999',
+    )
+
+    sent_body = api.update_analysis.call_args.kwargs['body']
+    serialized = request_body_analysis.serialize(
+        sent_body, 'application/vnd.illumina.v3+json',
+    )
+    assert b'AR-GUID-999' in serialized['body']
+    assert b'popgen' in serialized['body']
+
+
+def test_add_technical_tag_retries_once_on_412(monkeypatch):
+    """A 412 (If-Match ETag drift) triggers a single re-read-and-retry."""
+    existing_get = MagicMock()
+    existing_get.body = _full_analysis_body()
+    existing_get.headers = {'ETag': 'etag-abc'}
+
+    api = MagicMock()
+    api.get_analysis.return_value = existing_get
+    api.update_analysis.side_effect = [
+        ApiException(status=412, reason='Precondition Failed'),
+        MagicMock(),
+    ]
+    _stub_ica_api(monkeypatch, api)
+
+    ica_api_utils.add_technical_tag(
+        project_id='proj-1', analysis_id='analysis-id', tag='AR-GUID-12345',
+    )
+
+    assert api.get_analysis.call_count == 2
+    assert api.update_analysis.call_count == 2
 
 
 def test_add_technical_tag_logs_and_swallows_on_persistent_failure(monkeypatch):
-    """Best-effort: on any ApiException after retry, log a warning and
-    return cleanly. Correctness of the polling design does not depend on
-    the tag, so a failed tag-write must not break MLR submission."""
+    """Best-effort: on any ApiException, log a warning and return cleanly.
+    Correctness of the polling design does not depend on the tag, so a
+    failed tag-write must not break MLR submission."""
     api = MagicMock()
     api.get_analysis.side_effect = ApiException(status=500, reason='Server Error')
-
-    monkeypatch.setattr(
-        ica_api_utils,
-        'get_ica_api_client',
-        lambda: MagicMock(
-            __enter__=MagicMock(return_value=MagicMock()),
-            __exit__=MagicMock(return_value=None),
-        ),
-    )
-    monkeypatch.setattr(
-        'dragen_align_pa.ica_api_utils.project_analysis_api.ProjectAnalysisApi',
-        lambda _client: api,
-    )
+    _stub_ica_api(monkeypatch, api)
 
     with patch('dragen_align_pa.ica_api_utils.logger') as mock_logger:
         # Must not raise.
