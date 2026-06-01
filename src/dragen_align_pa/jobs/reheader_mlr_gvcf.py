@@ -23,7 +23,7 @@ def reheader_mlr_gvcf(
     b: Batch = get_batch()
     job: BashJob = b.new_bash_job(name='reheader_mlr_gvcf')
     job.image(image_path('bcftools', '1.23-2'))
-    job.storage(storage=config_retrieve(['workflow', 'reheader_mlr_gvcf', 'storage'], default='16GB'))
+    job.storage(storage=config_retrieve(['dragen_align_pa', 'reheader_mlr_gvcf', 'storage'], default='16GB'))
 
     # Hail Batch's b.read_input_group / job.declare_resource_group return a
     # ResourceGroup at runtime, but the static return types resolve to the
