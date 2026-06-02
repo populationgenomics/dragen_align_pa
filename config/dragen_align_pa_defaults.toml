@@ -1,4 +1,4 @@
-# This is an example config file detailing all the optioons used for running the realignment pipeline
+# This is an example config file detailing all the options used for running the realignment pipeline
 [workflow]
 name = 'dragen_align_pa'
 output_prefix = ""
@@ -27,7 +27,7 @@ sample_id = 'sample_id'
 
 [images]
 # This image contains the entire pipeline code. The version is automatically bumped by bump-my-version (or other version
-# incrememt tools), but you may need to change the final -1 suffix to the correct suffix.
+# increment tools), but you may need to change the final -1 suffix to the correct suffix.
 ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:3.2.2-1"
 
 # Projects in ICA to run different analyses
@@ -54,7 +54,7 @@ force_resubmit = false
 upload_folder = "test-cram-upload"
 output_folder = "test-dragen-378"
 
-# These tags are used in the ICA UI. You can also use the mfor filtering via the API, but I don't do any of that in this pipeline.
+# These tags are used in the ICA UI. You can also use them for filtering via the API, but I don't do any of that in this pipeline.
 [ica.tags]
 technical_tags = ['test_technical_tag']
 user_tags = ['test_user_tags']
