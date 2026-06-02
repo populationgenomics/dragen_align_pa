@@ -63,6 +63,14 @@ reference_tags = ['test_reference_tags']
 [ica.api]
 batch_size = 30
 
+# Transient-error retry for ICA status polling (check_ica_pipeline_status).
+# max_retries = retries AFTER the initial attempt, so total tries = max_retries + 1.
+# Read at call time, so this can be tuned per-run without rebuilding the image.
+# NB: worst-case backoff is ~32s per retry at the cap, so a large value can
+# exceed a tight polling cycle.
+[ica.retry]
+max_retries = 10
+
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]
 dragen_version = 'dragen_3_7_8'

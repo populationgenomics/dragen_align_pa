@@ -11,12 +11,20 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 import icasdk
+from cpg_utils.config import config_retrieve
 from google.cloud import secretmanager
 from icasdk import ApiClient, Configuration
 from icasdk.apis.tags import project_analysis_api, project_data_api
 from icasdk.exceptions import ApiException
 from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from loguru import logger
+from tenacity import (
+    Retrying,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_fixed,
+    wait_random_exponential,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -28,6 +36,10 @@ ICA_REST_ENDPOINT: Final = 'https://ica.illumina.com/ica/rest'
 SECRET_PROJECT: Final = 'cpg-common'
 SECRET_NAME: Final = 'illumina_cpg_workbench_api'
 SECRET_VERSION: Final = 'latest'
+
+# Default retries (after the initial attempt) for transient ICA 429/503 on
+# check_ica_pipeline_status. Override per-run via [ica.retry] max_retries.
+_DEFAULT_ICA_MAX_RETRIES: Final = 10
 
 
 # --- Secret Management & Auth ---
@@ -83,11 +95,56 @@ def get_ica_api_client() -> Iterator[ApiClient]:
 # --- API Wrappers ---
 
 
+def _is_retryable_ica_error(exc: BaseException) -> bool:
+    """Tenacity predicate: retry only on transient ICA-side errors.
+
+    `icasdk.exceptions.ApiException` is a single class with `.status: int`,
+    so we cannot use `retry_if_exception_type` with a subclass. We check
+    `.status` directly. 429 = rate-limit (well-known production failure
+    mode); 503 = ICA backend unavailable. 404/500/etc propagate immediately
+    — retrying a permanent error just delays the real signal.
+    """
+    return isinstance(exc, ApiException) and exc.status in (429, 503)  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def _ica_status_retrying() -> Retrying:
+    """Build the tenacity controller for check_ica_pipeline_status.
+
+    Read at call time (not at import) so the retry count can be tuned via
+    `[ica.retry] max_retries` in config without rebuilding the image, and to
+    avoid an import-time config_retrieve (config is not loaded when this module
+    is first imported).
+
+    `max_retries` is retries *after* the initial attempt, so total attempts is
+    `max_retries + 1`. Defaults to 10 retries.
+    """
+    max_retries = int(
+        config_retrieve(['ica', 'retry', 'max_retries'], default=_DEFAULT_ICA_MAX_RETRIES),
+    )
+    return Retrying(
+        retry=retry_if_exception(_is_retryable_ica_error),
+        stop=stop_after_attempt(max_retries + 1),
+        # wait_random_exponential gives a fully-randomised exponential backoff
+        # (each wait is random in [0, min(2^attempt, max)]), which desynchronises
+        # concurrent retries against a shared rate limit. The additive
+        # wait_fixed(2) is a hard 2s floor: wait_random_exponential can otherwise
+        # pick a near-zero first wait, letting a worker hammer ICA instantly
+        # after a 429. NB: worst-case backoff scales with max_retries (~32s per
+        # retry at the cap), so a large max_retries can exceed a tight polling
+        # cycle — tune both together.
+        wait=wait_random_exponential(multiplier=1, min=2, max=30) + wait_fixed(2),
+        reraise=True,
+    )
+
+
 def check_ica_pipeline_status(
     api_instance: project_analysis_api.ProjectAnalysisApi,
     path_params: dict[str, str],
 ) -> str:
-    """Check the status of an ICA pipeline via a pipeline ID
+    """Check the status of an ICA pipeline via a pipeline ID.
+
+    Transient ICA 429/503 errors are retried with jittered exponential backoff
+    (see `_ica_status_retrying`); other errors propagate on the first occurrence.
 
     Args:
         api_instance (project_analysis_api.ProjectAnalysisApi): An instance of the ProjectAnalysisApi
@@ -99,14 +156,20 @@ def check_ica_pipeline_status(
     Returns:
         str: The status of the pipeline. Can be one of ['REQUESTED', 'AWAITINGINPUT', 'INPROGRESS', 'SUCCEEDED', 'FAILED', 'FAILEDFINAL', 'ABORTED']
     """  # noqa: E501
-    try:
-        api_response = api_instance.get_analysis(path_params=path_params)  # type: ignore[ReportUnknownVariableType]
-        pipeline_status: str = api_response.body['status']  # type: ignore[ReportUnknownVariableType]
-        return pipeline_status  # type: ignore[ReportUnknownVariableType]
-    except icasdk.ApiException as e:
-        raise icasdk.ApiException(
-            f'Exception when calling ProjectAnalysisApi -> get_analysis: {e}',
-        ) from e
+
+    def _get_status() -> str:
+        try:
+            api_response = api_instance.get_analysis(path_params=path_params)  # type: ignore[ReportUnknownVariableType]
+            pipeline_status: str = api_response.body['status']  # type: ignore[ReportUnknownVariableType]
+            return pipeline_status  # type: ignore[ReportUnknownVariableType]
+        except icasdk.ApiException as e:
+            logger.error(
+                f'ProjectAnalysisApi.get_analysis raised for path_params={path_params}: '
+                f'status={e.status} reason={e.reason}',
+            )
+            raise
+
+    return _ica_status_retrying()(_get_status)
 
 
 def check_object_already_exists(
@@ -167,9 +230,11 @@ def check_object_already_exists(
         # Statuses are ["PARTIAL", "AVAILABLE", "ARCHIVING", "ARCHIVED", "UNARCHIVING", "DELETING", ]
         raise NotImplementedError(f'Checking for file status "{status}" is not implemented yet.')
     except icasdk.ApiException as e:
-        raise icasdk.ApiException(
-            f'Exception when calling ProjectDataApi -> get_project_data_list: {e}',
-        ) from e
+        logger.error(
+            f'ProjectDataApi.get_project_data_list raised for path_params={path_params}, '
+            f'file_name={file_name!r}: status={e.status} reason={e.reason}',
+        )
+        raise
 
 
 def find_file_id_by_name(
@@ -284,6 +349,8 @@ def submit_nextflow_analysis(
         analysis_id: str = api_response.body['id']  # type: ignore[ReportUnknownVariableType]
         return analysis_id
     except icasdk.ApiException as e:
-        raise icasdk.ApiException(
-            f'Exception when calling ProjectAnalysisApi->create_nextflow_analysis: {e}',
-        ) from e
+        logger.error(
+            f'ProjectAnalysisApi.create_nextflow_analysis raised for path_params={path_params}: '
+            f'status={e.status} reason={e.reason}',
+        )
+        raise
