@@ -190,7 +190,7 @@ def test_build_common_data_inputs_adds_bed_names_to_additional_files(monkeypatch
     })
     cfg = {
         ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
-        ('ica', 'qc', 'coverage_region_beds'): [],
+        ('ica', 'qc', 'exome', 'coverage_region_beds'): [],
         ('ica', 'qc', 'cross_cont_vcf'): None,
         ('workflow', 'sequencing_type'): 'exome',
         # preset.additional_files lists an extra (e.g. PoN) not present in bed_names.
@@ -216,7 +216,7 @@ def test_build_common_data_inputs_resolves_user_additional_files(monkeypatch):
     _stub_registry(monkeypatch, {'user_extra.bed': 'fil.user_extra'})
     cfg = {
         ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
-        ('ica', 'qc', 'coverage_region_beds'): [],
+        ('ica', 'qc', 'genome', 'coverage_region_beds'): [],
         ('ica', 'qc', 'cross_cont_vcf'): None,
         ('workflow', 'sequencing_type'): 'genome',
         ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
@@ -354,7 +354,7 @@ def test_build_common_data_inputs_rejects_too_many_coverage_beds(monkeypatch):
     _stub_registry(monkeypatch, {name: f'fil.{i:07d}' for i, name in enumerate(bed_names)})
     cfg = {
         ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
-        ('ica', 'qc', 'coverage_region_beds'): bed_names,
+        ('ica', 'qc', 'genome', 'coverage_region_beds'): bed_names,
         ('ica', 'qc', 'cross_cont_vcf'): None,
         ('workflow', 'sequencing_type'): 'genome',
         ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
@@ -378,7 +378,7 @@ def test_build_common_data_inputs_accepts_max_coverage_beds(monkeypatch):
     _stub_registry(monkeypatch, registry)
     cfg = {
         ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
-        ('ica', 'qc', 'coverage_region_beds'): bed_names,
+        ('ica', 'qc', 'genome', 'coverage_region_beds'): bed_names,
         ('ica', 'qc', 'cross_cont_vcf'): None,
         ('workflow', 'sequencing_type'): 'genome',
         ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
@@ -402,7 +402,7 @@ def test_build_common_data_inputs_rejects_unregistered_bed_name(monkeypatch):
     _stub_registry(monkeypatch, {'registered.bed': 'fil.0000001'})
     cfg = {
         ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
-        ('ica', 'qc', 'coverage_region_beds'): ['registered.bed', 'typo_or_missing.bed'],
+        ('ica', 'qc', 'genome', 'coverage_region_beds'): ['registered.bed', 'typo_or_missing.bed'],
         ('ica', 'qc', 'cross_cont_vcf'): None,
         ('workflow', 'sequencing_type'): 'genome',
         ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
@@ -414,6 +414,50 @@ def test_build_common_data_inputs_rejects_unregistered_bed_name(monkeypatch):
         lambda key, default=None: cfg.get(tuple(key), default),
     )
     with pytest.raises(KeyError, match=r'typo_or_missing\.bed'):
+        submit_dragen_batch._build_common_data_inputs()
+
+
+def test_build_common_data_inputs_resolves_cross_cont_vcf_basename(monkeypatch):
+    """cross_cont_vcf is a basename resolved to an ICA file ID via ICA_FILE_IDS;
+    the qc_cross_cont_vcf data input must carry the resolved fil.… ID, not the
+    basename from config."""
+    _stub_registry(monkeypatch, {'SNP_NCBI_GRCh38.vcf': 'fil.crosscont'})
+    cfg = {
+        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
+        ('ica', 'qc', 'genome', 'coverage_region_beds'): [],
+        ('ica', 'qc', 'cross_cont_vcf'): 'SNP_NCBI_GRCh38.vcf',
+        ('workflow', 'sequencing_type'): 'genome',
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
+    }
+    monkeypatch.setattr(
+        submit_dragen_batch,
+        'config_retrieve',
+        lambda key, default=None: cfg.get(tuple(key), default),
+    )
+    inputs = submit_dragen_batch._build_common_data_inputs()
+    cross_cont = [i for i in inputs if i['parameterCode'] == 'qc_cross_cont_vcf']
+    assert len(cross_cont) == 1
+    assert list(cross_cont[0]['dataIds']) == ['fil.crosscont']
+
+
+def test_build_common_data_inputs_rejects_unregistered_cross_cont_vcf(monkeypatch):
+    """A typo or unstaged cross_cont_vcf must fail fast at submitter startup."""
+    _stub_registry(monkeypatch, {'SNP_NCBI_GRCh38.vcf': 'fil.crosscont'})
+    cfg = {
+        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
+        ('ica', 'qc', 'genome', 'coverage_region_beds'): [],
+        ('ica', 'qc', 'cross_cont_vcf'): 'typo.vcf',
+        ('workflow', 'sequencing_type'): 'genome',
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
+    }
+    monkeypatch.setattr(
+        submit_dragen_batch,
+        'config_retrieve',
+        lambda key, default=None: cfg.get(tuple(key), default),
+    )
+    with pytest.raises(KeyError, match=r'typo\.vcf'):
         submit_dragen_batch._build_common_data_inputs()
 
 

@@ -1,4 +1,4 @@
-# This is an example config file detailing all the optioons used for running the realignment pipeline
+# This is an example config file detailing all the options used for running the realignment pipeline
 [workflow]
 name = 'dragen_align_pa'
 output_prefix = ""
@@ -27,7 +27,7 @@ sample_id = 'sample_id'
 
 [images]
 # This image contains the entire pipeline code. The version is automatically bumped by bump-my-version (or other version
-# incrememt tools), but you may need to change the final -1 suffix to the correct suffix.
+# increment tools), but you may need to change the final -1 suffix to the correct suffix.
 ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:3.2.2-1"
 
 # Projects in ICA to run different analyses
@@ -54,7 +54,7 @@ force_resubmit = false
 upload_folder = "test-cram-upload"
 output_folder = "test-dragen-378"
 
-# These tags are used in the ICA UI. You can also use the mfor filtering via the API, but I don't do any of that in this pipeline.
+# These tags are used in the ICA UI. You can also use them for filtering via the API, but I don't do any of that in this pipeline.
 [ica.tags]
 technical_tags = ['test_technical_tag']
 user_tags = ['test_user_tags']
@@ -66,13 +66,6 @@ batch_size = 30
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]
 dragen_version = 'dragen_3_7_8'
-# F2 instance CRAM pipeline. Read by the legacy run_align_genotype_with_dragen.py
-# submitter; kept until Segment B deletes that file.
-cram = 'cbac3d1f-737f-44f2-9a40-f7f2589b5fad'
-
-# F2 instance Fastq pipeline. Read by the legacy run_align_genotype_with_dragen.py
-# submitter; kept until Segment B deletes that file.
-fastq = '393e2423-3c0d-42f2-aa83-910a48a9c32c'
 # Dragen hash table for 3.7.8
 dragen_ht_id = 'fil.854d49a151a24edae5d708da2935b1b0'
 
@@ -151,15 +144,23 @@ dragmap = 'fol.df2129db2c88419cbe0408dd600dce1f'
 gatk = ''
 
 [ica.qc]
-cross_cont_vcf = 'fil.1a7a2d0442854127e5d608da2935b1b0'
-# Legacy per-channel coverage region BED IDs. Read by run_align_genotype_with_dragen.py;
-# kept until Segment B deletes that submitter. The unified pipeline reads
-# `coverage_region_beds` below instead.
-coverage_region_1 = 'fil.ad60897bc97e4646f28c08da33ba0a20'
-coverage_region_2 = 'fil.c4ade57f5ffe4baff28d08da33ba0a20'
-# BED file basenames — resolved to ICA file IDs at submission time via
-# `dragen_align_pa.constants.ICA_FILE_IDS`. Add a basename here only if it
-# is registered there; an unregistered name raises at submitter startup.
+# Cross-contamination SNP VCF basename — resolved to an ICA file ID at
+# submission time via `dragen_align_pa.constants.ICA_FILE_IDS`. Seqtype-agnostic,
+# so it lives at [ica.qc] (not under a per-seqtype block below).
+cross_cont_vcf = 'SNP_NCBI_GRCh38.vcf'
+
+# Coverage-region BED basenames, split by sequencing type. The submitter reads
+# the [ica.qc.<workflow.sequencing_type>] block matching the run, so WGS regions
+# never reach an exome run (or vice versa). Names are resolved to ICA file IDs
+# via `dragen_align_pa.constants.ICA_FILE_IDS`; an unregistered name raises at
+# submitter startup. DRAGEN accepts at most 3 coverage-region BEDs per run.
+[ica.qc.genome]
+coverage_region_beds = [
+    'wgs_coverage_regions.hg38_minus_N.interval_list.bed',
+    'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed',
+]
+
+[ica.qc.exome]
 coverage_region_beds = [
     'Twist_VCGS_Exome_Covered_Targets_hg38.bed',
     'S30409818_Regions.bed',

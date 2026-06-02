@@ -29,19 +29,24 @@ _TODO_FID: Final = f'{_TODO_FID_PREFIX}REPLACE_AFTER_ICA_UPLOAD'
 # human-readable and a typo fails fast at startup rather than as an opaque ICA
 # error mid-run.
 #
-# Scope: BEDs only for now. When other reference assets (FASTAs, GFFs, …) move
-# under the same name-based contract, add them here too.
+# Scope: target BEDs, QC coverage-region BEDs, and the cross-contamination VCF
+# today. When other reference assets (FASTAs, GFFs, …) move under the same
+# name-based contract, add them here too.
 ICA_FILE_IDS: Final[dict[str, str]] = {
     'Twist_VCGS_Exome_Covered_Targets_hg38.bed': 'fil.60130ada16264ed28a7008deb1d54636',
     'S30409818_Regions.bed': 'fil.5d4da6b9c2c74abcb00608deb2229b88',
     'S30409818_Covered.bed': 'fil.625777f457c84b508a7108deb1d54636',
+    # QC reference assets. The cross-contamination VCF is seqtype-agnostic; the
+    # two coverage-region BEDs are WGS QC regions (wired into [ica.qc.genome]).
+    'SNP_NCBI_GRCh38.vcf': 'fil.fd99781d0a9044c1441608de15afe1ac',
+    'wgs_coverage_regions.hg38_minus_N.interval_list.bed': 'fil.434cd66e92844a1f1f6a08de15159355',
+    'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed': 'fil.d37b27f6c28a4f6852ae08de17298bbd',
 }
 
 
 # Canonical exome design names. Each exome cohort resolves to exactly one.
 CANONICAL_DESIGN_CREV2: Final = 'CREv2'
 CANONICAL_DESIGN_TWIST: Final = 'TWIST'
-CANONICAL_DESIGNS: Final = frozenset({CANONICAL_DESIGN_CREV2, CANONICAL_DESIGN_TWIST})
 
 # Exact-match map from metamist assay.meta['sequencing_library'] values to
 # canonical designs. Populate as new values are encountered in metamist. Exact
