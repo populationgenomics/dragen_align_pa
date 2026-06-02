@@ -42,7 +42,8 @@ def run(
 
         logger.info(f'Finding MD5 results for pipeline {pipeline_id}...')
 
-        api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
+        api_response = ica_api_utils.ica_retry(
+            api_instance.get_project_data_list,  # pyright: ignore[reportUnknownVariableType]
             path_params=path_parameters,  # pyright: ignore[reportArgumentType]
             query_params={
                 'filename': ['all_md5.txt'],
@@ -58,7 +59,8 @@ def run(
         logger.info(f'Found MD5 results file ID: {md5sum_results_id}')
 
         # Get a pre-signed URL
-        url_api_response = api_instance.create_download_url_for_data(  # pyright: ignore[reportUnknownVariableType]
+        url_api_response = ica_api_utils.ica_retry(
+            api_instance.create_download_url_for_data,  # pyright: ignore[reportUnknownVariableType]
             path_params=path_parameters | {'dataId': md5sum_results_id},  # pyright: ignore[reportArgumentType]
         )  # type: ignore  # noqa: PGH003
 
