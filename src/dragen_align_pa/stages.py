@@ -650,7 +650,13 @@ class SomalierExtract(SequencingGroupStage):
 
 
 @stage(
-    required_stages=[DownloadGvcfFromIca, DownloadMlrGvcfFromIca, SomalierExtract],
+    required_stages=[
+        DownloadGvcfFromIca,
+        DownloadMlrGvcfFromIca,
+        DownloadDataFromIca,
+        DownloadBatchArtefactsFromIca,
+        SomalierExtract,
+    ],
     analysis_type='gvcf',
     analysis_keys=['gvcf'],
 )
