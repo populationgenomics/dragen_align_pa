@@ -43,8 +43,10 @@ _COMMON_ADDITIONAL_ARGS = (
     '--vc-gvcf-gq-bands 10 20 30 40 '
     '--vc-emit-ref-confidence GVCF '
     '--vc-enable-vcf-output false '
-    '--enable-map-align-output true '
-    '--enable-duplicate-marking true '
+    # NB: --enable-map-align-output and --enable-duplicate-marking are NOT set
+    # here. The DRAGEN pipeline XML emits both automatically when
+    # enable_map_align=true (always set as a top-level param); repeating them
+    # makes DRAGEN see each flag twice and hard-error, failing the batch.
     '--repeat-genotype-enable true '
 )
 

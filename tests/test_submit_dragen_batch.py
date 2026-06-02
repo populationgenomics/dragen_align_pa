@@ -78,11 +78,22 @@ def test_build_additional_args_includes_hardcoded_common(monkeypatch):
         '--vc-gvcf-gq-bands 10 20 30 40',
         '--vc-emit-ref-confidence GVCF',
         '--vc-enable-vcf-output false',
-        '--enable-map-align-output true',
-        '--enable-duplicate-marking true',
         '--repeat-genotype-enable true',
     ):
         assert required_flag in result, f'Missing required hardcoded flag: {required_flag!r}'
+
+
+def test_build_additional_args_omits_flags_the_pipeline_already_emits(monkeypatch):
+    """Regression: the DRAGEN pipeline XML emits --enable-map-align-output and
+    --enable-duplicate-marking automatically whenever enable_map_align=true (a
+    top-level param we always set). Repeating them in additional_args makes
+    DRAGEN see each flag twice and hard-error ('specified multiple times'),
+    failing the batch and triggering a retry batch that fails identically.
+    They must NOT appear in additional_args."""
+    monkeypatch.setattr(submit_dragen_batch, 'config_retrieve', _config_factory())
+    result = submit_dragen_batch._build_additional_args()
+    assert '--enable-map-align-output' not in result
+    assert '--enable-duplicate-marking' not in result
 
 
 def test_build_additional_args_cyp2d6_default_on(monkeypatch):
