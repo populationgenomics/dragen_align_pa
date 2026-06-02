@@ -396,20 +396,30 @@ def _build_fastq_data_inputs(
 
 def _build_common_data_inputs() -> list[AnalysisDataInput]:
     dragen_ht_id: str = config_retrieve(['ica', 'pipelines', 'dragen_ht_id'])
-    coverage_region_bed_names: list[str] = config_retrieve(['ica', 'qc', 'coverage_region_beds'], default=[])
+    sequencing_type = config_retrieve(['workflow', 'sequencing_type'])
+
+    # Coverage-region BEDs are configured per sequencing type under
+    # [ica.qc.<seqtype>]; only the block matching this run is read, so WGS QC
+    # regions never leak into an exome run (or vice versa).
+    coverage_region_bed_names: list[str] = config_retrieve(
+        ['ica', 'qc', sequencing_type, 'coverage_region_beds'], default=[],
+    )
     if len(coverage_region_bed_names) > _MAX_COVERAGE_REGION_BEDS:
         raise ValueError(
-            f'ica.qc.coverage_region_beds has {len(coverage_region_bed_names)} entries; '
-            f'DRAGEN supports at most {_MAX_COVERAGE_REGION_BEDS}. '
-            f'Trim the list in your TOML.',
+            f'[ica.qc.{sequencing_type}] coverage_region_beds has '
+            f'{len(coverage_region_bed_names)} entries; DRAGEN supports at most '
+            f'{_MAX_COVERAGE_REGION_BEDS}. Trim the list in your TOML.',
         )
     # Resolve human-readable BED basenames to ICA file IDs. Doing this at the
     # data-inputs assembly step (rather than mid-submission) makes a typo or
     # unstaged BED fail fast with a clear error, before any ICA round-trip.
     coverage_region_bed_ids = [resolve_ica_file_id(name) for name in coverage_region_bed_names]
-    cross_cont_vcf: str | None = config_retrieve(['ica', 'qc', 'cross_cont_vcf'], default=None)
 
-    sequencing_type = config_retrieve(['workflow', 'sequencing_type'])
+    # Cross-contamination VCF is seqtype-agnostic, so it stays at [ica.qc]. Like
+    # the BEDs it's a basename resolved to an ICA file ID via ICA_FILE_IDS.
+    cross_cont_vcf_name: str | None = config_retrieve(['ica', 'qc', 'cross_cont_vcf'], default=None)
+    cross_cont_vcf_id = resolve_ica_file_id(cross_cont_vcf_name) if cross_cont_vcf_name else None
+
     preset_files = config_retrieve(
         ['dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type, 'additional_files'],
         default=[],
@@ -426,8 +436,8 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     inputs: list[AnalysisDataInput] = [AnalysisDataInput(parameterCode='ref_tar', dataIds=[dragen_ht_id])]
     if coverage_region_bed_ids:
         inputs.append(AnalysisDataInput(parameterCode='qc_coverage_region_beds', dataIds=coverage_region_bed_ids))
-    if cross_cont_vcf:
-        inputs.append(AnalysisDataInput(parameterCode='qc_cross_cont_vcf', dataIds=[cross_cont_vcf]))
+    if cross_cont_vcf_id:
+        inputs.append(AnalysisDataInput(parameterCode='qc_cross_cont_vcf', dataIds=[cross_cont_vcf_id]))
     if additional_file_ids:
         inputs.append(AnalysisDataInput(parameterCode='additional_files', dataIds=additional_file_ids))
     return inputs
