@@ -286,5 +286,100 @@ def test_check_ica_pipeline_status_gives_up_after_persistent_429():
         )
 
     assert exc_info.value.status == 429
-    # 5 attempts total (stop_after_attempt(5)).
-    assert api.get_analysis.call_count == 5
+    # Default 10 retries => 11 total attempts (initial + 10).
+    assert api.get_analysis.call_count == 11
+
+
+def test_check_ica_pipeline_status_retry_count_is_configurable(monkeypatch):
+    """[ica.retry] max_retries tunes the attempt count at call time, so it can
+    be changed via config without rebuilding the image. max_retries=2 => the
+    initial attempt + 2 retries = 3 total."""
+    monkeypatch.setattr(
+        ica_api_utils,
+        'config_retrieve',
+        lambda key, default=None: 2 if key == ['ica', 'retry', 'max_retries'] else default,
+    )
+    api = MagicMock()
+    api.get_analysis.side_effect = ApiException(status=429, reason='Too Many Requests')
+
+    with pytest.raises(ApiException):
+        ica_api_utils.check_ica_pipeline_status(
+            api_instance=api,
+            path_params={'projectId': 'p', 'analysisId': 'a'},
+        )
+
+    assert api.get_analysis.call_count == 3
+
+
+# --- ica_retry helper: the shared controller all data-plane calls go through ---
+
+
+def test_ica_retry_retries_transient_then_returns():
+    """The public helper retries a 429 and returns the eventual success value,
+    so any data-plane SDK call wrapped in it survives a transient blip."""
+    call = MagicMock(side_effect=[ApiException(status=429, reason='Too Many Requests'), 'ok'])
+
+    result = ica_api_utils.ica_retry(call, path_params={'projectId': 'p'})
+
+    assert result == 'ok'
+    assert call.call_count == 2
+    # kwargs must be forwarded to the wrapped call on every attempt.
+    assert call.call_args_list[0].kwargs == {'path_params': {'projectId': 'p'}}
+
+
+def test_ica_retry_does_not_retry_non_transient():
+    """A 404 is a real, permanent error — surface it on the first attempt."""
+    call = MagicMock(side_effect=ApiException(status=404, reason='Not Found'))
+
+    with pytest.raises(ApiException) as exc_info:
+        ica_api_utils.ica_retry(call)
+
+    assert exc_info.value.status == 404
+    assert call.call_count == 1
+
+
+# --- The other data-plane call sites now go through the retry ---
+
+
+def test_submit_nextflow_analysis_retries_on_429_then_succeeds():
+    """Pipeline submission is a data-plane POST; a 429 means the request was
+    rejected (not processed), so retrying is safe and must not tear down the run."""
+    api = MagicMock()
+    succeeding_response = MagicMock()
+    succeeding_response.body = {'id': 'ana.123'}
+    api.create_nextflow_analysis.side_effect = [
+        ApiException(status=429, reason='Too Many Requests'),
+        succeeding_response,
+    ]
+
+    analysis_id = ica_api_utils.submit_nextflow_analysis(
+        api_instance=api,
+        path_params={'projectId': 'p'},
+        body=MagicMock(),
+    )
+
+    assert analysis_id == 'ana.123'
+    assert api.create_nextflow_analysis.call_count == 2
+
+
+def test_check_object_already_exists_retries_on_503_then_succeeds():
+    """The existence check is the most-called data-plane endpoint
+    (get_project_data_list); it must absorb transient 503s."""
+    api = MagicMock()
+    succeeding_response = MagicMock()
+    succeeding_response.body = {'items': []}
+    api.get_project_data_list.side_effect = [
+        ApiException(status=503, reason='Service Unavailable'),
+        succeeding_response,
+    ]
+
+    result = ica_api_utils.check_object_already_exists(
+        api_instance=api,
+        path_params={'projectId': 'p'},
+        file_name='SYN1.cram',
+        folder_path='/bucket/folder',
+        object_type='FILE',
+    )
+
+    assert result is None
+    assert api.get_project_data_list.call_count == 2

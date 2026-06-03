@@ -34,7 +34,8 @@ def _get_fastq_ica_id_list(
         logger.info(
             f'Querying ICA for {len(batch_filenames)} FASTQ IDs (batch {i // batch_size + 1})...',
         )
-        api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
+        api_response = ica_api_utils.ica_retry(
+            api_instance.get_project_data_list,  # pyright: ignore[reportUnknownVariableType]
             path_params=path_parameters,  # pyright: ignore[reportArgumentType]
             query_params={'filename': batch_filenames, 'filenameMatchMode': 'EXACT'},
         )  # type: ignore[no-untyped-call]
