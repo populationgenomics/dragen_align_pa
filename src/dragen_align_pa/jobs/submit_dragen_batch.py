@@ -30,8 +30,8 @@ from dragen_align_pa.utils import get_bed_names_for_seqtype
 # Sourced from the production CRAM-mode preset in the legacy submitter — anything WGS/WES-divergent
 # is instead carried in [dragen_align_pa.manage_dragen_pipeline.presets.{genome,exome}] in config.
 _COMMON_ADDITIONAL_ARGS = (
-    "--read-trimmers polyg "
-    "--soft-read-trimmers none "
+    '--read-trimmers polyg '
+    '--soft-read-trimmers none '
     "--vc-hard-filter 'DRAGENHardQUAL:all:QUAL<5.0;LowDepth:all:DP<=1' "
     '--vc-frd-max-effective-depth 40 '
     '--vc-enable-joint-detection true '
@@ -42,8 +42,6 @@ _COMMON_ADDITIONAL_ARGS = (
     '--vc-gvcf-gq-bands 10 20 30 40 '
     '--vc-emit-ref-confidence GVCF '
     '--vc-enable-vcf-output false '
-    '--enable-map-align-output true '
-    '--enable-duplicate-marking true '
     '--repeat-genotype-enable true '
 )
 
@@ -76,7 +74,7 @@ def _build_additional_args() -> str:
         )
     if 'cnv_segmentation_mode' not in preset:
         raise ValueError(
-            f"Preset [dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}] is "
+            f'Preset [dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}] is '
             f"missing required key 'cnv_segmentation_mode' "
             f"(typical values: 'SLM' for genome, 'HSLM' for exome).",
         )
@@ -131,7 +129,7 @@ def _build_additional_args() -> str:
 
     parts = [
         _COMMON_ADDITIONAL_ARGS.strip(),
-        f"--cnv-segmentation-mode {preset['cnv_segmentation_mode']}",
+        f'--cnv-segmentation-mode {preset["cnv_segmentation_mode"]}',
         cyp2d6_arg,
         vc_padding_arg,
         preset_args,
@@ -183,7 +181,8 @@ def _build_cram_data_inputs(
     # convention: `ica.cram_references.old_cram_reference` points at a key in
     # `[ica.cram_references]` (e.g. "dragmap" or "gatk") whose value is the folder ID.
     selected_ref: str | None = config_retrieve(
-        ['ica', 'cram_references', 'old_cram_reference'], default=None,
+        ['ica', 'cram_references', 'old_cram_reference'],
+        default=None,
     )
     if not selected_ref:
         raise ValueError(
@@ -192,7 +191,8 @@ def _build_cram_data_inputs(
             '[ica.cram_references] (e.g. "dragmap" or "gatk").',
         )
     cram_reference_id: str | None = config_retrieve(
-        ['ica', 'cram_references', selected_ref], default=None,
+        ['ica', 'cram_references', selected_ref],
+        default=None,
     )
     if not cram_reference_id:
         raise ValueError(
@@ -402,7 +402,8 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     # [ica.qc.<seqtype>]; only the block matching this run is read, so WGS QC
     # regions never leak into an exome run (or vice versa).
     coverage_region_bed_names: list[str] = config_retrieve(
-        ['ica', 'qc', sequencing_type, 'coverage_region_beds'], default=[],
+        ['ica', 'qc', sequencing_type, 'coverage_region_beds'],
+        default=[],
     )
     if len(coverage_region_bed_names) > _MAX_COVERAGE_REGION_BEDS:
         raise ValueError(
@@ -428,9 +429,7 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     # additional_files entries are BED basenames, resolved via ICA_FILE_IDS.
     # bed_names values are added too so the operator names a BED once.
     bed_name_files = list(get_bed_names_for_seqtype().values())
-    additional_file_names: list[str] = list(
-        dict.fromkeys(list(preset_files) + list(user_files) + bed_name_files)
-    )
+    additional_file_names: list[str] = list(dict.fromkeys(list(preset_files) + list(user_files) + bed_name_files))
     additional_file_ids = [resolve_ica_file_id(name) for name in additional_file_names]
 
     inputs: list[AnalysisDataInput] = [AnalysisDataInput(parameterCode='ref_tar', dataIds=[dragen_ht_id])]
@@ -537,7 +536,8 @@ def run(
 
         if cram_state_paths is not None:
             specific_data_inputs, cram_fids = _build_cram_data_inputs(
-                batch=batch, per_sg_state_paths=cram_state_paths,
+                batch=batch,
+                per_sg_state_paths=cram_state_paths,
             )
         else:
             # FASTQ mode: both paths are guaranteed non-None by the
