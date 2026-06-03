@@ -6,6 +6,7 @@ from typing import Literal
 
 import cpg_utils
 from cpg_flow.targets import SequencingGroup
+from cpg_utils.config import config_retrieve
 from google.cloud import storage
 from icasdk.apis.tags import project_data_api
 from loguru import logger
@@ -66,15 +67,31 @@ def run(
             if not name.endswith(('.cram', '.cram.crai', '.gvcf.gz', '.gvcf.gz.tbi'))
         ]
 
-        for file_name, file_id in files_to_download:
-            ica_utils.stream_ica_file_to_gcs(
+        # Mint pre-signed URLs in batches via the :createDownloadUrls endpoint
+        # rather than one :createDownloadUrl POST per file. This collapses the
+        # rate-limited per-file call volume (the dominant 429 source on large
+        # folders) from N to ceil(N / url_batch_size). URLs are minted
+        # just-in-time per chunk so they are fresh when streamed.
+        url_batch_size = int(config_retrieve(['ica', 'download', 'url_batch_size'], default=50))
+        for i in range(0, len(files_to_download), url_batch_size):
+            chunk = files_to_download[i : i + url_batch_size]
+            urls = ica_utils.batch_create_download_urls(
                 api_instance=api_instance,
                 path_parameters=path_parameters,
-                file_id=file_id,
-                file_name=file_name,
-                gcs_bucket=gcs_bucket,
-                gcs_prefix=gcs_output_path_prefix,
-                expected_md5_hash=None,
+                file_ids=[fid for _, fid in chunk],
             )
+            for file_name, file_id in chunk:
+                # urls.get(file_id) is None if the batch response omitted this
+                # id; stream_ica_file_to_gcs then falls back to a per-file mint.
+                ica_utils.stream_ica_file_to_gcs(
+                    api_instance=api_instance,
+                    path_parameters=path_parameters,
+                    file_id=file_id,
+                    file_name=file_name,
+                    gcs_bucket=gcs_bucket,
+                    gcs_prefix=gcs_output_path_prefix,
+                    expected_md5_hash=None,
+                    download_url=urls.get(file_id),
+                )
 
     logger.info('All files streamed to GCS successfully.')

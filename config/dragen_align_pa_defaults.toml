@@ -63,6 +63,12 @@ reference_tags = ['test_reference_tags']
 [ica.api]
 batch_size = 30
 
+# Bulk output download: how many pre-signed URLs to mint per :createDownloadUrls
+# call. Larger batches make fewer (rate-limited) API calls but hold URLs longer
+# before they're streamed; keep comfortably inside the pre-signed URL TTL.
+[ica.download]
+url_batch_size = 50
+
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]
 dragen_version = 'dragen_3_7_8'
