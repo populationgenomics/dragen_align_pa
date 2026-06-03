@@ -78,7 +78,8 @@ def fetch_passfail_from_ica(
         raise
 
     def _mint_and_fetch() -> requests.Response:
-        url_response = api_instance.create_download_url_for_data(
+        url_response = ica_api_utils.ica_retry(
+            api_instance.create_download_url_for_data,
             path_params=path_parameters | {'dataId': file_id},
         )
         download_url: str = url_response.body['url']

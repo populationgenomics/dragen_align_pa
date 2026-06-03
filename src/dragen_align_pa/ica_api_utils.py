@@ -7,10 +7,11 @@ wrappers around specific API endpoints.
 import contextlib
 import functools
 import json
-from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any, Final, Literal
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Any, Final, Literal, TypeVar
 
 import icasdk
+from cpg_utils.config import config_retrieve
 from google.api_core import exceptions as gax_exceptions
 from google.cloud import secretmanager
 from icasdk import ApiClient, Configuration
@@ -19,6 +20,8 @@ from icasdk.exceptions import ApiException
 from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from loguru import logger
 from tenacity import (
+    RetryCallState,
+    Retrying,
     retry,
     retry_if_exception,
     retry_if_exception_type,
@@ -31,6 +34,8 @@ from tenacity import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+_T = TypeVar('_T')
+
 
 # --- Constants ---
 
@@ -38,6 +43,10 @@ ICA_REST_ENDPOINT: Final = 'https://ica.illumina.com/ica/rest'
 SECRET_PROJECT: Final = 'cpg-common'
 SECRET_NAME: Final = 'illumina_cpg_workbench_api'
 SECRET_VERSION: Final = 'latest'
+
+# Default retries (after the initial attempt) for transient ICA 429/503 on any
+# data-plane call. Override per-run via [ica.retry] max_retries.
+_DEFAULT_ICA_MAX_RETRIES: Final = 10
 
 
 # --- Secret Management & Auth ---
@@ -133,22 +142,79 @@ def _is_retryable_ica_error(exc: BaseException) -> bool:
     return isinstance(exc, ApiException) and exc.status in (429, 503)  # pyright: ignore[reportAttributeAccessIssue]
 
 
-@retry(
-    retry=retry_if_exception(_is_retryable_ica_error),
-    stop=stop_after_attempt(5),
-    # wait_random(0, 5) jitter is non-negotiable at 16-wide fan-out: without
-    # it, every worker that sees 429 backs off in lockstep and re-hits ICA
-    # together (a self-inflicted second wave). max=30 (not 60) keeps a
-    # single id's worst-case retry budget (~60s) comfortably inside MLR's
-    # 330s outer cycle.
-    wait=wait_random_exponential(multiplier=1, min=2, max=30) + wait_fixed(2),
-    reraise=True,
-)
+def _log_ica_retry(retry_state: RetryCallState) -> None:
+    """tenacity ``before_sleep`` hook: surface every transient-error retry.
+
+    Without this, a retried 429/503 is silent — making the retry machinery
+    "appear to do nothing" in the logs even when it is working. Fires only when
+    a retry is actually scheduled (i.e. on a retryable error with attempts left).
+    """
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    status = getattr(exc, 'status', '?')
+    fn_name = getattr(retry_state.fn, '__name__', repr(retry_state.fn))
+    sleep = retry_state.next_action.sleep if retry_state.next_action else 0.0
+    logger.warning(
+        f'ICA {fn_name} returned {status}; retrying '
+        f'(attempt {retry_state.attempt_number}) after {sleep:.1f}s',
+    )
+
+
+def _ica_retrying() -> Retrying:
+    """Build the shared tenacity controller for transient ICA 429/503 errors.
+
+    Read at call time (not at import) so the retry count can be tuned via
+    `[ica.retry] max_retries` in config without rebuilding the image, and to
+    avoid an import-time config_retrieve (config is not loaded when this module
+    is first imported).
+
+    `max_retries` is retries *after* the initial attempt, so total attempts is
+    `max_retries + 1`. Defaults to 10 retries.
+    """
+    max_retries = int(
+        config_retrieve(['ica', 'retry', 'max_retries'], default=_DEFAULT_ICA_MAX_RETRIES),
+    )
+    return Retrying(
+        retry=retry_if_exception(_is_retryable_ica_error),
+        stop=stop_after_attempt(max_retries + 1),
+        # wait_random_exponential gives a fully-randomised exponential backoff
+        # (each wait is random in [0, min(2^attempt, max)]), which desynchronises
+        # concurrent retries against a shared rate limit — non-negotiable at
+        # 16-wide fan-out, where lockstep backoff is a self-inflicted second
+        # wave. The additive wait_fixed(2) is a hard 2s floor: wait_random_exponential
+        # can otherwise pick a near-zero first wait, letting a worker hammer ICA
+        # instantly after a 429. NB: worst-case backoff scales with max_retries
+        # (~32s per retry at the cap), so a large max_retries can exceed a tight
+        # polling cycle (e.g. MLR's 330s) — tune both together.
+        wait=wait_random_exponential(multiplier=1, min=2, max=30) + wait_fixed(2),
+        before_sleep=_log_ica_retry,
+        reraise=True,
+    )
+
+
+def ica_retry(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
+    """Invoke a single ICA SDK call with transient-429/503 retry.
+
+    Wraps `fn(*args, **kwargs)` in the shared jittered-backoff controller (see
+    `_ica_retrying`). Only 429 (rate limit) and 503 (backend unavailable) are
+    retried; every other error propagates on the first occurrence. The
+    controller is rebuilt per call so `[ica.retry] max_retries` is read from
+    config at call time.
+
+    Wrap only the SDK call itself, inside any existing try/except, so the
+    caller's error logging still fires on the *final* failure while
+    `_log_ica_retry` reports each intermediate retry.
+    """
+    return _ica_retrying()(fn, *args, **kwargs)
+
+
 def check_ica_pipeline_status(
     api_instance: project_analysis_api.ProjectAnalysisApi,
     path_params: dict[str, str],
 ) -> str:
     """Check the status of an ICA pipeline via a pipeline ID
+
+    Transient ICA 429/503 errors are retried with jittered exponential backoff
+    (see `ica_retry`); other errors propagate on the first occurrence.
 
     Args:
         api_instance (project_analysis_api.ProjectAnalysisApi): An instance of the ProjectAnalysisApi
@@ -161,7 +227,7 @@ def check_ica_pipeline_status(
         str: The status of the pipeline. Can be one of ['REQUESTED', 'AWAITINGINPUT', 'INPROGRESS', 'SUCCEEDED', 'FAILED', 'FAILEDFINAL', 'ABORTED']
     """  # noqa: E501
     try:
-        api_response = api_instance.get_analysis(path_params=path_params)  # type: ignore[ReportUnknownVariableType]
+        api_response = ica_retry(api_instance.get_analysis, path_params=path_params)  # type: ignore[ReportUnknownVariableType]
         pipeline_status: str = api_response.body['status']  # type: ignore[ReportUnknownVariableType]
         return pipeline_status  # type: ignore[ReportUnknownVariableType]
     except icasdk.ApiException as e:
@@ -206,7 +272,8 @@ def check_object_already_exists(
             'filenameMatchMode': 'EXACT',
         } | query_params
     try:
-        api_response = api_instance.get_project_data_list(  # type: ignore[ReportUnknownVariableType]
+        api_response = ica_retry(
+            api_instance.get_project_data_list,  # type: ignore[ReportUnknownVariableType]
             path_params=path_params,  # type: ignore[ReportUnknownVariableType]
             query_params=query_params,  # type: ignore[ReportUnknownVariableType]
         )  # type: ignore[ReportUnknownVariableType]
@@ -245,7 +312,8 @@ def find_file_id_by_name(
     (Used by download_specific_files_from_ica.py)
     """
     try:
-        api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
+        api_response = ica_retry(
+            api_instance.get_project_data_list,  # pyright: ignore[reportUnknownVariableType]
             path_params=path_parameters,
             query_params={  # pyright: ignore[reportUnknownVariableType]
                 'parentFolderPath': parent_folder_path,
@@ -297,7 +365,8 @@ def get_file_details_from_ica(
             'pageSize': '2',
         }
 
-        api_response = api_instance.get_project_data_list(
+        api_response = ica_retry(
+            api_instance.get_project_data_list,
             path_params=path_params,
             query_params=query_params,
         )
@@ -336,7 +405,8 @@ def submit_nextflow_analysis(
     if header_params is None:
         header_params = {}
     try:
-        api_response = api_instance.create_nextflow_analysis(  # type: ignore[ReportUnknownVariableType]
+        api_response = ica_retry(
+            api_instance.create_nextflow_analysis,  # type: ignore[ReportUnknownVariableType]
             path_params=path_params,
             header_params=header_params,
             body=body,

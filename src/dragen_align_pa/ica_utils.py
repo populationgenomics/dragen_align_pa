@@ -74,7 +74,8 @@ def create_upload_object_id(
                 folderPath=f'{folder_path}/',
                 dataType=object_type,
             )
-        api_response = api_instance.create_data_in_project(  # type: ignore[ReportUnknownVariableType]
+        api_response = ica_api_utils.ica_retry(
+            api_instance.create_data_in_project,  # type: ignore[ReportUnknownVariableType]
             path_params=path_params,  # type: ignore[ReportUnknownVariableType]
             body=body,
         )
@@ -99,7 +100,8 @@ def get_md5_from_ica(
     Returns (expected_hash, file_content).
     """
     try:
-        url_response = api_instance.create_download_url_for_data(  # pyright: ignore[reportUnknownVariableType]
+        url_response = ica_api_utils.ica_retry(
+            api_instance.create_download_url_for_data,  # pyright: ignore[reportUnknownVariableType]
             path_params=path_parameters | {'dataId': md5_file_id},
         )
         download_url = url_response.body['url']  # pyright: ignore[reportUnknownVariableType]
@@ -148,7 +150,8 @@ def stream_ica_file_to_gcs(
 
     try:
         # 1. Get pre-signed URL
-        url_response = api_instance.create_download_url_for_data(  # pyright: ignore[reportUnknownVariableType]
+        url_response = ica_api_utils.ica_retry(
+            api_instance.create_download_url_for_data,  # pyright: ignore[reportUnknownVariableType]
             path_params=path_parameters | {'dataId': file_id},  # pyright: ignore[reportArgumentType]
         )
         download_url = url_response.body['url']  # pyright: ignore[reportUnknownVariableType]
@@ -244,7 +247,8 @@ def list_ica_files(
             }
             if page_token:
                 query_params['pageToken'] = page_token
-            api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
+            api_response = ica_api_utils.ica_retry(
+                api_instance.get_project_data_list,  # pyright: ignore[reportUnknownVariableType]
                 path_params=path_parameters,  # pyright: ignore[reportArgumentType]
                 query_params=query_params,  # type: ignore[reportArgumentType]
             )
