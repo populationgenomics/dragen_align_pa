@@ -84,7 +84,7 @@ chunk_size = "100"
 
 # Unified DRAGEN378 pipeline (single pipeline for CRAM/FASTQ, WGS/WES)
 [dragen_align_pa.manage_dragen_pipeline]
-pipeline_id = "18a4baab-a12f-415d-ba8e-10b5bf6834d0"
+pipeline_id = "aa2661f0-2d2f-4d84-989a-c435f35016d3"
 batch_size = 5
 # Toggle the DRAGEN CYP2D6 pharmacogenomic caller. Defaults to on; set false to skip.
 enable_cyp2d6 = true
