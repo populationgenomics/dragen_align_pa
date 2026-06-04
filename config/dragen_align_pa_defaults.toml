@@ -25,11 +25,6 @@ machine_id = 'machine_id'
 flowcell = 'flowcell'
 sample_id = 'sample_id'
 
-[images]
-# This image contains the entire pipeline code. The version is automatically bumped by bump-my-version (or other version
-# increment tools), but you may need to change the final -1 suffix to the correct suffix.
-ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:3.2.2-1"
-
 # Projects in ICA to run different analyses
 [ica.projects]
 dragen_align = "main_dragen_project"
@@ -163,7 +158,7 @@ cross_cont_vcf = 'SNP_NCBI_GRCh38.vcf'
 [ica.qc.genome]
 coverage_region_beds = [
     'wgs_coverage_regions.hg38_minus_N.interval_list.bed',
-    'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed',
+    'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed', # This one for exomes as well
 ]
 
 [ica.qc.exome]
