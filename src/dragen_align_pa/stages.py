@@ -645,7 +645,24 @@ class SomalierExtract(SequencingGroupStage):
         return self.make_outputs(sequencing_group, data=out_somalier_path, skipped=True)
 
 
-@stage(required_stages=[DownloadGvcfFromIca, DownloadMlrGvcfFromIca], analysis_type='gvcf', analysis_keys=['gvcf'])
+# Pseudo end-stage: depends on every download stage (plus SomalierExtract) so the
+# pipeline collapses to a single terminal node once DeleteDataInIca is set aside.
+# Without this, DownloadDataFromIca, DownloadBatchArtefactsFromIca, SomalierExtract
+# and ReheaderMlrGvcf are all parallel sinks (their only dependent is the optional
+# DeleteDataInIca cleanup stage). The body still only consumes the two gVCF inputs;
+# the extra edges are ordering-only.
+@stage(
+    required_stages=[
+        DownloadCramFromIca,
+        DownloadGvcfFromIca,
+        DownloadMlrGvcfFromIca,
+        DownloadDataFromIca,
+        DownloadBatchArtefactsFromIca,
+        SomalierExtract,
+    ],
+    analysis_type='gvcf',
+    analysis_keys=['gvcf'],
+)
 class ReheaderMlrGvcf(SequencingGroupStage):
     """
     Reheader the MLR gVCF to insert correct reference block information that the MLR process removes.
@@ -680,18 +697,16 @@ class ReheaderMlrGvcf(SequencingGroupStage):
         return self.make_outputs(target=sequencing_group, data=outputs, jobs=reheader_mlr_gvcf_job)  # pyright: ignore[reportArgumentType]
 
 
+# ReheaderMlrGvcf is the single terminal stage and transitively depends on every
+# download stage (+ SomalierExtract), so listing those here would just double up.
+# Prepare/UploadDataToIca/FastqIntakeQc stay because queue_jobs consumes their
+# outputs via inputs.as_path — cpg-flow only resolves inputs from declared deps.
 @stage(
     required_stages=[
         PrepareIcaForDragenAnalysis,
         UploadDataToIca,
-        DownloadCramFromIca,
-        DownloadGvcfFromIca,
-        DownloadMlrGvcfFromIca,
-        DownloadDataFromIca,
-        DownloadBatchArtefactsFromIca,
-        ReheaderMlrGvcf,
-        SomalierExtract,
         FastqIntakeQc,
+        ReheaderMlrGvcf,
     ],
 )
 class DeleteDataInIca(CohortStage):
