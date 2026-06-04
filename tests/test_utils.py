@@ -13,74 +13,58 @@ from dragen_align_pa.utils import (
 
 
 @dataclass
-class _FakeAssay:
-    meta: dict = field(default_factory=dict)
-
-
-@dataclass
 class _FakeSG:
     id: str
-    assays: list = field(default_factory=list)
+    meta: dict[str, str | None]
 
 
 @dataclass
 class _FakeCohort:
     id: str
-    sgs: list = field(default_factory=list)
+    sgs: list[_FakeSG] = field(default_factory=list)
 
-    def get_sequencing_groups(self) -> list:
+    def get_sequencing_groups(self) -> list[_FakeSG]:
         return self.sgs
 
 
-def _make_sg(sg_id: str, *sequencing_libraries: str) -> _FakeSG:
-    return _FakeSG(
-        id=sg_id,
-        assays=[_FakeAssay(meta={'sequencing_library': lib}) for lib in sequencing_libraries],
-    )
+def _make_sg(sg_id: str, sequencing_library: str) -> _FakeSG:
+    return _FakeSG(id=sg_id, meta={'sequencing_library': sequencing_library})
 
 
 # ----- _resolve_sg_canonical_design -----
 
+
 def test_resolve_design_happy_path():
-    sg = _make_sg('CPG_A', 'SSQXTCREV2')
+    sg = _make_sg(sg_id='CPG_A', sequencing_library='SSQXTCREV2')
     assert _resolve_sg_canonical_design(sg) == 'CREv2'
 
 
 def test_resolve_design_multiple_assays_same_canonical():
     """An SG with two assays whose raw strings map to the same canonical
     design (e.g. different prep protocols, same capture) is fine."""
-    sg = _make_sg('CPG_A', 'SSQXTCREV2', 'AgilentCREv2WES')
+    sg = _make_sg(sg_id='CPG_A', sequencing_library='SSQXTCREV2')
     assert _resolve_sg_canonical_design(sg) == 'CREv2'
 
 
-def test_resolve_design_no_assays_raises():
-    sg = _FakeSG(id='CPG_A', assays=[])
-    with pytest.raises(RuntimeError, match=r'no assay\.meta'):
+def test_resolve_design_nosequencing_library_raises():
+    sg = _FakeSG(id='CPG_A', meta={'sequencing_library': None})
+    with pytest.raises(RuntimeError, match=r'no meta\[\'sequencing_library\'\]'):
         _resolve_sg_canonical_design(sg)
 
 
 def test_resolve_design_unmapped_value_raises():
-    sg = _make_sg('CPG_A', 'NeverHeardOfThis')
-    with pytest.raises(RuntimeError, match='unmapped sequencing_library'):
-        _resolve_sg_canonical_design(sg)
-
-
-def test_resolve_design_multiple_canonicals_raises():
-    """An SG whose assays map to different canonical designs (genuinely
-    mixed prep within one SG) must fail — the validator can't pick a BED."""
-    sg = _make_sg('CPG_A', 'SSQXTCREV2', 'TwistWES1VCGS1')
-    with pytest.raises(RuntimeError, match='multiple canonical designs'):
+    sg = _make_sg(sg_id='CPG_A', sequencing_library='NeverHeardOfThis')
+    with pytest.raises(RuntimeError, match="doesn't map to a canonical design"):
         _resolve_sg_canonical_design(sg)
 
 
 # ----- assert_cohort_design_matches_configured_bed -----
 
+
 def _config_factory(sequencing_type='exome', bed_names=None):
     cfg = {('workflow', 'sequencing_type'): sequencing_type}
     if bed_names is not None:
-        cfg[
-            ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names')
-        ] = bed_names
+        cfg[('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names')] = bed_names
 
     def fake_retrieve(key, default=None):
         return cfg.get(tuple(key), default)
@@ -104,13 +88,20 @@ def test_validator_rejects_empty_cohort(monkeypatch):
 
 
 def test_validator_rejects_mixed_designs(monkeypatch):
-    monkeypatch.setattr(utils, 'config_retrieve', _config_factory(
-        bed_names={'vc_target': 'S30409818_Covered.bed'},
-    ))
-    cohort = _FakeCohort(id='COH0001', sgs=[
-        _make_sg('CPG_A', 'SSQXTCREV2'),
-        _make_sg('CPG_B', 'TwistWES1VCGS1'),
-    ])
+    monkeypatch.setattr(
+        utils,
+        'config_retrieve',
+        _config_factory(
+            bed_names={'vc_target': 'S30409818_Covered.bed'},
+        ),
+    )
+    cohort = _FakeCohort(
+        id='COH0001',
+        sgs=[
+            _make_sg('CPG_A', 'SSQXTCREV2'),
+            _make_sg('CPG_B', 'TwistWES1VCGS1'),
+        ],
+    )
     with pytest.raises(RuntimeError, match='mixed exome designs'):
         assert_cohort_design_matches_configured_bed(cohort)  # type: ignore[arg-type]
 
@@ -120,9 +111,13 @@ def test_validator_rejects_missing_bed_names(monkeypatch):
     entries. get_bed_names_for_seqtype raises ValueError before the validator
     gets a chance to do its own checks; that surfaces to the operator with the
     actionable "is missing values for [...]" message."""
-    monkeypatch.setattr(utils, 'config_retrieve', _config_factory(
-        bed_names={'vc_target': '', 'cnv_target': '', 'sv_call_regions': ''},
-    ))
+    monkeypatch.setattr(
+        utils,
+        'config_retrieve',
+        _config_factory(
+            bed_names={'vc_target': '', 'cnv_target': '', 'sv_call_regions': ''},
+        ),
+    )
     cohort = _FakeCohort(id='COH0001', sgs=[_make_sg('CPG_A', 'SSQXTCREV2')])
     with pytest.raises(ValueError, match='is missing values for'):
         assert_cohort_design_matches_configured_bed(cohort)  # type: ignore[arg-type]
@@ -131,39 +126,59 @@ def test_validator_rejects_missing_bed_names(monkeypatch):
 def test_validator_rejects_bed_outside_design(monkeypatch):
     """Cohort is CREv2 but config uses a Twist BED → fail with both names
     in the message so the operator sees the mismatch."""
-    monkeypatch.setattr(utils, 'config_retrieve', _config_factory(
-        bed_names={'vc_target': 'Twist_VCGS_Exome_Covered_Targets_hg38.bed'},
-    ))
+    monkeypatch.setattr(
+        utils,
+        'config_retrieve',
+        _config_factory(
+            bed_names={'vc_target': 'Twist_VCGS_Exome_Covered_Targets_hg38.bed'},
+        ),
+    )
     cohort = _FakeCohort(id='COH0001', sgs=[_make_sg('CPG_A', 'SSQXTCREV2')])
-    with pytest.raises(RuntimeError, match=r"CREv2.*Twist_VCGS_Exome_Covered"):
+    with pytest.raises(RuntimeError, match=r'CREv2.*Twist_VCGS_Exome_Covered'):
         assert_cohort_design_matches_configured_bed(cohort)  # type: ignore[arg-type]
 
 
 def test_validator_happy_path_crev2(monkeypatch):
-    monkeypatch.setattr(utils, 'config_retrieve', _config_factory(bed_names={
-        'vc_target': 'S30409818_Covered.bed',
-        'cnv_target': 'S30409818_Regions.bed',
-        'sv_call_regions': 'S30409818_Regions.bed',
-    }))
-    cohort = _FakeCohort(id='COH0001', sgs=[
-        _make_sg('CPG_A', 'SSQXTCREV2'),
-        _make_sg('CPG_B', 'AgilentCREv2WES'),  # different lab string, same canonical
-    ])
+    monkeypatch.setattr(
+        utils,
+        'config_retrieve',
+        _config_factory(
+            bed_names={
+                'vc_target': 'S30409818_Covered.bed',
+                'cnv_target': 'S30409818_Regions.bed',
+                'sv_call_regions': 'S30409818_Regions.bed',
+            }
+        ),
+    )
+    cohort = _FakeCohort(
+        id='COH0001',
+        sgs=[
+            _make_sg('CPG_A', 'SSQXTCREV2'),
+            _make_sg('CPG_B', 'AgilentCREv2WES'),  # different lab string, same canonical
+        ],
+    )
     # No raise expected; validator is silent on success.
     assert_cohort_design_matches_configured_bed(cohort)  # type: ignore[arg-type]
 
 
 def test_validator_happy_path_twist(monkeypatch):
-    monkeypatch.setattr(utils, 'config_retrieve', _config_factory(bed_names={
-        'vc_target': 'Twist_VCGS_Exome_Covered_Targets_hg38.bed',
-        'cnv_target': 'Twist_VCGS_Exome_Covered_Targets_hg38.bed',
-        'sv_call_regions': 'Twist_VCGS_Exome_Covered_Targets_hg38.bed',
-    }))
+    monkeypatch.setattr(
+        utils,
+        'config_retrieve',
+        _config_factory(
+            bed_names={
+                'vc_target': 'Twist_VCGS_Exome_Covered_Targets_hg38.bed',
+                'cnv_target': 'Twist_VCGS_Exome_Covered_Targets_hg38.bed',
+                'sv_call_regions': 'Twist_VCGS_Exome_Covered_Targets_hg38.bed',
+            }
+        ),
+    )
     cohort = _FakeCohort(id='COH0001', sgs=[_make_sg('CPG_A', 'TwistWES1VCGS1')])
     assert_cohort_design_matches_configured_bed(cohort)  # type: ignore[arg-type]
 
 
 # ----- get_bed_names_for_seqtype -----
+
 
 def test_get_bed_names_returns_empty_for_genome(monkeypatch):
     """Genome runs have no bed_names block by design; return {} cleanly."""
@@ -182,23 +197,31 @@ def test_get_bed_names_raises_for_exome_with_no_block(monkeypatch):
 def test_get_bed_names_rejects_partially_empty_values(monkeypatch):
     """Some entries set, some empty -> raise naming only the unset ones.
     This is what the function move is designed to catch."""
-    monkeypatch.setattr(utils, 'config_retrieve', _config_factory(
-        sequencing_type='exome',
-        bed_names={'vc_target': 'covered.bed', 'cnv_target': '', 'sv_call_regions': '  '},
-    ))
+    monkeypatch.setattr(
+        utils,
+        'config_retrieve',
+        _config_factory(
+            sequencing_type='exome',
+            bed_names={'vc_target': 'covered.bed', 'cnv_target': '', 'sv_call_regions': '  '},
+        ),
+    )
     with pytest.raises(ValueError, match=r"\['cnv_target', 'sv_call_regions'\]"):
         get_bed_names_for_seqtype()
 
 
 def test_get_bed_names_returns_populated_dict(monkeypatch):
-    monkeypatch.setattr(utils, 'config_retrieve', _config_factory(
-        sequencing_type='exome',
-        bed_names={
-            'vc_target': 'covered.bed',
-            'cnv_target': 'regions.bed',
-            'sv_call_regions': 'regions.bed',
-        },
-    ))
+    monkeypatch.setattr(
+        utils,
+        'config_retrieve',
+        _config_factory(
+            sequencing_type='exome',
+            bed_names={
+                'vc_target': 'covered.bed',
+                'cnv_target': 'regions.bed',
+                'sv_call_regions': 'regions.bed',
+            },
+        ),
+    )
     assert get_bed_names_for_seqtype() == {
         'vc_target': 'covered.bed',
         'cnv_target': 'regions.bed',

@@ -117,7 +117,7 @@ def _resolve_sg_canonical_design(sg: SequencingGroup) -> str:
             f"doesn't map to a canonical design. Add it to DESIGN_TO_CANONICAL in "
             f'dragen_align_pa.constants.',
         )
-    return sequencing_library
+    return DESIGN_TO_CANONICAL[sequencing_library]
 
     # raw_values: set[str] = set()
     # for assay in sg.assays or ():
