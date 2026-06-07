@@ -378,9 +378,14 @@ def get_manifest_path_for_cohort(cohort: Cohort) -> cpg_utils.Path:
     logger.info(f'Using access level: {access_level}')
 
     if access_level == 'test':
-        manifest_type: str = 'control'
-        required_basename_str: str = 'control_manifest'
-        required_dirname_str: str = 'control_manifests'
+        if config_retrieve(['workflow', 'control_manifest'], default=False):
+            manifest_type: str = 'control'
+            required_basename_str: str = 'control_manifest'
+            required_dirname_str: str = 'control_manifests'
+        else:
+            manifest_type = 'test'
+            required_basename_str = 'test_manifest'
+            required_dirname_str = 'test_manifests'
     else:
         manifest_type = 'production'
         required_basename_str = 'production_manifest'
