@@ -36,7 +36,6 @@ from dragen_align_pa.jobs import (
 )
 from dragen_align_pa.utils import (
     assert_cohort_design_matches_configured_bed,
-    calculate_needed_storage,
     get_batch_artefacts_root,
     get_manifest_path_for_cohort,
     get_output_path,
@@ -233,7 +232,7 @@ class UploadDataToIca(SequencingGroupStage):
             # Debugging logging
             logger.info(f'Sequencing group: {sequencing_group}')
             logger.info(f'Path for sequencing group: {sequencing_group} is {sequencing_group.cram.path}')
-            job.storage(calculate_needed_storage(cram_path=sequencing_group.cram.path))
+            # job.storage(calculate_needed_storage(cram_path=sequencing_group.cram.path))
             job.memory('8Gi')
             job.spot(is_spot=False)
 
