@@ -385,7 +385,7 @@ def get_manifest_path_for_cohort(cohort: Cohort) -> cpg_utils.Path:
         else:
             manifest_type = 'test'
             required_basename_str = 'test_manifest'
-            required_dirname_str = 'test_flowcell'  # current hardcode only for fewgenomes-test.
+            required_dirname_str = 'fewgenomes-test-flowcell'  # current hardcode only for fewgenomes-test.
     else:
         manifest_type = 'production'
         required_basename_str = 'production_manifest'
