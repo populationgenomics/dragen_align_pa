@@ -231,8 +231,8 @@ class UploadDataToIca(SequencingGroupStage):
             )
             job.image(image=get_driver_image())
             # Debugging logging
-            logging.info(f'Sequencing group: {sequencing_group}')
-            logging.info(f'Path for sequencing group: {sequencing_group} is {sequencing_group.cram.path}')
+            logger.info(f'Sequencing group: {sequencing_group}')
+            logger.info(f'Path for sequencing group: {sequencing_group} is {sequencing_group.cram.path}')
             job.storage(calculate_needed_storage(cram_path=sequencing_group.cram.path))
             job.memory('8Gi')
             job.spot(is_spot=False)
