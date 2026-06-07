@@ -230,6 +230,9 @@ class UploadDataToIca(SequencingGroupStage):
                 tool_name='ICA-Python',
             )
             job.image(image=get_driver_image())
+            # Debugging logging
+            logging.info(f'Sequencing group: {sequencing_group}')
+            logging.info(f'Path for sequencing group: {sequencing_group} is {sequencing_group.cram.path}')
             job.storage(calculate_needed_storage(cram_path=sequencing_group.cram.path))
             job.memory('8Gi')
             job.spot(is_spot=False)
@@ -318,7 +321,8 @@ class ManageDragenPipeline(CohortStage):
             per_sg_fastq_list_paths = inputs.as_dict(target=cohort, stage=MakeFastqFileList)
 
         analysis_output_fid_path: cpg_utils.Path = inputs.as_path(
-            target=cohort, stage=PrepareIcaForDragenAnalysis,
+            target=cohort,
+            stage=PrepareIcaForDragenAnalysis,
         )
 
         job: PythonJob = initialise_python_job(
@@ -417,7 +421,10 @@ class DownloadCramFromIca(SequencingGroupStage):
             job_name='DownloadCramFromIca',
             sequencing_group=sequencing_group,
             file_spec=FileTypeSpec(
-                gcs_prefix='cram', data_suffix='cram', index_suffix='cram.crai', md5_suffix='md5sum',
+                gcs_prefix='cram',
+                data_suffix='cram',
+                index_suffix='cram.crai',
+                md5_suffix='md5sum',
             ),
             pipeline_id_arguid_path=pipeline_id_arguid_path,
             cohort_name=cohort.name,
@@ -724,7 +731,8 @@ class DeleteDataInIca(CohortStage):
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:
         cohort_analysis_output_fid_path: cpg_utils.Path = inputs.as_path(
-            target=cohort, stage=PrepareIcaForDragenAnalysis,
+            target=cohort,
+            stage=PrepareIcaForDragenAnalysis,
         )
 
         cram_fid_paths_dict: dict[str, cpg_utils.Path] | None = None
@@ -733,7 +741,9 @@ class DeleteDataInIca(CohortStage):
             cram_fid_paths_dict = inputs.as_path_by_target(stage=UploadDataToIca)
         elif READS_TYPE == 'fastq':
             fastq_ids_list_path = inputs.as_path(
-                target=cohort, stage=FastqIntakeQc, key='fastq_ids_outpath',
+                target=cohort,
+                stage=FastqIntakeQc,
+                key='fastq_ids_outpath',
             )
 
         output_path: cpg_utils.Path = self.expected_outputs(cohort=cohort)
