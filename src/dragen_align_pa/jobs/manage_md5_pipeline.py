@@ -116,11 +116,18 @@ def run(
 
     cohort_name: str = cohort.name
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
-        supplied_manifest_data: pd.DataFrame = pd.read_csv(
-            manifest_fh,
-            usecols=[config_retrieve(['manifest', 'filenames'])],
-        )
-    fastq_filenames: list[str] = supplied_manifest_data[config_retrieve(['manifest', 'filenames'])].to_list()
+        try:
+            supplied_manifest_data: pd.DataFrame = pd.read_csv(
+                manifest_fh,
+                usecols=[config_retrieve(['manifest', 'filenames'])],
+            )
+            fastq_filenames: list[str] = supplied_manifest_data[config_retrieve(['manifest', 'filenames'])].to_list()
+        except ValueError:
+            logger.error(
+                f'Expected to read the column {config_retrieve(["manifest", "filenames"])} from the manifest file'
+                f'Got instead: {manifest_fh.readline()}'
+            )
+            raise
 
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
