@@ -577,7 +577,8 @@ class DownloadBatchArtefactsFromIca(CohortStage):
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:
         batches_file_path: cpg_utils.Path = inputs.as_dict(target=cohort, stage=ManageDragenPipeline)[
-            f'{cohort.name}_batches'
+            f'{cohort.name}_{config_retrieve(["workflow", "sequencing_type"])}_'
+            f'{config_retrieve(["workflow", "reads_type"])}_batches'
         ]
         gcs_output_root = get_batch_artefacts_root()
         marker_path = self.expected_outputs(cohort=cohort)
