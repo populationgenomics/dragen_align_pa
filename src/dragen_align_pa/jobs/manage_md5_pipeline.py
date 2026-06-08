@@ -167,7 +167,7 @@ def run(
             ica_folder_path=fastq_list_folder,
         )
         with outputs['fastq_ids_outpath'].open('w') as fq_outpath:
-            fq_outpath.write(json.dumps(ica_fastq_info))
+            json.dump(ica_fastq_info, fq_outpath)
 
         # Find the uploaded file to get its ID, with retries for eventual consistency
         fastq_list_file_details = None
