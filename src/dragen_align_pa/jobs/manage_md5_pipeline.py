@@ -26,6 +26,7 @@ def _get_fastq_ica_id_list(
     Finds ICA file IDs for a list of fastq filenames.
     """
     fastq_ids: list[str] = []
+    ids_to_write: list[str] = []
 
     # Handle potentially large lists by batching API calls
     batch_size = config_retrieve(['ica', 'api', 'batch_size'], default=20)
@@ -35,25 +36,27 @@ def _get_fastq_ica_id_list(
             f'Querying ICA for {len(batch_filenames)} FASTQ IDs (batch {i // batch_size + 1})...',
         )
         api_response = ica_api_utils.ica_retry(
-            api_instance.get_project_data_list,  # pyright: ignore[reportUnknownVariableType]
-            path_params=path_parameters,  # pyright: ignore[reportArgumentType]
+            api_instance.get_project_data_list,
+            path_params=path_parameters,
             query_params={'filename': batch_filenames, 'filenameMatchMode': 'EXACT'},
-        )  # type: ignore[no-untyped-call]
-        for item in api_response.body['items']:  # pyright: ignore[reportUnknownArgumentType]
-            file_name: str = item['data']['details']['name']  # pyright: ignore[reportUnknownVariableType]
-            file_id: str = item['data']['id']  # pyright: ignore[reportUnknownVariableType]
-            fastq_ids.append(f'{file_id}\t{file_name}')  # type: ignore[arg-type]
+        )
+        for item in api_response.body['items']:
+            file_name: str = item['data']['details']['name']
+            file_id: str = item['data']['id']
+            fastq_ids.append(f'{file_id}\t{file_name}')
+            ids_to_write.append(file_id)
 
     if len(fastq_ids) != len(fastq_filenames):
-        logger.warning(
+        logger.error(
             f'Mismatch: Found {len(fastq_ids)} file IDs in ICA, '
             f'but {len(fastq_filenames)} were expected from manifest.',
         )
-        # This could be a critical error, depending on requirements
-        # For now, we'll just log and continue with the files we found.
-
+        raise ValueError(
+            'Mismatch: Found {len(fastq_ids)} file IDs in ICA, '
+            f'but {len(fastq_filenames)} were expected from manifest.'
+        )
     with fastq_ids_outpath.open('w') as fq_outpath:
-        fq_outpath.write('\n'.join([fq_id.split('\t')[0] for fq_id in fastq_ids]))
+        fq_outpath.write('\n'.join(ids_to_write))
 
     logger.info(f'Found {len(fastq_ids)} total FASTQ file IDs.')
     return fastq_ids
