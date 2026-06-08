@@ -53,7 +53,7 @@ def _get_fastq_ica_id_list(
         # For now, we'll just log and continue with the files we found.
 
     with fastq_ids_outpath.open('w') as fq_outpath:
-        fq_outpath.write('\n'.join(fastq_ids))
+        fq_outpath.write('\n'.join([fq_id.split('\t')[0] for fq_id in fastq_ids]))
 
     logger.info(f'Found {len(fastq_ids)} total FASTQ file IDs.')
     return fastq_ids
