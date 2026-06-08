@@ -617,7 +617,9 @@ def run(
         )
 
     batches_file_path: cpg_utils.Path = outputs[
-        f'{cohort.name}_{config_retrieve(["workflow", "sequencing_type"])}_{config_retrieve(["workflow", "reads_type"])}_batches'
+        f'{cohort.name}_{config_retrieve(["workflow", "sequencing_type"])}_{
+            config_retrieve(["workflow", "reads_type"])
+        }_batches'
     ]
     # `errors_path` is internal scratch — written only on threshold breach.
     # Computed via `get_pipeline_path` rather than declared in expected_outputs
