@@ -1,4 +1,4 @@
-import os
+import json
 import time
 from functools import partial
 from typing import Literal
@@ -10,7 +10,7 @@ from cpg_utils.config import config_retrieve, try_get_ar_guid
 from icasdk.apis.tags import project_analysis_api, project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils, utils
+from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
 from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.jobs import run_intake_qc_pipeline
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
@@ -18,15 +18,13 @@ from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
 
 def _get_fastq_ica_id_list(
     fastq_filenames: list[str],
-    fastq_ids_outpath: cpg_utils.Path,
     api_instance: project_data_api.ProjectDataApi,
     path_parameters: dict[str, str],
-) -> list[str]:
+) -> dict[str, str]:
     """
     Finds ICA file IDs for a list of fastq filenames.
     """
-    fastq_ids: list[str] = []
-    ids_to_write: list[str] = []
+    ica_fastq_info: dict[str, str] = {}
 
     # Handle potentially large lists by batching API calls
     batch_size = config_retrieve(['ica', 'api', 'batch_size'], default=20)
@@ -43,23 +41,20 @@ def _get_fastq_ica_id_list(
         for item in api_response.body['items']:
             file_name: str = item['data']['details']['name']
             file_id: str = item['data']['id']
-            fastq_ids.append(f'{file_id}\t{file_name}')
-            ids_to_write.append(file_id)
+            ica_fastq_info[file_id] = file_name
 
-    if len(fastq_ids) != len(fastq_filenames):
+    if len(ica_fastq_info) != len(fastq_filenames):
         logger.error(
-            f'Mismatch: Found {len(fastq_ids)} file IDs in ICA, '
+            f'Mismatch: Found {len(ica_fastq_info)} file IDs in ICA, '
             f'but {len(fastq_filenames)} were expected from manifest.',
         )
         raise ValueError(
-            'Mismatch: Found {len(fastq_ids)} file IDs in ICA, '
+            f'Mismatch: Found {len(ica_fastq_info)} file IDs in ICA, '
             f'but {len(fastq_filenames)} were expected from manifest.'
         )
-    with fastq_ids_outpath.open('w') as fq_outpath:
-        fq_outpath.write('\n'.join(ids_to_write))
 
-    logger.info(f'Found {len(fastq_ids)} total FASTQ file IDs.')
-    return fastq_ids
+    logger.info(f'Found {len(ica_fastq_info)} total FASTQ file IDs.')
+    return ica_fastq_info
 
 
 def _create_md5_output_folder(
@@ -147,27 +142,15 @@ def run(
         api_instance = project_data_api.ProjectDataApi(api_client)
 
         # Get all ica file ids for the fastq files
-        ica_fastq_ids: list[str] = _get_fastq_ica_id_list(
+        ica_fastq_info: dict[str, str] = _get_fastq_ica_id_list(
             fastq_filenames=fastq_filenames,
-            fastq_ids_outpath=outputs['fastq_ids_outpath'],
             api_instance=api_instance,
             path_parameters=path_parameters,
         )
 
-        if not ica_fastq_ids:
+        if not ica_fastq_info:
             logger.error('No FASTQ file IDs found in ICA. Cannot start MD5 pipeline.')
             raise ValueError('No FASTQ file IDs found in ICA.')
-
-        # Define local path for the FASTQ ID list
-        batch_tmpdir = os.environ.get('BATCH_TMPDIR', '/io')
-        local_fastq_list_path = os.path.join(batch_tmpdir, f'{cohort_name}_{ar_guid}_fastq_ids.txt')
-
-        # Download the file from GCS to the local path
-        gcs_fastq_list_path = str(outputs['fastq_ids_outpath'])
-        utils.run_subprocess_with_log(
-            ['gcloud', 'storage', 'cp', gcs_fastq_list_path, local_fastq_list_path],
-            f'Download {os.path.basename(gcs_fastq_list_path)} from GCS',
-        )
 
         # Upload the FASTQ ID list to ICA
         fastq_list_folder = (
@@ -175,11 +158,16 @@ def run(
         )
         fastq_list_filename = f'{cohort_name}_{ar_guid}_fastq_ids.txt'
 
+        with open(fastq_list_filename, 'w') as fq_outpath:
+            fq_outpath.write('\n'.join(ica_fastq_info.keys()))
+
         ica_cli_utils.authenticate_ica_cli()
         ica_cli_utils.upload_local_file(
-            local_file_path=local_fastq_list_path,
+            local_file_path=fastq_list_filename,
             ica_folder_path=fastq_list_folder,
         )
+        with outputs['fastq_ids_outpath'].open('w') as fq_outpath:
+            fq_outpath.write(json.dumps(ica_fastq_info))
 
         # Find the uploaded file to get its ID, with retries for eventual consistency
         fastq_list_file_details = None

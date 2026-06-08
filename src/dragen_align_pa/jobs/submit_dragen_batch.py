@@ -210,14 +210,16 @@ def _build_cram_data_inputs(
 
 
 def _read_fastq_ids(fastq_ids_path: cpg_utils.Path) -> pd.DataFrame:
-    """Reads `{cohort}_fastq_ids.txt` (two whitespace-separated columns: ICA id, FASTQ name)."""
+    """Reads `{cohort}_fastq_ids.txt` (JSON, ID: FASTQ name)."""
     with fastq_ids_path.open() as fh:
-        return pd.read_csv(
-            fh,
-            sep=r'\s+',
-            header=None,
-            names=['ica_id', 'fastq_name'],
-            dtype={'ica_id': str, 'fastq_name': str},
+        return (
+            pd.read_json(
+                fh,
+                orient='index',
+                dtype=str,
+            )
+            .reset_index()
+            .set_axis(['ica_id', 'fastq_name'], axis=1)
         )
 
 
