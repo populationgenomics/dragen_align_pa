@@ -100,11 +100,15 @@ def _build_submit_callable(
         # is leaked but the system reconverges. We accept this in exchange for
         # never serving a downstream stage a per-SG state file that references a
         # batch the batches.json doesn't acknowledge.
-        _persist_per_sg_state_for_batch(outputs, batch, {
-            'pipeline_id': pipeline_id_v,
-            'ar_guid': ar_guid_v,
-            'user_reference': user_reference_v,
-        })
+        _persist_per_sg_state_for_batch(
+            outputs,
+            batch,
+            {
+                'pipeline_id': pipeline_id_v,
+                'ar_guid': ar_guid_v,
+                'user_reference': user_reference_v,
+            },
+        )
         batches_file.record_pipeline_submission(
             batch_index=batch.batch_index,
             pipeline_id=pipeline_id_v,
@@ -215,10 +219,7 @@ def _on_succeeded_factory(
         # named `cohort.name`, and its fid is passed to ICA as
         # `outputParentFolderId`). The `batch.cohort_name` segment below
         # mirrors the layout described in `utils.get_ica_sample_folder`.
-        ica_parent = (
-            f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}/'
-            f'{batch.cohort_name}/'
-        )
+        ica_parent = f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{batch.cohort_name}/'
         ica_folder = f'{ica_parent}{analysis_folder_name}/'
 
         secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
@@ -398,7 +399,9 @@ def _build_retry_batches(
     # remapped by `add_retry_batch` (which appends with the correct global index).
     eligible = sorted(sg_to_source)
     pseudo_batches = chunk_sgs_into_batches(
-        cohort_name=cohort_name, sg_names=eligible, batch_size=batch_size,
+        cohort_name=cohort_name,
+        sg_names=eligible,
+        batch_size=batch_size,
     )
 
     new_batches: list[IcaBatch] = []
@@ -493,11 +496,7 @@ def _handle_management_flags(
         )
 
     if force_resubmit:
-        per_sg_state_paths = [
-            outputs[k]
-            for sg in sg_names
-            if (k := f'{sg}_pipeline_id_and_arguid') in outputs
-        ]
+        per_sg_state_paths = [outputs[k] for sg in sg_names if (k := f'{sg}_pipeline_id_and_arguid') in outputs]
         if not batches_file_path.exists() and not any(p.exists() for p in per_sg_state_paths):
             # No batches file + no per-SG state means there's nothing to
             # force-resubmit. Silently falling through to a fresh submission
@@ -532,8 +531,7 @@ def _handle_management_flags(
             f'nothing to cancel. Exiting cleanly.',
         )
         raise CohortCancelled(
-            f'Cohort {cohort_name} cancelled by user request '
-            f'(cancel_cohort_run=true; no in-flight state to abort).',
+            f'Cohort {cohort_name} cancelled by user request (cancel_cohort_run=true; no in-flight state to abort).',
         )
 
     if cancel_cohort_run and batches_file_path.exists():
@@ -597,7 +595,8 @@ def run(
 ) -> None:
     """Build batches, submit them, retry per-sample failures once, enforce 5% threshold."""
     batch_size: int = config_retrieve(
-        ['dragen_align_pa', 'manage_dragen_pipeline', 'batch_size'], default=DEFAULT_BATCH_SIZE,
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'batch_size'],
+        default=DEFAULT_BATCH_SIZE,
     )
     sg_names = [sg.name for sg in cohort.get_sequencing_groups()]
     if not sg_names:
@@ -608,9 +607,7 @@ def run(
     # analysis with no on-disk state file. Catching this at startup means
     # the operator sees a single actionable error and zero leaked ICA work.
     missing_state_keys = [
-        f'{sg}_pipeline_id_and_arguid'
-        for sg in sg_names
-        if f'{sg}_pipeline_id_and_arguid' not in outputs
+        f'{sg}_pipeline_id_and_arguid' for sg in sg_names if f'{sg}_pipeline_id_and_arguid' not in outputs
     ]
     if missing_state_keys:
         raise KeyError(
@@ -619,7 +616,9 @@ def run(
             f'resolve ICA folder paths. Check ManageDragenPipeline.expected_outputs.',
         )
 
-    batches_file_path: cpg_utils.Path = outputs[f'{cohort.name}_batches']
+    batches_file_path: cpg_utils.Path = outputs[
+        f'{cohort.name}_{config_retrieve(["workflow", "sequencing_type"])}_batches'
+    ]
     # `errors_path` is internal scratch — written only on threshold breach.
     # Computed via `get_pipeline_path` rather than declared in expected_outputs
     # because variable-existence outputs trigger spurious cpg-flow re-runs.
