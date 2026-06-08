@@ -38,8 +38,8 @@ def run(  # noqa: PLR0915
                 ica_md5_fh,
                 sep=r'\s+',  # Matches one or more whitespace chars
                 header=None,  # Explicitly state no header
-                names=['IcaChecksum', 'IcaRawPath'],  # Use descriptive names
-                dtype={'IcaChecksum': str, 'IcaRawPath': str},
+                names=['IcaChecksum', 'IcaFileId', 'IcaRawPath'],  # Use descriptive names
+                dtype={'IcaChecksum': str, 'IcaFileId': str, 'IcaRawPath': str},
             )
             # Extract filename from the path provided by ICA MD5 tool
             # Assuming format like '/path/to/filename.fastq.gz'
