@@ -40,8 +40,9 @@ def _get_fastq_ica_id_list(
             query_params={'filename': batch_filenames, 'filenameMatchMode': 'EXACT'},
         )  # type: ignore[no-untyped-call]
         for item in api_response.body['items']:  # pyright: ignore[reportUnknownArgumentType]
-            file_id = item['data']['id']  # pyright: ignore[reportUnknownVariableType]
-            fastq_ids.append(file_id)  # type: ignore[arg-type]
+            file_name: str = item['data']['details']['name']  # pyright: ignore[reportUnknownVariableType]
+            file_id: str = item['data']['id']  # pyright: ignore[reportUnknownVariableType]
+            fastq_ids.append(f'{file_id}\t{file_name}')  # type: ignore[arg-type]
 
     if len(fastq_ids) != len(fastq_filenames):
         logger.warning(
