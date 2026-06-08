@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -480,9 +481,9 @@ def test_build_common_data_inputs_rejects_unregistered_cross_cont_vcf(monkeypatc
         submit_dragen_batch._build_common_data_inputs()
 
 
-def _make_fastq_ids_path(content: str, tmp_path):
+def _make_fastq_ids_path(content: dict[str, str], tmp_path):
     p = tmp_path / 'COH0001_fastq_ids.txt'
-    p.write_text(content)
+    json.dump(content, p.open('w'))
     return p
 
 
@@ -533,10 +534,12 @@ def test_build_fastq_data_inputs_handles_duplicate_fastq_rows(tmp_path, monkeypa
     most recent (last) ID and not silently send both — and must not
     spuriously fail the count check."""
     fastq_ids_path = _make_fastq_ids_path(
-        'fil.OLD_R1   CPG_A_R1.fastq.gz\n'
-        'fil.OLD_R2   CPG_A_R2.fastq.gz\n'
-        'fil.NEW_R1   CPG_A_R1.fastq.gz\n'  # re-upload duplicate
-        'fil.NEW_R2   CPG_A_R2.fastq.gz\n',  # re-upload duplicate
+        {
+            'fil.OLD_R1': 'CPG_A_R1.fastq.gz',
+            'fil.OLD_R2': 'CPG_A_R2.fastq.gz',
+            'fil.NEW_R1': 'CPG_A_R1.fastq.gz',  # re-upload duplicate
+            'fil.NEW_R2': 'CPG_A_R2.fastq.gz',
+        },  # re-upload duplicate
         tmp_path,
     )
     per_sg_csv = _make_per_sg_fastq_csv(

@@ -119,38 +119,6 @@ def _resolve_sg_canonical_design(sg: SequencingGroup) -> str:
         )
     return DESIGN_TO_CANONICAL[sequencing_library]
 
-    # raw_values: set[str] = set()
-    # for assay in sg.assays or ():
-    #     sequencing_library = assay.meta.get('sequencing_library')
-    #     if sequencing_library:
-    #         raw_values.add(str(sequencing_library))
-    # if not raw_values:
-    #     raise RuntimeError(
-    #         f"Sequencing group {sg.id} has no assay.meta['sequencing_library']; "
-    #         f'cannot resolve exome design.',
-    #     )
-
-    # canonical: set[str] = set()
-    # unmapped: set[str] = set()
-    # for raw in raw_values:
-    #     match = DESIGN_TO_CANONICAL.get(raw)
-    #     if match is None:
-    #         unmapped.add(raw)
-    #     else:
-    #         canonical.add(match)
-    # if unmapped:
-    #     raise RuntimeError(
-    #         f'Sequencing group {sg.id} has unmapped sequencing_library value(s): '
-    #         f'{sorted(unmapped)}. Add these to DESIGN_TO_CANONICAL in '
-    #         f'dragen_align_pa.constants.',
-    #     )
-    # if len(canonical) != 1:
-    #     raise RuntimeError(
-    #         f'Sequencing group {sg.id} maps to multiple canonical designs: '
-    #         f'{sorted(canonical)}.',
-    #     )
-    # return canonical.pop()
-
 
 def get_bed_names_for_seqtype() -> dict[str, str]:
     """Read `[presets.<seqtype>.bed_names]` and return its `{key: basename}` map.
