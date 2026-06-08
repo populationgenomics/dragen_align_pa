@@ -293,7 +293,10 @@ class ManageDragenPipeline(CohortStage):
         # earlier raise (threshold breach, cancel, ICA error) skips it and the
         # stage is correctly seen as failed.
         return {
-            f'{cohort.name}_batches': get_pipeline_path(filename=f'{cohort.name}_batches.json'),
+            f'{cohort.name}_{config_retrieve(["workflow", "sequencing_type"])}_'
+            f'{config_retrieve(["workflow", "reads_type"])}_batches': get_pipeline_path(
+                filename=f'{cohort.name}_batches.json'
+            ),
             f'{cohort.name}_pipeline_complete': get_pipeline_path(
                 filename=f'{cohort.name}_pipeline_complete.json',
             ),
