@@ -123,9 +123,11 @@ def run(
             )
             fastq_filenames: list[str] = supplied_manifest_data[config_retrieve(['manifest', 'filenames'])].to_list()
         except ValueError:
+            manifest_fh.seek(0)
+            header: list[str] = manifest_fh.readline().split()
             logger.error(
-                f'Expected to read the column {config_retrieve(["manifest", "filenames"])} from the manifest file'
-                f'Got instead: {manifest_fh.readline()}'
+                f'Expected to read the column: {config_retrieve(["manifest", "filenames"])} from the manifest file\n'
+                f'Got instead: {header}'
             )
             raise
 
