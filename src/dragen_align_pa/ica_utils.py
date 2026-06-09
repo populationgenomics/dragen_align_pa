@@ -358,25 +358,12 @@ def finalise_upload(
     Re-fetches the file ID from ICA and writes the output JSON file.
     (Used by upload_data_to_ica.py)
     """
-    while True:
-        result: tuple[str, str] | None = ica_api_utils.check_object_already_exists(
-            api_instance=api_instance,
-            path_params=path_params,
-            file_name=paths['cram_name'],
-            folder_path=paths['ica_folder_path'],
-            object_type='FILE',
-        )
-        if not result:
-            raise FileNotFoundError(
-                f'Per-batch FASTQ list {paths["cram_name"]} not found immediatly after calling upload'
-            )
-        _, file_status = result
-        if file_status == 'AVAILABLE':
-            break
-        logger.info(
-            f'Waiting for per-batch FASTQ list {paths["cram_name"]} to become available (status: {file_status})'
-        )
-        time.sleep(10)
+    wait_for_file_available(
+        api_instance=api_instance,
+        path_params=path_params,
+        file_name=paths['cram_name'],
+        folder_path=paths['ica_folder_path'],
+    )
     cram_data = ica_api_utils.get_file_details_from_ica(
         api_instance,
         path_params,
@@ -399,3 +386,27 @@ def finalise_upload(
     logger.info(
         f'Successfully uploaded {paths["cram_name"]} for {paths["sg_name"]}.',
     )
+
+
+def wait_for_file_available(
+    api_instance: 'project_data_api.ProjectDataApi',
+    path_params: dict[str, str],
+    file_name: str,
+    folder_path: str,
+) -> bool:
+    while True:
+        result: tuple[str, str] | None = ica_api_utils.check_object_already_exists(
+            api_instance=api_instance,
+            path_params=path_params,
+            file_name=file_name,
+            folder_path=folder_path,
+            object_type='FILE',
+        )
+        if not result:
+            raise FileNotFoundError(f'Per-batch FASTQ list {file_name} not found immediatly after calling upload')
+        _, file_status = result
+        if file_status == 'AVAILABLE':
+            break
+        logger.info(f'Waiting for per-batch FASTQ list {file_name} to become available (status: {file_status})')
+        time.sleep(10)
+    return True

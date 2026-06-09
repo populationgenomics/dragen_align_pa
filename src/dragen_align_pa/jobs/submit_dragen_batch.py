@@ -8,7 +8,6 @@ string. Per-sample retry is orchestrated by the caller, not here.
 import io
 import json
 import re
-import time
 
 import cpg_utils
 import pandas as pd
@@ -340,21 +339,12 @@ def _upload_per_batch_fastq_list(
     logger.info(f'Uploaded per-batch FASTQ list {file_name} (file ID {file_id})')
 
     # Check that the file is 'AVAILABLE' before returning
-    while True:
-        result: tuple[str, str] | None = ica_api_utils.check_object_already_exists(
-            api_instance=api_instance,
-            path_params={'projectId': project_id},
-            file_name=file_name,
-            folder_path=folder_path,
-            object_type='FILE',
-        )
-        if not result:
-            raise FileNotFoundError(f'Per-batch FASTQ list {file_name} not found immediatly after calling upload')
-        _, file_status = result
-        if file_status == 'AVAILABLE':
-            break
-        logger.info(f'Waiting for per-batch FASTQ list {file_name} to become available (status: {file_status})')
-        time.sleep(10)
+    ica_utils.wait_for_file_available(
+        api_instance=api_instance,
+        path_params={'projectId': project_id},
+        file_name=file_name,
+        folder_path=folder_path,
+    )
     return file_id
 
 
