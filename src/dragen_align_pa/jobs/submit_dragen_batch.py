@@ -338,23 +338,21 @@ def _upload_per_batch_fastq_list(
     logger.info(f'Uploaded per-batch FASTQ list {file_name} (file ID {file_id})')
 
     # Check that the file is 'AVAILABLE' before returning
-    _, file_status = ica_api_utils.check_object_already_exists(
-        api_instance=api_instance,
-        path_params={'projectId': project_id},
-        file_name=file_name,
-        folder_path=folder_path,
-        object_type='FILE',
-    )
-    while file_status != 'AVAILABLE':
-        logger.info(f'Waiting for per-batch FASTQ list {file_name} to become available (status: {file_status})')
-        time.sleep(10)
-        _, file_status = ica_api_utils.check_object_already_exists(
+    while True:
+        result: tuple[str, str] | None = ica_api_utils.check_object_already_exists(
             api_instance=api_instance,
             path_params={'projectId': project_id},
             file_name=file_name,
             folder_path=folder_path,
             object_type='FILE',
         )
+        if not result:
+            raise FileNotFoundError(f'Per-batch FASTQ list {file_name} not found immediatly after calling upload')
+        _, file_status = result
+        if file_status == 'AVAILABLE':
+            break
+        logger.info(f'Waiting for per-batch FASTQ list {file_name} to become available (status: {file_status})')
+        time.sleep(10)
     return file_id
 
 
