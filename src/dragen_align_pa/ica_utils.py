@@ -395,13 +395,13 @@ def wait_for_file_available(
     folder_path: str,
 ) -> bool:
     while True:
+        time.sleep(10)
         result: str | None = check_file_existence(
             api_instance=api_instance,
             path_params=path_params,
             ica_folder_path=folder_path,
             file_name=file_name,
         )
-        time.sleep(10)
         if not result:
             raise FileNotFoundError(
                 f'File: {file_name} not found at path: {folder_path} immediatly after calling upload'
