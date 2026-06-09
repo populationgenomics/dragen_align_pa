@@ -44,7 +44,9 @@ def _setup_paths(
         else:
             gcs_cram_path = gcs_base_path
     else:
-        gcs_cram_path = str(sequencing_group.dataset.prefix() / f'ica/{DRAGEN_VERSION}/output/cram/')
+        gcs_cram_path = str(
+            sequencing_group.dataset.prefix() / f'ica/{DRAGEN_VERSION}/output/cram/{sequencing_group.name}.cram'
+        )
 
     logger.info(f'Resolved CRAM path to upload: {gcs_cram_path}')
 
