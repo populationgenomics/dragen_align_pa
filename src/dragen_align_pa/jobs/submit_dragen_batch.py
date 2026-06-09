@@ -146,7 +146,8 @@ def _build_top_level_parameters(error_strategy: str = 'auto') -> list[AnalysisPa
     """
     return [
         AnalysisParameterInput(
-            code='enable_map_align', value=config_retrieve['dragen_align_pa', 'manage_dragen_pipeline'], default='true'
+            code='enable_map_align',
+            value=config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline'], default='true'),
         ),
         AnalysisParameterInput(code='output_format', value='CRAM'),
         AnalysisParameterInput(code='enable_variant_caller', value='true'),
