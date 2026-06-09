@@ -402,11 +402,12 @@ def wait_for_file_available(
             folder_path=folder_path,
             object_type='FILE',
         )
+        time.sleep(10)
         if not result:
-            raise FileNotFoundError(f'Per-batch FASTQ list {file_name} not found immediatly after calling upload')
+            raise FileNotFoundError(f'File: {file_name} not found immediatly after calling upload')
         _, file_status = result
         if file_status == 'AVAILABLE':
             break
-        logger.info(f'Waiting for per-batch FASTQ list {file_name} to become available (status: {file_status})')
+        logger.info(f'Waiting for file: {file_name} to become available (status: {file_status})')
         time.sleep(10)
     return True
