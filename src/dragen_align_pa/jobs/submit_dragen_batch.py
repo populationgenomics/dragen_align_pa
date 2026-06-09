@@ -147,7 +147,7 @@ def _build_top_level_parameters(error_strategy: str = 'auto') -> list[AnalysisPa
     return [
         AnalysisParameterInput(
             code='enable_map_align',
-            value=config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline'], default='true'),
+            value=config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'enable_map_align'], default='true'),
         ),
         AnalysisParameterInput(code='output_format', value='CRAM'),
         AnalysisParameterInput(code='enable_variant_caller', value='true'),
@@ -368,7 +368,7 @@ def _build_fastq_data_inputs(
     submit the wrong/stale file.
     """
     sg_fastq_names, combined_csv = _load_per_sg_fastq_lists(batch.sg_names, per_sg_fastq_list_paths)
-    fastq_ids_df = _read_fastq_ids(fastq_ids_path)
+    fastq_ids_df: pd.DataFrame = _read_fastq_ids(fastq_ids_path)
     matched = fastq_ids_df[fastq_ids_df['fastq_name'].isin(sg_fastq_names)]
 
     # Collapse re-upload duplicates: keep the last row per fastq_name.
