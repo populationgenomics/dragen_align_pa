@@ -12,11 +12,12 @@ import os
 from typing import Literal
 
 from cpg_flow.targets import SequencingGroup
+from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
-from dragen_align_pa.constants import BUCKET_NAME
+from dragen_align_pa.constants import BUCKET_NAME, DRAGEN_VERSION
 from dragen_align_pa.utils import validate_cli_path_input
 
 
@@ -30,16 +31,20 @@ def _setup_paths(
     sg_name: str = sequencing_group.name
     cram_name = f'{sg_name}.cram'
 
-    # Ensure we get the .cram path, not .crai
-    gcs_base_path = str(sequencing_group.cram)
-    if gcs_base_path.endswith('.cram.crai'):
-        gcs_cram_path = gcs_base_path.removesuffix('.crai')
-    elif not gcs_base_path.endswith('.cram'):
-        raise ValueError(
-            f'Unexpected path for sequencing_group.cram: {gcs_base_path}',
-        )
+    # Supply a Dragen aligned CRAM
+    if not config_retrieve(['dragen_align_pa', 'upload_data_to_ica', 'use_dragen_cram'], default=False):
+        # Ensure we get the .cram path, not .crai
+        gcs_base_path = str(sequencing_group.cram)
+        if gcs_base_path.endswith('.cram.crai'):
+            gcs_cram_path = gcs_base_path.removesuffix('.crai')
+        elif not gcs_base_path.endswith('.cram'):
+            raise ValueError(
+                f'Unexpected path for sequencing_group.cram: {gcs_base_path}',
+            )
+        else:
+            gcs_cram_path = gcs_base_path
     else:
-        gcs_cram_path = gcs_base_path
+        gcs_cram_path = str(sequencing_group.dataset.prefix() / f'ica/{DRAGEN_VERSION}/output/cram/')
 
     logger.info(f'Resolved CRAM path to upload: {gcs_cram_path}')
 
