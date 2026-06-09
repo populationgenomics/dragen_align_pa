@@ -451,7 +451,13 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     if cross_cont_vcf_id:
         inputs.append(AnalysisDataInput(parameterCode='qc_cross_cont_vcf', dataIds=[cross_cont_vcf_id]))
     if additional_file_ids:
-        inputs.append(AnalysisDataInput(parameterCode='additional_files', dataIds=additional_file_ids))
+        uniq_additional_files: list[str] | None = [
+            add_file
+            for add_file in additional_file_ids
+            if add_file not in [*coverage_region_bed_ids, cross_cont_vcf_id]
+        ]
+        if uniq_additional_files:
+            inputs.append(AnalysisDataInput(parameterCode='additional_files', dataIds=uniq_additional_files))
     return inputs
 
 
