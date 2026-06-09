@@ -331,20 +331,20 @@ def check_file_existence(
     api_instance: 'project_data_api.ProjectDataApi',
     path_params: dict[str, str],
     ica_folder_path: str,
-    cram_name: str,
+    file_name: str,
 ) -> str | None:
     """
-    Checks if the CRAM file already exists in ICA and returns its status.
+    Checks if the file already exists in ICA and returns its status.
     (Used by upload_data_to_ica.py)
     """
-    cram_data = ica_api_utils.get_file_details_from_ica(
+    file_data = ica_api_utils.get_file_details_from_ica(
         api_instance,
         path_params,
         ica_folder_path,
-        cram_name,
+        file_name,
     )
-    if cram_data:
-        return cram_data['details']['status']  # pyright: ignore[reportUnknownVariableType]
+    if file_data:
+        return file_data['details']['status']  # pyright: ignore[reportUnknownVariableType]
     return None
 
 
@@ -395,19 +395,17 @@ def wait_for_file_available(
     folder_path: str,
 ) -> bool:
     while True:
-        result: tuple[str, str] | None = ica_api_utils.check_object_already_exists(
+        result: str | None = check_file_existence(
             api_instance=api_instance,
             path_params=path_params,
+            ica_folder_path=folder_path,
             file_name=file_name,
-            folder_path=folder_path,
-            object_type='FILE',
         )
         time.sleep(10)
         if not result:
             raise FileNotFoundError(f'File: {file_name} not found immediatly after calling upload')
-        _, file_status = result
-        if file_status == 'AVAILABLE':
+        if result == 'AVAILABLE':
             break
-        logger.info(f'Waiting for file: {file_name} to become available (status: {file_status})')
+        logger.info(f'Waiting for file: {file_name} to become available (status: {result})')
         time.sleep(10)
     return True
