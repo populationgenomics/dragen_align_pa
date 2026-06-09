@@ -403,7 +403,9 @@ def wait_for_file_available(
         )
         time.sleep(10)
         if not result:
-            raise FileNotFoundError(f'File: {file_name} not found immediatly after calling upload')
+            raise FileNotFoundError(
+                f'File: {file_name} not found at path: {folder_path} immediatly after calling upload'
+            )
         if result == 'AVAILABLE':
             break
         logger.info(f'Waiting for file: {file_name} to become available (status: {result})')
