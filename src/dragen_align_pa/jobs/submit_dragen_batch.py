@@ -188,24 +188,15 @@ def _build_cram_data_inputs(
     )
     if not selected_ref:
         raise ValueError(
-            'Config missing ica.cram_references.old_cram_reference — cannot select a CRAM '
-            'reference folder for batch submission. Set it to the name of an entry under '
-            '[ica.cram_references] (e.g. "dragmap" or "gatk").',
-        )
-    cram_reference_id: str | None = config_retrieve(
-        ['ica', 'cram_references', selected_ref],
-        default=None,
-    )
-    if not cram_reference_id:
-        raise ValueError(
-            f'Config ica.cram_references.{selected_ref} is unset — '
-            f'add the ICA folder ID for the {selected_ref!r} CRAM reference.',
+            'Config missing ica.cram_references.reference — cannot select a CRAM '
+            'reference folder for batch submission. Set it to the name of an entry '
+            'in constants.py (e.g. "hg38_masked.fasta" or "hg38_unmasked.fasta").',
         )
 
     return (
         [
             AnalysisDataInput(parameterCode='crams', dataIds=cram_fids),
-            AnalysisDataInput(parameterCode='cram_reference', dataIds=[cram_reference_id]),
+            AnalysisDataInput(parameterCode='cram_reference', dataIds=[selected_ref]),
         ],
         cram_fids,
     )

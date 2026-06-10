@@ -16,6 +16,7 @@ from google.cloud import exceptions as gcs_exceptions
 from icasdk.model.create_data import CreateData
 from icasdk.model.data_id_or_path_list import DataIdOrPathList
 from loguru import logger
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from dragen_align_pa import ica_api_utils
 
@@ -388,6 +389,12 @@ def finalise_upload(
     )
 
 
+@retry(
+    retry=True,
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    reraise=True,
+)
 def wait_for_file_available(
     api_instance: 'project_data_api.ProjectDataApi',
     path_params: dict[str, str],
@@ -395,7 +402,7 @@ def wait_for_file_available(
     folder_path: str,
 ) -> bool:
     while True:
-        time.sleep(10)
+        time.sleep(2)
         result: str | None = check_file_existence(
             api_instance=api_instance,
             path_params=path_params,
@@ -404,10 +411,9 @@ def wait_for_file_available(
         )
         if not result:
             raise FileNotFoundError(
-                f'File: {file_name} not found at path: {folder_path} immediatly after calling upload'
+                f'File: {file_name} not found at path: {folder_path} immediately after calling upload'
             )
         if result == 'AVAILABLE':
             break
         logger.info(f'Waiting for file: {file_name} to become available (status: {result})')
-        time.sleep(10)
     return True

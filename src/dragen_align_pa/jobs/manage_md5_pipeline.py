@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from functools import partial
 from typing import Literal
@@ -158,12 +159,13 @@ def run(
         )
         fastq_list_filename = f'{cohort_name}_{ar_guid}_fastq_ids.txt'
 
-        with open(fastq_list_filename, 'w') as fq_outpath:
+        fastq_list_filename_path: str = os.path.join(os.environ['BATCH_TMPDIR'], fastq_list_filename)
+        with open(fastq_list_filename_path, 'w') as fq_outpath:
             fq_outpath.write('\n'.join(ica_fastq_info.keys()))
 
         ica_cli_utils.authenticate_ica_cli()
         ica_cli_utils.upload_local_file(
-            local_file_path=fastq_list_filename,
+            local_file_path=fastq_list_filename_path,
             ica_folder_path=fastq_list_folder,
         )
         with outputs['fastq_ids_outpath'].open('w') as fq_outpath:

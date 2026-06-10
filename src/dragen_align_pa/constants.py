@@ -44,7 +44,7 @@ ICA_FILE_IDS: Final[dict[str, str]] = {
     # Folders in ICA containing the reference genomes for CRAM -> BAM conversion
     # When realigning existing non-Dragen CRAMs
     'hg38_masked.fasta': 'fol.df2129db2c88419cbe0408dd600dce1f',
-    'hg38_unmasked.fasta': 'ol.d45ec3a17cf241f5b61b08dd7c524fb7',
+    'hg38_unmasked.fasta': 'fol.d45ec3a17cf241f5b61b08dd7c524fb7',
 }
 
 
