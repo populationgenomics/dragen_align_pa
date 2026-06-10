@@ -77,6 +77,8 @@ def somalier_extract(
         -f {b_ref_fasta} \\
         {b_cram['cram']}
 
+        ls -lh $TMP_OUT_DIR
+
         # Find the output file somalier created
         CRAM_BASENAME=$(basename {b_cram['cram']})
         SOMALIER_OUTPUT_NAME=${{CRAM_BASENAME%.cram}}.somalier
