@@ -145,10 +145,7 @@ def _build_top_level_parameters(error_strategy: str = 'auto') -> list[AnalysisPa
     single-sample retry batches (where the default `auto` would terminate).
     """
     return [
-        AnalysisParameterInput(
-            code='enable_map_align',
-            value=config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'enable_map_align'], default='true'),
-        ),
+        AnalysisParameterInput(code='enable_map_align', value='true'),
         AnalysisParameterInput(code='output_format', value='CRAM'),
         AnalysisParameterInput(code='enable_variant_caller', value='true'),
         AnalysisParameterInput(code='enable_sv', value='true'),
@@ -183,9 +180,11 @@ def _build_cram_data_inputs(
     # Resolve the configured CRAM-reference folder ID. Two-step lookup matches today's
     # convention: `ica.cram_references.old_cram_reference` points at a key in
     # `[ica.cram_references]` (e.g. "dragmap" or "gatk") whose value is the folder ID.
-    selected_ref: str | None = config_retrieve(
-        ['ica', 'cram_references', 'old_cram_reference'],
-        default=None,
+    selected_ref: str | None = resolve_ica_file_id(
+        config_retrieve(
+            ['ica', 'cram_references', 'reference'],
+            default=None,
+        )
     )
     if not selected_ref:
         raise ValueError(

@@ -41,6 +41,10 @@ ICA_FILE_IDS: Final[dict[str, str]] = {
     'SNP_NCBI_GRCh38.vcf': 'fil.fd99781d0a9044c1441608de15afe1ac',
     'wgs_coverage_regions.hg38_minus_N.interval_list.bed': 'fil.434cd66e92844a1f1f6a08de15159355',
     'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed': 'fil.d37b27f6c28a4f6852ae08de17298bbd',
+    # Folders in ICA containing the reference genomes for CRAM -> BAM conversion
+    # When realigning existing non-Dragen CRAMs
+    'hg38_masked.fasta': 'fol.df2129db2c88419cbe0408dd600dce1f',
+    'hg38_unmasked.fasta': 'ol.d45ec3a17cf241f5b61b08dd7c524fb7',
 }
 
 

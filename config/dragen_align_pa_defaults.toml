@@ -131,18 +131,10 @@ additional_files = []
 # IDs for all CRAM references that were previously used to generate the CRAM files that are to be realigned
 [ica.cram_references]
 
-# Choice for which CRAM reference to use. Current choices are 'dragmap' or 'gatk'
-old_cram_reference = 'dragmap'
-
-# Folder containing reference (bgz with gz suffix) + fai index used to align the CRAM file that you want to realign with Dragen
-# Dragmap reference FASTA
-dragmap = 'fol.df2129db2c88419cbe0408dd600dce1f'
-
-# Homo_sapiens_assembly38 (unmaksed), used for tob-wgs
-# dragmap = 'fol.d45ec3a17cf241f5b61b08dd7c524fb7'
-
-# GATK reference FASTA
-gatk = ''
+# Choice for which CRAM reference to use.
+# Current choices are 'hg38_masked.fasta' or 'hg38_unmasked.fasta'
+# Check constants.py for more
+reference = 'hg38_masked.fasta'
 
 [ica.qc]
 # Cross-contamination SNP VCF basename — resolved to an ICA file ID at
