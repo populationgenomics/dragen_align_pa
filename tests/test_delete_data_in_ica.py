@@ -15,7 +15,6 @@ import pytest
 
 from dragen_align_pa.jobs import delete_data_in_ica
 
-
 RUNS_PROJECT_ID = 'runs-project-id'
 FASTQ_PROJECT_ID = 'fastq-supplier-project-id'
 
@@ -35,12 +34,11 @@ def _write_cram_fids(tmp_path: Path, sg_to_fid: dict[str, str]) -> dict[str, Pat
     return paths
 
 
-def _write_fastq_fid_list(tmp_path: Path, fids: list[str]) -> Path:
-    # Write whitespace-separated `{fid}\t{filename}` rows so the test exercises
-    # `_read_fastq_fids`'s `line.split()[0]` parsing — guards against a regression
-    # back to `line.strip()` if the producer schema ever gains a second column.
-    p = tmp_path / 'fastq_ids.txt'
-    p.write_text('\n'.join(f'{fid}\tdummy_{fid}.fastq.gz' for fid in fids))
+def _write_fastq_fid_list(tmp_path: Path, fids: dict[str, str]) -> Path:
+    # Write JSON document with {fid: filename}
+    p: Path = tmp_path / 'fastq_ids.txt'
+    with p.open('w') as f:
+        json.dump(fids, f)
     return p
 
 
@@ -162,7 +160,11 @@ def test_fastq_mode_uses_supplier_project_and_writes_marker(tmp_path: Path, patc
     """FASTQ-mode happy path: runs project handles cohort folder (no CRAMs);
     supplier project handles all FASTQ FIDs. Marker includes fastq_count."""
     cohort_fid = 'fol.cohort_002'
-    fastq_fids = ['fil.fastq_001', 'fil.fastq_002', 'fil.fastq_003']
+    fastq_fids: dict[str, str] = {
+        'fil.fastq_001': 'fil.fastq_001',
+        'fil.fastq_002': 'fil.fastq_002',
+        'fil.fastq_003': 'fil.fastq_003',
+    }
 
     # Verify returns DELETING for everything — delete-in-flight = success.
     api = _make_api_instance(verify_deleting_fids={cohort_fid, *fastq_fids})
@@ -186,10 +188,10 @@ def test_fastq_mode_uses_supplier_project_and_writes_marker(tmp_path: Path, patc
     assert payload['runs_project']['cram_count'] == 0
     assert payload['fastq_source_project']['fastq_count'] == 3
 
-    runs_calls = [c for c in api.delete_data.call_args_list
-                  if c.kwargs['path_params']['projectId'] == RUNS_PROJECT_ID]
-    fastq_calls = [c for c in api.delete_data.call_args_list
-                   if c.kwargs['path_params']['projectId'] == FASTQ_PROJECT_ID]
+    runs_calls = [c for c in api.delete_data.call_args_list if c.kwargs['path_params']['projectId'] == RUNS_PROJECT_ID]
+    fastq_calls = [
+        c for c in api.delete_data.call_args_list if c.kwargs['path_params']['projectId'] == FASTQ_PROJECT_ID
+    ]
     assert len(runs_calls) == 1, 'one cohort folder delete in runs project'
     assert len(fastq_calls) == 3, 'one delete per FASTQ FID in supplier project'
 
@@ -262,8 +264,8 @@ def test_mixed_outcomes_logs_only_failures(tmp_path: Path, patched_env, monkeypa
     one CRAM still AVAILABLE (fail), one FASTQ also AVAILABLE (fail).
     Log contains exactly the two failures; raise mentions count=2."""
     cohort_fid = 'fol.cohort_005'
-    crams = {'SYN1': 'fil.cram_ok', 'SYN2': 'fil.cram_stuck'}
-    fastqs = ['fil.fastq_ok', 'fil.fastq_stuck']
+    crams: dict[str, str] = {'SYN1': 'fil.cram_ok', 'SYN2': 'fil.cram_stuck'}
+    fastqs: dict[str, str] = {'fil.fastq_ok': 'fil.fastq_ok', 'fil.fastq_stuck': 'fil.fastq_stuck'}
 
     api = _make_api_instance(
         verify_deleting_fids={cohort_fid},
