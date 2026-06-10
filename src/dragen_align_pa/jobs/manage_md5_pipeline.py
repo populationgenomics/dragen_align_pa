@@ -159,7 +159,12 @@ def run(
         )
         fastq_list_filename = f'{cohort_name}_{ar_guid}_fastq_ids.txt'
 
-        fastq_list_filename_path: str = os.path.join(os.environ['BATCH_TMPDIR'], fastq_list_filename)
+        # Write the FASTQ ID list to a temporary file
+        # If not running with Hail Batch, make the file in the working directory
+        if not os.path.exists(os.environ['BATCH_TMPDIR']):
+            fastq_list_filename_path: str = os.path.join('.', fastq_list_filename)
+        else:
+            fastq_list_filename_path = os.path.join(os.environ['BATCH_TMPDIR'], fastq_list_filename)
         with open(fastq_list_filename_path, 'w') as fq_outpath:
             fq_outpath.write('\n'.join(ica_fastq_info.keys()))
 

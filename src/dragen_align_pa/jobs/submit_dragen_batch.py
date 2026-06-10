@@ -186,12 +186,6 @@ def _build_cram_data_inputs(
             default=None,
         )
     )
-    if not selected_ref:
-        raise ValueError(
-            'Config missing ica.cram_references.reference — cannot select a CRAM '
-            'reference folder for batch submission. Set it to the name of an entry '
-            'in constants.py (e.g. "hg38_masked.fasta" or "hg38_unmasked.fasta").',
-        )
 
     return (
         [
@@ -203,7 +197,7 @@ def _build_cram_data_inputs(
 
 
 def _read_fastq_ids(fastq_ids_path: cpg_utils.Path) -> pd.DataFrame:
-    """Reads `{cohort}_fastq_ids.txt` (JSON, ID: FASTQ name)."""
+    """Reads `{cohort}_fastq_ids.json` (JSON, ID: FASTQ name)."""
     with fastq_ids_path.open() as fh:
         return (
             pd.read_json(

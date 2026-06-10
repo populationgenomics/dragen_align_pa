@@ -16,7 +16,7 @@ from google.cloud import exceptions as gcs_exceptions
 from icasdk.model.create_data import CreateData
 from icasdk.model.data_id_or_path_list import DataIdOrPathList
 from loguru import logger
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_always, stop_after_attempt, wait_exponential
 
 from dragen_align_pa import ica_api_utils
 
@@ -390,7 +390,7 @@ def finalise_upload(
 
 
 @retry(
-    retry=True,
+    retry=retry_always,  # ICA API exceptions are opaque and hard to pin down
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=1, min=1, max=10),
     reraise=True,
@@ -401,19 +401,22 @@ def wait_for_file_available(
     file_name: str,
     folder_path: str,
 ) -> bool:
-    while True:
-        time.sleep(2)
-        result: str | None = check_file_existence(
-            api_instance=api_instance,
-            path_params=path_params,
-            ica_folder_path=folder_path,
-            file_name=file_name,
-        )
-        if not result:
-            raise FileNotFoundError(
-                f'File: {file_name} not found at path: {folder_path} immediately after calling upload'
-            )
-        if result == 'AVAILABLE':
-            break
-        logger.info(f'Waiting for file: {file_name} to become available (status: {result})')
-    return True
+    """
+    Files in ICA don't become available immediately after upload.
+    This function guards against that by retrying the file existence check up to 4 times.
+    It has an initial 2 second sleep to guard against the first check failing due to race conditions.
+    """
+    time.sleep(2)  # Guard against race condition where file is not yet available
+    result: str | None = check_file_existence(
+        api_instance=api_instance,
+        path_params=path_params,
+        ica_folder_path=folder_path,
+        file_name=file_name,
+    )
+    if not result:
+        raise FileNotFoundError(f'File: {file_name} not found at path: {folder_path} immediately after calling upload')
+    if result == 'AVAILABLE':
+        logger.info(f'File: {file_name} is available (status: {result})')
+        return True
+    logger.info(f'Waiting for file: {file_name} to become available (status: {result})')
+    return False

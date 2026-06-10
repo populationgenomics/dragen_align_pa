@@ -44,7 +44,9 @@ def run(  # noqa: PLR0915
             # Extract filename from the path provided by ICA MD5 tool
             # Assuming format like '/path/to/filename.fastq.gz'
             ica_md5_data['Filenames'] = ica_md5_data['IcaRawPath'].str.split('/').str[-1]
-            ica_md5_data = ica_md5_data.set_index('Filenames')[['IcaChecksum']]  # Keep only checksum, index by filename
+            # Keep only checksum, index by filename
+            # Dropping the 'IcaFileId' column as it was only needed to read in the data correctly
+            ica_md5_data = ica_md5_data.set_index('Filenames')[['IcaChecksum']]
 
         # Merge (outer join handles files present in only one list)
         merged_checksum_data: pd.DataFrame = supplied_manifest_data.join(

@@ -61,7 +61,7 @@ def _read_cram_fids(paths: dict[str, cpg_utils.Path]) -> list[str]:
 
 def _read_fastq_fids(path: cpg_utils.Path) -> list[str]:
     with path.open() as fh:
-        fids = [line.split()[0] for line in fh if line.strip()]
+        fids: list[str] = list(json.load(fh).keys())
     logger.info(f'Collected {len(fids)} FASTQ FIDs from {path}')
     return fids
 
@@ -102,21 +102,25 @@ def _delete_and_verify(
             status = response.body['data']['details'].get('status', 'UNKNOWN')
             if status == _DELETING_STATUS:
                 continue
-            failures.append(DeleteFailure(
-                project_id=project_id,
-                fid=fid,
-                kind=f'still_present (status={status})',
-                context=delete_errors.get(fid, ''),
-            ))
+            failures.append(
+                DeleteFailure(
+                    project_id=project_id,
+                    fid=fid,
+                    kind=f'still_present (status={status})',
+                    context=delete_errors.get(fid, ''),
+                )
+            )
         except ApiException as e:
             if getattr(e, 'status', None) == _HTTP_NOT_FOUND:
                 continue
-            failures.append(DeleteFailure(
-                project_id=project_id,
-                fid=fid,
-                kind='verify_failed',
-                context=f'{e!r} | delete: {delete_errors.get(fid, "")}',
-            ))
+            failures.append(
+                DeleteFailure(
+                    project_id=project_id,
+                    fid=fid,
+                    kind='verify_failed',
+                    context=f'{e!r} | delete: {delete_errors.get(fid, "")}',
+                )
+            )
 
     return failures
 
