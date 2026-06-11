@@ -1,11 +1,11 @@
-# Dragen Align PA Pipeline
+# Dragen Align PA Pipeline v4.0.0
 
 ## Purpose
 
 Perform alignment (from fastq) or realignment (from CRAM) using Dragen v3.7.8 with ICA.
 It handles both fastQ and CRAM input, and WGS and WES data.
 
-## Pipeline Flow v4.0.0
+## Pipeline Flow
 
 <div align="center">
     <img src="docs/workflow_dag.svg" alt="Dragen Alignment Workflow DAG" width="80%"/>
