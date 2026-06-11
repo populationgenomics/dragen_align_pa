@@ -8,7 +8,7 @@ It handles both fastQ and CRAM input, and WGS and WES data.
 ## Pipeline Flow v4.0.0
 
 <div align="center">
-    <img src="workflow_dag.svg" alt="Dragen Alignment Workflow DAG" width="80%"/>
+    <img src="docs/workflow_dag.svg" alt="Dragen Alignment Workflow DAG" width="80%"/>
 </div>
 
 ## Brief Overview
