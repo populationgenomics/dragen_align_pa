@@ -161,7 +161,7 @@ def run(
 
         # Write the FASTQ ID list to a temporary file
         # If not running with Hail Batch, make the file in the working directory
-        if not os.environ['BATCH_TMPDIR']:
+        if not os.environ.get('BATCH_TMPDIR'):
             fastq_list_filename_path: str = os.path.join('.', fastq_list_filename)
         else:
             fastq_list_filename_path = os.path.join(os.environ['BATCH_TMPDIR'], fastq_list_filename)
