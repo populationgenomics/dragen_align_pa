@@ -82,7 +82,7 @@ Your TOML configuration file must specify the following key options:
    * **If `reads_type = "cram"`:**
 
       * `[ica.cram_references]`:
-          * `reference`: Must be set to one of the defined references in [`constants.py`](src/dragen_align_pa/constants.py). Current valid options are `hg38_masked.fasta` and `hg38_unmasked.fasta` e.g. `reference = hg38_masked.fasta`.
+          * `reference`: Must be set to one of the defined references in [`constants.py`](src/dragen_align_pa/constants.py). Current valid options are `hg38_masked.fasta` and `hg38_unmasked.fasta` e.g. `reference = 'hg38_masked.fasta'`.
    * **If `reads_type = "fastq"`:**
       * `[manifest]`: Check that the values in the config match the values in the manifest. Even a single mismatch (e.g. `filenames` vs `Filenames`) will cause a pipeline crash.
    * `[ica.projects]`: Set these to valid entries. Examples can be found in the `production-pipelines-configuration` repository.
@@ -102,7 +102,7 @@ Both `ManageDragenPipeline` and `ManageDragenMlr` stages submit a job to ICA and
 
 ### Resuming a Monitored Run
 
-If either of the `Manage` stages crash, you can resume monitoring. The pipeline writes a state file ([example](docs/example_cohort_batches.json)) that records all the inputs, ICA pipeline ID, ar-guid, retry status, and other metadata. Resuming monitoring is as simple as setting `[ica.management.monitor_previous] = true` in the configuration file and resubmitting the pipeline with the same `analysis-runner` command. It will detect the existing state file and resume monitoring from there.
+If either of the `Manage` stages crash, you can resume monitoring. The pipeline writes a state file ([example](docs/example_cohort_batches.json)) that records all the inputs, ICA pipeline ID, ar-guid, retry status, and other metadata. Resuming monitoring is as simple as setting `ica.management.monitor_previous = true` in the configuration file and resubmitting the pipeline with the same `analysis-runner` command. It will detect the existing state file and resume monitoring from there.
 
 ### Cancelling a Running ICA Pipeline
 
@@ -111,7 +111,7 @@ If you need to cancel a pipeline that is running in ICA:
 1.  Cancel the `analysis-runner` job in Hail Batch.
 2.  In your TOML configuration file, set `ica.management.cancel_cohort_run = true`.
 3.  Re-launch the pipeline using the same `analysis-runner` command.
-4.  The `ManageDragenPipeline` stage will detect the `cancel_cohort_run` flag, read the pipeline ID from the `.json` file, and send an "abort" request to the ICA API.
+4.  Both `Manage` stages will detect the `cancel_cohort_run` flag, read the pipeline ID from the state file, and send an "abort" request to the ICA API.
 5. It will then delete all of the state files in GCS, so that you don't hit an error `The pipeline has been cancelled` when resubmitting.
 
 This sequence avoids the need of cancelling hundreds of pipeline runs in ICA manually.
