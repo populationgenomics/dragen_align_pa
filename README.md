@@ -85,7 +85,7 @@ Your TOML configuration file must specify the following key options:
           * `reference`: Must be set to one of the defined references in [`constants.py`](src/dragen_align_pa/constants.py). Current valid options are `hg38_masked.fasta` and `hg38_unmasked.fasta` e.g. `reference = 'hg38_masked.fasta'`.
    * **If `reads_type = "fastq"`:**
       * `[manifest]`: Check that the values in the config match the values in the manifest. Even a single mismatch (e.g. `filenames` vs `Filenames`) will cause a pipeline crash.
-   * `[ica.projects]`: Set these to valid entries. Examples can be found in the `production-pipelines-configuration` repository.
+   * `[ica.projects]`: Set these to valid entries. Examples can be found in the `production-pipelines-configuration` repository. `fastq_source_project_id` is only needed if `reads_type = 'fastq'`.
    * `[ica.management]`:
       * `monitor_previous`: Set to `false` for new runs, set to `true` if the pipeline in GCS crashes, but the pipelines in ICA are still running fine.
       * `force_resubmit`: This should almost always be set to `false`. Set to `true` if you encounter an unrecoverable desync between the state recorded in GCS and ICA. This will overwrite the state files in GCS, and force the ICA pipeline to run again, even if it had completed successfully.
@@ -112,7 +112,7 @@ If you need to cancel a pipeline that is running in ICA:
 2.  In your TOML configuration file, set `ica.management.cancel_cohort_run = true`.
 3.  Re-launch the pipeline using the same `analysis-runner` command.
 4.  Both `Manage` stages will detect the `cancel_cohort_run` flag, read the pipeline ID from the state file, and send an "abort" request to the ICA API.
-5. It will then delete all of the state files in GCS, so that you don't hit an error `The pipeline has been cancelled` when resubmitting.
+5.  It will then delete all of the state files in GCS, so that you don't hit an error `The pipeline has been cancelled` when resubmitting.
 
 This sequence avoids the need of cancelling hundreds of pipeline runs in ICA manually.
 
