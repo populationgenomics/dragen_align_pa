@@ -2,12 +2,13 @@
 
 ## Purpose
 
-This pipeline aligns or realigns genomic sequencing data (from FASTQ or CRAM files) using the DRAGEN pipeline on the Illumina Connected Analytics (ICA) platform.
+Perform alignment (from fastq) or realignment (from CRAM) using Dragen v3.7.8 with ICA.
 
-It manages data upload to ICA, submission and monitoring of the DRAGEN pipeline, and download of results (CRAMs, gVCFs, QC metrics) back to Google Cloud Storage (GCS). It also performs subsequent QC steps, including Somalier fingerprinting.
+The pipeline manages preparing ICA for analysis (creating input and output locations), running and monitoring of both Dragen (alignment and variant calling)
+and Dragen MLR (variant recalibration). It finishes by streaming the data back to GCS, generating a Somalier fingerprint for each CRAM, 
+reheadering the MLR gVCF files (the MLR step silently drops the gVCF block info from the header), and deletes the data in ICA.
 
-
-## Pipeline Overview v3.2.2
+## Pipeline Overview v4.0.0
 
 <div align="center">
     <img src="workflow_dag.svg" alt="Dragen Alignment Workflow DAG" width="80%"/>
@@ -15,18 +16,19 @@ It manages data upload to ICA, submission and monitoring of the DRAGEN pipeline,
 
 The workflow performs the following main steps:
 
-1.  **Prepare ICA:** Creates analysis folders within the ICA project.
+1.  **Prepare ICA:** Creates analysis folders within the ICA project for Dragen output.
+    - (optionally) Creates input folders for CRAM files.
 2.  **Input Data Handling (Conditional):**
-      * **If `reads_type = "fastq"`:**
-        1.  Submits a separate pipeline in ICA to calculate MD5 checksums for all FASTQ files.
-        2.  Downloads the results and validates them against the manifest file.
-        3.  Generates a `fastq_list.csv` file for DRAGEN and uploads it to ICA.
-      * **If `reads_type = "cram"`:**
-        1.  Uploads the CRAM file from GCS to ICA.
+    - **If `reads_type = "fastq"`:**
+      1.  Runs a pipeline to calculate the MD5 sums of all input fastqs
+      2.  Downloads the results and validates them against the manifest file.
+      3.  Generates a `fastq_list.csv` file for DRAGEN and uploads it to ICA.
+    - **If `reads_type = "cram"`:**
+      1.  Uploads the CRAM file from GCS to ICA.
 3.  **Run DRAGEN:** Submits the main DRAGEN alignment pipeline to ICA and monitors its progress until completion, failure, or cancellation.
 4.  **Run MLR:** Submits and monitors the DRAGEN MLR (Machine Learning Recalibration) pipeline.
-5.  **Download Results:** Downloads the key outputs (CRAMs, gVCFs, and QC metrics) from ICA back to GCS.
-6.  **Post-Processing QC:**
+5.  **Download Results:** Downloads the key outputs (CRAMs, gVCFs, all other VCF types, and QC metrics) from ICA back to GCS.
+6.  **Run Somalier:**
       * Runs `somalier extract` on the newly generated CRAM file to create a genomic fingerprint.
 7.  **Cleanup (Optional, after checking all outputs are correct):** Deletes the data from the ICA platform to reduce storage costs.
 
