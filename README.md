@@ -15,6 +15,8 @@ It handles both fastQ and CRAM input, and WGS and WES data.
 
 The pipeline manages preparing ICA for analysis (creating input and output locations), running and monitoring of both Dragen (alignment and variant calling) and Dragen MLR (variant recalibration). It streams the data back to GCS, generates a Somalier fingerprint for each CRAM, reheaders the MLR gVCF files (the MLR step silently drops the gVCF block info from the header), and deletes the data in ICA.
 
+Note: One pipeline run in ICA batches 5 sequencing groups. Therefore, a cohort of `n` sequencing groups will trigger `ceil(n/5)` pipeline runs in ICA.
+
 The workflow performs the following main steps:
 
 1.  **Prepare ICA:** Creates analysis folders within the ICA project for Dragen output.
