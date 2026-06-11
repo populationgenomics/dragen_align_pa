@@ -163,7 +163,7 @@ coverage_region_beds = [
 [ica.qc.exome]
 coverage_region_beds = [
     'Twist_VCGS_Exome_Covered_Targets_hg38.bed',
-    'S30409818_Regions.bed',
+    'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed',
 ]
 
 [dragen_align_pa.manage_dragen_mlr]
