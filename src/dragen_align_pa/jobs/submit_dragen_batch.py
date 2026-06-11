@@ -177,15 +177,8 @@ def _build_cram_data_inputs(
             raise ValueError(f"Missing 'cram_fid' in {state_path}")
         cram_fids.append(sg_state['cram_fid'])
 
-    # Resolve the configured CRAM-reference folder ID. Two-step lookup matches today's
-    # convention: `ica.cram_references.old_cram_reference` points at a key in
-    # `[ica.cram_references]` (e.g. "dragmap" or "gatk") whose value is the folder ID.
-    selected_ref: str | None = resolve_ica_file_id(
-        config_retrieve(
-            ['ica', 'cram_references', 'reference'],
-            default=None,
-        )
-    )
+    # Resolve the configured CRAM-reference folder ID from constants.py via file name in config
+    selected_ref: str = resolve_ica_file_id(config_retrieve(['ica', 'cram_references', 'reference']))
 
     return (
         [

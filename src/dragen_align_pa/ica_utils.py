@@ -413,10 +413,7 @@ def wait_for_file_available(
         ica_folder_path=folder_path,
         file_name=file_name,
     )
-    if not result:
+    if not result or result != 'AVAILABLE':
         raise FileNotFoundError(f'File: {file_name} not found at path: {folder_path} immediately after calling upload')
-    if result == 'AVAILABLE':
-        logger.info(f'File: {file_name} is available (status: {result})')
-        return True
-    logger.info(f'Waiting for file: {file_name} to become available (status: {result})')
-    return False
+    logger.info(f'File: {file_name} is available (status: {result})')
+    return True
