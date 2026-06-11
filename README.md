@@ -129,12 +129,13 @@ When successful, the pipeline downloads all results to your dataset's GCS bucket
       * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/dragen_metrics/`
   * **Somalier Fingerprints:**
       * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/somalier/`
-  * **Pipeline Batch Metrics**
+  * **Pipeline Batch Metrics:**
       * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/dragen_batch_metrics/`
 
 ## FASTQ Manifest File Structure
 
 In fastq mode, the pipeline expects a manifest file that contains at least the following columns: `sample_id, filenames, checksum, lane, machine_id, flowcell, cpg_sequencing_group_id`
+The `cpg_sequencing_group_id` is the key used to join the manifest data to the sequencing groups in the cohort.
 
 ##### An example of the required manifest CSV structure showing only required columns
 | sample_id | filenames | checksum | lane | machine_id | flowcell | cpg_sequencing_group_id |
