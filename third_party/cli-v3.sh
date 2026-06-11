@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# Reference for future conversion to use the CLI tool over the python API
+
 #### Project parameters
 XKEY='<api-key>'
 PROJECTID='<project-id>'

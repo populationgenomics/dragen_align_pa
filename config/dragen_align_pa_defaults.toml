@@ -24,6 +24,9 @@ lane = 'lane'
 machine_id = 'machine_id'
 flowcell = 'flowcell'
 sample_id = 'sample_id'
+# Whether to treat the manifest as a control manifest (i.e. a manifest for control samples)
+# If false, will default to using the test manifest in fewgenomes-test
+control_manifest = false
 
 # Projects in ICA to run different analyses
 [ica.projects]

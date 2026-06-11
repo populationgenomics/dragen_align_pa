@@ -337,7 +337,7 @@ def _build_fastq_data_inputs(
 
     Returns (data_inputs, fastq_list_fid). The per-batch combined CSV is uploaded inline.
 
-    Duplicate handling: a FASTQ filename may appear in {cohort}_fastq_ids.txt
+    Duplicate handling: a FASTQ filename may appear in {cohort}_fastq_ids.json
     more than once (re-upload after a transient failure leaves both rows in
     the manifest, with distinct ICA IDs). We deterministically keep the LAST
     row per fastq_name (most recent upload wins) and log when collapsing —
