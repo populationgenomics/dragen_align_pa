@@ -6,6 +6,7 @@ and ica_cli modules.
 
 import hashlib
 import json
+import time
 from typing import TYPE_CHECKING
 
 import cpg_utils
@@ -13,7 +14,9 @@ import icasdk
 import requests
 from google.cloud import exceptions as gcs_exceptions
 from icasdk.model.create_data import CreateData
+from icasdk.model.data_id_or_path_list import DataIdOrPathList
 from loguru import logger
+from tenacity import retry, retry_always, stop_after_attempt, wait_exponential
 
 from dragen_align_pa import ica_api_utils
 
@@ -127,6 +130,39 @@ def get_md5_from_ica(
         raise
 
 
+def batch_create_download_urls(
+    api_instance: 'project_data_api.ProjectDataApi',
+    path_parameters: dict[str, str],
+    file_ids: list[str],
+) -> dict[str, str]:
+    """Mint pre-signed download URLs for many files in ONE ICA API call.
+
+    Uses the batch `:createDownloadUrls` endpoint instead of one
+    `:createDownloadUrl` POST per file, collapsing the per-file rate-limited
+    call volume — the dominant 429 source when a folder has many outputs —
+    from N to 1. (A pre-signed URL is per-object, so this returns N URLs in
+    one response, not a single folder URL.)
+
+    Returns a `{dataId: url}` map; the response is keyed by `dataId` so callers
+    match URLs back to the file IDs they already hold. An empty `file_ids`
+    short-circuits without an API call.
+
+    Goes through `ica_retry`, so a transient 429/503 on the batch mint is
+    absorbed like every other data-plane call.
+    """
+    if not file_ids:
+        return {}
+    response = ica_api_utils.ica_retry(
+        api_instance.create_download_urls_for_data,
+        body=DataIdOrPathList(dataIds=file_ids),
+        path_params=path_parameters,  # pyright: ignore[reportArgumentType]
+    )
+    return {
+        item['dataId']: item['url']  # pyright: ignore[reportUnknownVariableType]
+        for item in response.body['items']  # pyright: ignore[reportUnknownVariableType]
+    }
+
+
 def stream_ica_file_to_gcs(
     api_instance: 'project_data_api.ProjectDataApi',
     path_parameters: dict[str, str],
@@ -135,10 +171,15 @@ def stream_ica_file_to_gcs(
     gcs_bucket: 'Bucket',
     gcs_prefix: str,
     expected_md5_hash: str | None = None,
+    download_url: str | None = None,
 ) -> None:
     """
     Streams a file from ICA to GCS and optionally verifies its MD5.
     (Used by download_specific_files_from_ica.py and download_ica_pipeline_outputs.py)
+
+    If `download_url` is supplied (e.g. pre-minted in bulk via
+    `batch_create_download_urls`), the per-file `:createDownloadUrl` call is
+    skipped. Otherwise a URL is minted for this single file.
     """
     gcs_blob_path = f'{gcs_prefix}/{file_name}'
     blob = gcs_bucket.blob(gcs_blob_path)
@@ -149,20 +190,22 @@ def stream_ica_file_to_gcs(
     )
 
     try:
-        # 1. Get pre-signed URL
-        url_response = ica_api_utils.ica_retry(
-            api_instance.create_download_url_for_data,  # pyright: ignore[reportUnknownVariableType]
-            path_params=path_parameters | {'dataId': file_id},  # pyright: ignore[reportArgumentType]
-        )
-        download_url = url_response.body['url']  # pyright: ignore[reportUnknownVariableType]
+        # 1. Get pre-signed URL (mint per-file only if one wasn't pre-supplied)
+        resolved_url: str = download_url  # type: ignore[assignment]
+        if download_url is None:
+            url_response = ica_api_utils.ica_retry(
+                api_instance.create_download_url_for_data,  # pyright: ignore[reportUnknownVariableType]
+                path_params=path_parameters | {'dataId': file_id},  # pyright: ignore[reportArgumentType]
+            )
+            resolved_url = url_response.body['url']  # pyright: ignore[reportUnknownVariableType]
 
         # 2. Download and upload as a stream
         md5_hasher = hashlib.md5()  # noqa: S324
         with requests.get(
-            download_url,  # pyright: ignore[reportUnknownArgumentType]
+            resolved_url,
             stream=True,
             timeout=600,
-        ) as r:  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+        ) as r:  # pyright: ignore[reportUnknownVariableType]
             r.raise_for_status()
 
             # Stream directly to GCS
@@ -289,20 +332,20 @@ def check_file_existence(
     api_instance: 'project_data_api.ProjectDataApi',
     path_params: dict[str, str],
     ica_folder_path: str,
-    cram_name: str,
+    file_name: str,
 ) -> str | None:
     """
-    Checks if the CRAM file already exists in ICA and returns its status.
+    Checks if the file already exists in ICA and returns its status.
     (Used by upload_data_to_ica.py)
     """
-    cram_data = ica_api_utils.get_file_details_from_ica(
+    file_data = ica_api_utils.get_file_details_from_ica(
         api_instance,
         path_params,
         ica_folder_path,
-        cram_name,
+        file_name,
     )
-    if cram_data:
-        return cram_data['details']['status']  # pyright: ignore[reportUnknownVariableType]
+    if file_data:
+        return file_data['details']['status']  # pyright: ignore[reportUnknownVariableType]
     return None
 
 
@@ -316,6 +359,12 @@ def finalise_upload(
     Re-fetches the file ID from ICA and writes the output JSON file.
     (Used by upload_data_to_ica.py)
     """
+    wait_for_file_available(
+        api_instance=api_instance,
+        path_params=path_params,
+        file_name=paths['cram_name'],
+        folder_path=paths['ica_folder_path'],
+    )
     cram_data = ica_api_utils.get_file_details_from_ica(
         api_instance,
         path_params,
@@ -338,3 +387,33 @@ def finalise_upload(
     logger.info(
         f'Successfully uploaded {paths["cram_name"]} for {paths["sg_name"]}.',
     )
+
+
+@retry(
+    retry=retry_always,  # ICA API exceptions are opaque and hard to pin down
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    reraise=True,
+)
+def wait_for_file_available(
+    api_instance: 'project_data_api.ProjectDataApi',
+    path_params: dict[str, str],
+    file_name: str,
+    folder_path: str,
+) -> bool:
+    """
+    Files in ICA don't become available immediately after upload.
+    This function guards against that by retrying the file existence check up to 4 times.
+    It has an initial 2 second sleep to guard against the first check failing due to race conditions.
+    """
+    time.sleep(2)  # Guard against race condition where file is not yet available
+    result: str | None = check_file_existence(
+        api_instance=api_instance,
+        path_params=path_params,
+        ica_folder_path=folder_path,
+        file_name=file_name,
+    )
+    if not result or result != 'AVAILABLE':
+        raise FileNotFoundError(f'File: {file_name} not found at path: {folder_path} immediately after calling upload')
+    logger.info(f'File: {file_name} is available (status: {result})')
+    return True

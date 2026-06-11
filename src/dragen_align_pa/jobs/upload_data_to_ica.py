@@ -83,7 +83,7 @@ def run(
             api_instance=api_instance,
             path_params=path_params,
             ica_folder_path=paths['ica_folder_path'],
-            cram_name=paths['cram_name'],
+            file_name=paths['cram_name'],
         )
 
         # 4. --- Perform Upload (if needed) ---

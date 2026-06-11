@@ -30,8 +30,8 @@ from dragen_align_pa.utils import get_bed_names_for_seqtype
 # Sourced from the production CRAM-mode preset in the legacy submitter — anything WGS/WES-divergent
 # is instead carried in [dragen_align_pa.manage_dragen_pipeline.presets.{genome,exome}] in config.
 _COMMON_ADDITIONAL_ARGS = (
-    "--read-trimmers polyg "
-    "--soft-read-trimmers none "
+    '--read-trimmers polyg '
+    '--soft-read-trimmers none '
     "--vc-hard-filter 'DRAGENHardQUAL:all:QUAL<5.0;LowDepth:all:DP<=1' "
     '--vc-frd-max-effective-depth 40 '
     '--vc-enable-joint-detection true '
@@ -42,8 +42,6 @@ _COMMON_ADDITIONAL_ARGS = (
     '--vc-gvcf-gq-bands 10 20 30 40 '
     '--vc-emit-ref-confidence GVCF '
     '--vc-enable-vcf-output false '
-    '--enable-map-align-output true '
-    '--enable-duplicate-marking true '
     '--repeat-genotype-enable true '
 )
 
@@ -76,7 +74,7 @@ def _build_additional_args() -> str:
         )
     if 'cnv_segmentation_mode' not in preset:
         raise ValueError(
-            f"Preset [dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}] is "
+            f'Preset [dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}] is '
             f"missing required key 'cnv_segmentation_mode' "
             f"(typical values: 'SLM' for genome, 'HSLM' for exome).",
         )
@@ -131,7 +129,7 @@ def _build_additional_args() -> str:
 
     parts = [
         _COMMON_ADDITIONAL_ARGS.strip(),
-        f"--cnv-segmentation-mode {preset['cnv_segmentation_mode']}",
+        f'--cnv-segmentation-mode {preset["cnv_segmentation_mode"]}',
         cyp2d6_arg,
         vc_padding_arg,
         preset_args,
@@ -179,45 +177,29 @@ def _build_cram_data_inputs(
             raise ValueError(f"Missing 'cram_fid' in {state_path}")
         cram_fids.append(sg_state['cram_fid'])
 
-    # Resolve the configured CRAM-reference folder ID. Two-step lookup matches today's
-    # convention: `ica.cram_references.old_cram_reference` points at a key in
-    # `[ica.cram_references]` (e.g. "dragmap" or "gatk") whose value is the folder ID.
-    selected_ref: str | None = config_retrieve(
-        ['ica', 'cram_references', 'old_cram_reference'], default=None,
-    )
-    if not selected_ref:
-        raise ValueError(
-            'Config missing ica.cram_references.old_cram_reference — cannot select a CRAM '
-            'reference folder for batch submission. Set it to the name of an entry under '
-            '[ica.cram_references] (e.g. "dragmap" or "gatk").',
-        )
-    cram_reference_id: str | None = config_retrieve(
-        ['ica', 'cram_references', selected_ref], default=None,
-    )
-    if not cram_reference_id:
-        raise ValueError(
-            f'Config ica.cram_references.{selected_ref} is unset — '
-            f'add the ICA folder ID for the {selected_ref!r} CRAM reference.',
-        )
+    # Resolve the configured CRAM-reference folder ID from constants.py via file name in config
+    selected_ref: str = resolve_ica_file_id(config_retrieve(['ica', 'cram_references', 'reference']))
 
     return (
         [
             AnalysisDataInput(parameterCode='crams', dataIds=cram_fids),
-            AnalysisDataInput(parameterCode='cram_reference', dataIds=[cram_reference_id]),
+            AnalysisDataInput(parameterCode='cram_reference', dataIds=[selected_ref]),
         ],
         cram_fids,
     )
 
 
 def _read_fastq_ids(fastq_ids_path: cpg_utils.Path) -> pd.DataFrame:
-    """Reads `{cohort}_fastq_ids.txt` (two whitespace-separated columns: ICA id, FASTQ name)."""
+    """Reads `{cohort}_fastq_ids.json` (JSON, ID: FASTQ name)."""
     with fastq_ids_path.open() as fh:
-        return pd.read_csv(
-            fh,
-            sep=r'\s+',
-            header=None,
-            names=['ica_id', 'fastq_name'],
-            dtype={'ica_id': str, 'fastq_name': str},
+        return (
+            pd.read_json(
+                fh,
+                orient='index',
+                dtype=str,
+            )
+            .reset_index()
+            .set_axis(['ica_id', 'fastq_name'], axis=1)
         )
 
 
@@ -333,6 +315,14 @@ def _upload_per_batch_fastq_list(
     response = requests.put(url=upload_url, data=buffer, timeout=300)
     response.raise_for_status()
     logger.info(f'Uploaded per-batch FASTQ list {file_name} (file ID {file_id})')
+
+    # Check that the file is 'AVAILABLE' before returning
+    ica_utils.wait_for_file_available(
+        api_instance=api_instance,
+        path_params={'projectId': project_id},
+        file_name=file_name,
+        folder_path=folder_path,
+    )
     return file_id
 
 
@@ -347,7 +337,7 @@ def _build_fastq_data_inputs(
 
     Returns (data_inputs, fastq_list_fid). The per-batch combined CSV is uploaded inline.
 
-    Duplicate handling: a FASTQ filename may appear in {cohort}_fastq_ids.txt
+    Duplicate handling: a FASTQ filename may appear in {cohort}_fastq_ids.json
     more than once (re-upload after a transient failure leaves both rows in
     the manifest, with distinct ICA IDs). We deterministically keep the LAST
     row per fastq_name (most recent upload wins) and log when collapsing —
@@ -355,7 +345,7 @@ def _build_fastq_data_inputs(
     submit the wrong/stale file.
     """
     sg_fastq_names, combined_csv = _load_per_sg_fastq_lists(batch.sg_names, per_sg_fastq_list_paths)
-    fastq_ids_df = _read_fastq_ids(fastq_ids_path)
+    fastq_ids_df: pd.DataFrame = _read_fastq_ids(fastq_ids_path)
     matched = fastq_ids_df[fastq_ids_df['fastq_name'].isin(sg_fastq_names)]
 
     # Collapse re-upload duplicates: keep the last row per fastq_name.
@@ -402,7 +392,8 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     # [ica.qc.<seqtype>]; only the block matching this run is read, so WGS QC
     # regions never leak into an exome run (or vice versa).
     coverage_region_bed_names: list[str] = config_retrieve(
-        ['ica', 'qc', sequencing_type, 'coverage_region_beds'], default=[],
+        ['ica', 'qc', sequencing_type, 'coverage_region_beds'],
+        default=[],
     )
     if len(coverage_region_bed_names) > _MAX_COVERAGE_REGION_BEDS:
         raise ValueError(
@@ -428,9 +419,7 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     # additional_files entries are BED basenames, resolved via ICA_FILE_IDS.
     # bed_names values are added too so the operator names a BED once.
     bed_name_files = list(get_bed_names_for_seqtype().values())
-    additional_file_names: list[str] = list(
-        dict.fromkeys(list(preset_files) + list(user_files) + bed_name_files)
-    )
+    additional_file_names: list[str] = list(dict.fromkeys(list(preset_files) + list(user_files) + bed_name_files))
     additional_file_ids = [resolve_ica_file_id(name) for name in additional_file_names]
 
     inputs: list[AnalysisDataInput] = [AnalysisDataInput(parameterCode='ref_tar', dataIds=[dragen_ht_id])]
@@ -439,7 +428,13 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     if cross_cont_vcf_id:
         inputs.append(AnalysisDataInput(parameterCode='qc_cross_cont_vcf', dataIds=[cross_cont_vcf_id]))
     if additional_file_ids:
-        inputs.append(AnalysisDataInput(parameterCode='additional_files', dataIds=additional_file_ids))
+        uniq_additional_files: list[str] | None = [
+            add_file
+            for add_file in additional_file_ids
+            if add_file not in [*coverage_region_bed_ids, cross_cont_vcf_id]
+        ]
+        if uniq_additional_files:
+            inputs.append(AnalysisDataInput(parameterCode='additional_files', dataIds=uniq_additional_files))
     return inputs
 
 
@@ -537,7 +532,8 @@ def run(
 
         if cram_state_paths is not None:
             specific_data_inputs, cram_fids = _build_cram_data_inputs(
-                batch=batch, per_sg_state_paths=cram_state_paths,
+                batch=batch,
+                per_sg_state_paths=cram_state_paths,
             )
         else:
             # FASTQ mode: both paths are guaranteed non-None by the

@@ -88,7 +88,7 @@ class FastqIntakeQc(CohortStage):
 
     def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
         intake_qc_results: dict[str, cpg_utils.Path] = {
-            'fastq_ids_outpath': get_prep_path(filename=f'{cohort.name}_fastq_ids.txt'),
+            'fastq_ids_outpath': get_prep_path(filename=f'{cohort.name}_fastq_ids.json'),
             'md5sum_pipeline_run': get_prep_path(filename=f'{cohort.name}_ica_md5sum_pipeline.json'),
             'md5sum_pipeline_success': get_prep_path(filename=f'{cohort.name}_md5_pipeline_success'),
             f'{cohort.name}_md5_errors': get_prep_path(filename=f'{cohort.name}_md5_errors.log'),
@@ -293,7 +293,10 @@ class ManageDragenPipeline(CohortStage):
         # earlier raise (threshold breach, cancel, ICA error) skips it and the
         # stage is correctly seen as failed.
         return {
-            f'{cohort.name}_batches': get_pipeline_path(filename=f'{cohort.name}_batches.json'),
+            f'{cohort.name}_{config_retrieve(["workflow", "sequencing_type"])}_'
+            f'{config_retrieve(["workflow", "reads_type"])}_batches': get_pipeline_path(
+                filename=f'{cohort.name}_batches.json'
+            ),
             f'{cohort.name}_pipeline_complete': get_pipeline_path(
                 filename=f'{cohort.name}_pipeline_complete.json',
             ),
@@ -318,7 +321,8 @@ class ManageDragenPipeline(CohortStage):
             per_sg_fastq_list_paths = inputs.as_dict(target=cohort, stage=MakeFastqFileList)
 
         analysis_output_fid_path: cpg_utils.Path = inputs.as_path(
-            target=cohort, stage=PrepareIcaForDragenAnalysis,
+            target=cohort,
+            stage=PrepareIcaForDragenAnalysis,
         )
 
         job: PythonJob = initialise_python_job(
@@ -417,7 +421,10 @@ class DownloadCramFromIca(SequencingGroupStage):
             job_name='DownloadCramFromIca',
             sequencing_group=sequencing_group,
             file_spec=FileTypeSpec(
-                gcs_prefix='cram', data_suffix='cram', index_suffix='cram.crai', md5_suffix='md5sum',
+                gcs_prefix='cram',
+                data_suffix='cram',
+                index_suffix='cram.crai',
+                md5_suffix='md5sum',
             ),
             pipeline_id_arguid_path=pipeline_id_arguid_path,
             cohort_name=cohort.name,
@@ -570,7 +577,8 @@ class DownloadBatchArtefactsFromIca(CohortStage):
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:
         batches_file_path: cpg_utils.Path = inputs.as_dict(target=cohort, stage=ManageDragenPipeline)[
-            f'{cohort.name}_batches'
+            f'{cohort.name}_{config_retrieve(["workflow", "sequencing_type"])}_'
+            f'{config_retrieve(["workflow", "reads_type"])}_batches'
         ]
         gcs_output_root = get_batch_artefacts_root()
         marker_path = self.expected_outputs(cohort=cohort)
@@ -645,7 +653,24 @@ class SomalierExtract(SequencingGroupStage):
         return self.make_outputs(sequencing_group, data=out_somalier_path, skipped=True)
 
 
-@stage(required_stages=[DownloadGvcfFromIca, DownloadMlrGvcfFromIca], analysis_type='gvcf', analysis_keys=['gvcf'])
+# Pseudo end-stage: depends on every download stage (plus SomalierExtract) so the
+# pipeline collapses to a single terminal node once DeleteDataInIca is set aside.
+# Without this, DownloadDataFromIca, DownloadBatchArtefactsFromIca, SomalierExtract
+# and ReheaderMlrGvcf are all parallel sinks (their only dependent is the optional
+# DeleteDataInIca cleanup stage). The body still only consumes the two gVCF inputs;
+# the extra edges are ordering-only.
+@stage(
+    required_stages=[
+        DownloadCramFromIca,
+        DownloadGvcfFromIca,
+        DownloadMlrGvcfFromIca,
+        DownloadDataFromIca,
+        DownloadBatchArtefactsFromIca,
+        SomalierExtract,
+    ],
+    analysis_type='gvcf',
+    analysis_keys=['gvcf'],
+)
 class ReheaderMlrGvcf(SequencingGroupStage):
     """
     Reheader the MLR gVCF to insert correct reference block information that the MLR process removes.
@@ -680,18 +705,16 @@ class ReheaderMlrGvcf(SequencingGroupStage):
         return self.make_outputs(target=sequencing_group, data=outputs, jobs=reheader_mlr_gvcf_job)  # pyright: ignore[reportArgumentType]
 
 
+# ReheaderMlrGvcf is the single terminal stage and transitively depends on every
+# download stage (+ SomalierExtract), so listing those here would just double up.
+# Prepare/UploadDataToIca/FastqIntakeQc stay because queue_jobs consumes their
+# outputs via inputs.as_path — cpg-flow only resolves inputs from declared deps.
 @stage(
     required_stages=[
         PrepareIcaForDragenAnalysis,
         UploadDataToIca,
-        DownloadCramFromIca,
-        DownloadGvcfFromIca,
-        DownloadMlrGvcfFromIca,
-        DownloadDataFromIca,
-        DownloadBatchArtefactsFromIca,
-        ReheaderMlrGvcf,
-        SomalierExtract,
         FastqIntakeQc,
+        ReheaderMlrGvcf,
     ],
 )
 class DeleteDataInIca(CohortStage):
@@ -709,7 +732,8 @@ class DeleteDataInIca(CohortStage):
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:
         cohort_analysis_output_fid_path: cpg_utils.Path = inputs.as_path(
-            target=cohort, stage=PrepareIcaForDragenAnalysis,
+            target=cohort,
+            stage=PrepareIcaForDragenAnalysis,
         )
 
         cram_fid_paths_dict: dict[str, cpg_utils.Path] | None = None
@@ -718,7 +742,9 @@ class DeleteDataInIca(CohortStage):
             cram_fid_paths_dict = inputs.as_path_by_target(stage=UploadDataToIca)
         elif READS_TYPE == 'fastq':
             fastq_ids_list_path = inputs.as_path(
-                target=cohort, stage=FastqIntakeQc, key='fastq_ids_outpath',
+                target=cohort,
+                stage=FastqIntakeQc,
+                key='fastq_ids_outpath',
             )
 
         output_path: cpg_utils.Path = self.expected_outputs(cohort=cohort)

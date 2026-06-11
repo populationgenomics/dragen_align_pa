@@ -189,3 +189,6 @@ reference_data/
 
 # Synthetic fixture output (script default)
 /tests/fixtures/ica-demo-bundle/
+
+# persona-review report (transient)
+tmp_review_feedback.md

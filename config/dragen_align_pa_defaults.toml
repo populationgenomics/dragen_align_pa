@@ -24,11 +24,9 @@ lane = 'lane'
 machine_id = 'machine_id'
 flowcell = 'flowcell'
 sample_id = 'sample_id'
-
-[images]
-# This image contains the entire pipeline code. The version is automatically bumped by bump-my-version (or other version
-# increment tools), but you may need to change the final -1 suffix to the correct suffix.
-ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:3.2.2-1"
+# Whether to treat the manifest as a control manifest (i.e. a manifest for control samples)
+# If false, will default to using the test manifest in fewgenomes-test
+control_manifest = false
 
 # Projects in ICA to run different analyses
 [ica.projects]
@@ -47,6 +45,10 @@ monitor_previous = false
 # For testing purposes, set to true to force a new pipeline submission even if a previous run succeeded.
 force_resubmit = false
 
+# How many times to try ICA API requests before giving up.
+[ica.retry]
+max_retries = 10
+
 # The base folders in ICA where data are uploaded, and Dragen results are written.
 # This is automatically prefixed by the dataset and access level, so these values would result in
 # cpg-[dataset]-[access_level]/test-cram-upload and cpg-[dataset]-[access_level]/test-dragen-378 when run.
@@ -63,6 +65,12 @@ reference_tags = ['test_reference_tags']
 [ica.api]
 batch_size = 30
 
+# Bulk output download: how many pre-signed URLs to mint per :createDownloadUrls
+# call. Larger batches make fewer (rate-limited) API calls but hold URLs longer
+# before they're streamed; keep comfortably inside the pre-signed URL TTL.
+[ica.download]
+url_batch_size = 50
+
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]
 dragen_version = 'dragen_3_7_8'
@@ -78,7 +86,7 @@ chunk_size = "100"
 
 # Unified DRAGEN378 pipeline (single pipeline for CRAM/FASTQ, WGS/WES)
 [dragen_align_pa.manage_dragen_pipeline]
-pipeline_id = "18a4baab-a12f-415d-ba8e-10b5bf6834d0"
+pipeline_id = "aa2661f0-2d2f-4d84-989a-c435f35016d3"
 batch_size = 5
 # Toggle the DRAGEN CYP2D6 pharmacogenomic caller. Defaults to on; set false to skip.
 enable_cyp2d6 = true
@@ -130,18 +138,10 @@ additional_files = []
 # IDs for all CRAM references that were previously used to generate the CRAM files that are to be realigned
 [ica.cram_references]
 
-# Choice for which CRAM reference to use. Current choices are 'dragmap' or 'gatk'
-old_cram_reference = 'dragmap'
-
-# Folder containing reference (bgz with gz suffix) + fai index used to align the CRAM file that you want to realign with Dragen
-# Dragmap reference FASTA
-dragmap = 'fol.df2129db2c88419cbe0408dd600dce1f'
-
-# Homo_sapiens_assembly38 (unmaksed), used for tob-wgs
-# dragmap = 'fol.d45ec3a17cf241f5b61b08dd7c524fb7'
-
-# GATK reference FASTA
-gatk = ''
+# Choice for which CRAM reference to use.
+# Current choices are 'hg38_masked.fasta' or 'hg38_unmasked.fasta'
+# Check constants.py for more
+reference = 'hg38_masked.fasta'
 
 [ica.qc]
 # Cross-contamination SNP VCF basename — resolved to an ICA file ID at
@@ -157,13 +157,13 @@ cross_cont_vcf = 'SNP_NCBI_GRCh38.vcf'
 [ica.qc.genome]
 coverage_region_beds = [
     'wgs_coverage_regions.hg38_minus_N.interval_list.bed',
-    'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed',
+    'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed', # This one for exomes as well
 ]
 
 [ica.qc.exome]
 coverage_region_beds = [
     'Twist_VCGS_Exome_Covered_Targets_hg38.bed',
-    'S30409818_Regions.bed',
+    'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed',
 ]
 
 [dragen_align_pa.manage_dragen_mlr]

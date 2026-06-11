@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -75,8 +76,6 @@ def test_build_additional_args_includes_hardcoded_common(monkeypatch):
         '--vc-gvcf-gq-bands 10 20 30 40',
         '--vc-emit-ref-confidence GVCF',
         '--vc-enable-vcf-output false',
-        '--enable-map-align-output true',
-        '--enable-duplicate-marking true',
         '--repeat-genotype-enable true',
     ):
         assert required_flag in result, f'Missing required hardcoded flag: {required_flag!r}'
@@ -91,7 +90,9 @@ def test_build_additional_args_cyp2d6_default_on(monkeypatch):
 
 def test_build_additional_args_cyp2d6_explicit_false(monkeypatch):
     monkeypatch.setattr(
-        submit_dragen_batch, 'config_retrieve', _config_factory(enable_cyp2d6=False),
+        submit_dragen_batch,
+        'config_retrieve',
+        _config_factory(enable_cyp2d6=False),
     )
     result = submit_dragen_batch._build_additional_args()
     assert '--enable-cyp2d6 false' in result
@@ -100,7 +101,8 @@ def test_build_additional_args_cyp2d6_explicit_false(monkeypatch):
 
 def test_build_additional_args_user_appended_last(monkeypatch):
     monkeypatch.setattr(
-        submit_dragen_batch, 'config_retrieve',
+        submit_dragen_batch,
+        'config_retrieve',
         _config_factory(preset_args='--cnv-enable-self-normalization true', user_args='--foo bar'),
     )
     result = submit_dragen_batch._build_additional_args()
@@ -126,35 +128,39 @@ def test_build_additional_args_emits_vc_padding_when_nonzero(monkeypatch):
 
 
 def test_build_additional_args_rejects_placeholder(monkeypatch):
-    _patch_config(monkeypatch, _config_factory(
-        sequencing_type='exome',
-        preset_args='--sv-call-regions-bed <bed-name>',
-        # Populate bed_names so get_bed_names_for_seqtype doesn't raise first;
-        # we want to reach the legacy `<…>` sentinel check.
-        bed_names={
-            'vc_target': 'covered.bed',
-            'cnv_target': 'regions.bed',
-            'sv_call_regions': 'regions.bed',
-        },
-    ))
+    _patch_config(
+        monkeypatch,
+        _config_factory(
+            sequencing_type='exome',
+            preset_args='--sv-call-regions-bed <bed-name>',
+            # Populate bed_names so get_bed_names_for_seqtype doesn't raise first;
+            # we want to reach the legacy `<…>` sentinel check.
+            bed_names={
+                'vc_target': 'covered.bed',
+                'cnv_target': 'regions.bed',
+                'sv_call_regions': 'regions.bed',
+            },
+        ),
+    )
     with pytest.raises(ValueError, match='placeholder'):
         submit_dragen_batch._build_additional_args()
 
 
 def test_build_additional_args_substitutes_bed_name_tokens(monkeypatch):
-    _patch_config(monkeypatch, _config_factory(
-        sequencing_type='exome',
-        preset_args=(
-            '--vc-target-bed {vc_target} '
-            '--cnv-target-bed {cnv_target} '
-            '--sv-call-regions-bed {sv_call_regions}'
+    _patch_config(
+        monkeypatch,
+        _config_factory(
+            sequencing_type='exome',
+            preset_args=(
+                '--vc-target-bed {vc_target} --cnv-target-bed {cnv_target} --sv-call-regions-bed {sv_call_regions}'
+            ),
+            bed_names={
+                'vc_target': 'covered.bed',
+                'cnv_target': 'regions.bed',
+                'sv_call_regions': 'regions.bed',
+            },
         ),
-        bed_names={
-            'vc_target': 'covered.bed',
-            'cnv_target': 'regions.bed',
-            'sv_call_regions': 'regions.bed',
-        },
-    ))
+    )
     result = submit_dragen_batch._build_additional_args()
     assert '--vc-target-bed covered.bed' in result
     assert '--cnv-target-bed regions.bed' in result
@@ -166,16 +172,19 @@ def test_build_additional_args_substitutes_bed_name_tokens(monkeypatch):
 def test_build_additional_args_rejects_unknown_token(monkeypatch):
     """An args string with a {...} token that bed_names doesn't define must
     fail fast naming the token and listing the configured entries."""
-    _patch_config(monkeypatch, _config_factory(
-        sequencing_type='exome',
-        preset_args='--vc-target-bed {unknown_entry}',
-        bed_names={
-            'vc_target': 'covered.bed',
-            'cnv_target': 'regions.bed',
-            'sv_call_regions': 'regions.bed',
-        },
-    ))
-    with pytest.raises(ValueError, match=r"\{unknown_entry\}"):
+    _patch_config(
+        monkeypatch,
+        _config_factory(
+            sequencing_type='exome',
+            preset_args='--vc-target-bed {unknown_entry}',
+            bed_names={
+                'vc_target': 'covered.bed',
+                'cnv_target': 'regions.bed',
+                'sv_call_regions': 'regions.bed',
+            },
+        ),
+    )
+    with pytest.raises(ValueError, match=r'\{unknown_entry\}'):
         submit_dragen_batch._build_additional_args()
 
 
@@ -183,11 +192,14 @@ def test_build_common_data_inputs_adds_bed_names_to_additional_files(monkeypatch
     """bed_names basenames are added to additional_files (resolved via
     ICA_FILE_IDS) and deduped against preset entries. Twist case: a
     basename used by multiple bed_names entries appears only once."""
-    _stub_registry(monkeypatch, {
-        'covered.bed': 'fil.covered',
-        'regions.bed': 'fil.regions',
-        'pon.bed': 'fil.pon',
-    })
+    _stub_registry(
+        monkeypatch,
+        {
+            'covered.bed': 'fil.covered',
+            'regions.bed': 'fil.regions',
+            'pon.bed': 'fil.pon',
+        },
+    )
     cfg = {
         ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
         ('ica', 'qc', 'exome', 'coverage_region_beds'): [],
@@ -247,7 +259,8 @@ def test_build_additional_args_does_not_flag_common_args_with_future_lt_tokens(m
 
 def test_build_additional_args_rejects_missing_preset(monkeypatch):
     monkeypatch.setattr(
-        submit_dragen_batch, 'config_retrieve',
+        submit_dragen_batch,
+        'config_retrieve',
         lambda key, default=None: 'genome' if key == ['workflow', 'sequencing_type'] else default,
     )
     with pytest.raises(ValueError, match=r'Missing config section'):
@@ -274,7 +287,8 @@ def test_build_additional_args_rejects_preset_missing_cnv_segmentation_mode(monk
         ('dragen_align_pa', 'manage_dragen_pipeline', 'user'): {'additional_args': '', 'additional_files': []},
     }
     monkeypatch.setattr(
-        submit_dragen_batch, 'config_retrieve',
+        submit_dragen_batch,
+        'config_retrieve',
         lambda key, default=None: cfg.get(tuple(key), default),
     )
     with pytest.raises(ValueError, match='cnv_segmentation_mode'):
@@ -286,9 +300,11 @@ def test_run_rejects_no_input_mode_before_any_io():
     any GCS read. We verify by passing an analysis_output_fid_path that
     would raise on open() — if validation runs first, the ValueError is
     about input mode, not about the unreadable path."""
+
     class _BoomPath:
         def open(self, _mode='r'):
             raise AssertionError('analysis_output_fid_path was opened before input-mode validation')
+
     batch = IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
     with pytest.raises(ValueError, match='no valid input mode'):
         submit_dragen_batch.run(
@@ -304,9 +320,11 @@ def test_run_rejects_invalid_error_strategy_before_any_io():
     """A typo in error_strategy (e.g. 'CONTINUE', 'continue ', 'auto-retry') must
     raise BEFORE any GCS / secrets IO, so orchestrator-level misuse surfaces
     cheaply rather than as an obscure ICA pipeline-parameter rejection."""
+
     class _BoomPath:
         def open(self, _mode='r'):
             raise AssertionError('analysis_output_fid_path was opened before error_strategy validation')
+
     batch = IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
     with pytest.raises(ValueError, match='error_strategy'):
         submit_dragen_batch.run(
@@ -322,9 +340,11 @@ def test_run_rejects_invalid_error_strategy_before_any_io():
 def test_run_rejects_mixed_cram_and_fastq_inputs():
     """Passing both modes' paths is programmer error; the current code
     silently runs CRAM mode and ignores FASTQ args. Must raise instead."""
+
     class _BoomPath:
         def open(self, _mode='r'):
             raise AssertionError('analysis_output_fid_path was opened before mixed-input rejection')
+
     batch = IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
     with pytest.raises(ValueError, match='exactly one of'):
         submit_dragen_batch.run(
@@ -461,22 +481,24 @@ def test_build_common_data_inputs_rejects_unregistered_cross_cont_vcf(monkeypatc
         submit_dragen_batch._build_common_data_inputs()
 
 
-def _make_fastq_ids_path(content: str, tmp_path):
+def _make_fastq_ids_path(content: dict[str, str], tmp_path):
     p = tmp_path / 'COH0001_fastq_ids.txt'
-    p.write_text(content)
+    json.dump(content, p.open('w'))
     return p
 
 
 def _make_per_sg_fastq_csv(tmp_path, sg_name: str, read1: list[str], read2: list[str]):
     p = tmp_path / f'{sg_name}_fastq_list.csv'
-    df = pd.DataFrame({
-        'RGID': [f'rg{i}' for i in range(len(read1))],
-        'RGSM': [sg_name] * len(read1),
-        'RGLB': ['lib1'] * len(read1),
-        'Lane': list(range(1, len(read1) + 1)),
-        'Read1File': read1,
-        'Read2File': read2,
-    })
+    df = pd.DataFrame(
+        {
+            'RGID': [f'rg{i}' for i in range(len(read1))],
+            'RGSM': [sg_name] * len(read1),
+            'RGLB': ['lib1'] * len(read1),
+            'Lane': list(range(1, len(read1) + 1)),
+            'Read1File': read1,
+            'Read2File': read2,
+        }
+    )
     df.to_csv(p, index=False)
     return p
 
@@ -488,10 +510,16 @@ def test_load_per_sg_fastq_lists_rejects_filename_collision(tmp_path):
     while DRAGEN sees a longer fastq_list CSV than the dataIds it was given —
     a hidden corruption mode. Detect explicitly and raise."""
     per_sg_csv_a = _make_per_sg_fastq_csv(
-        tmp_path, 'CPG_A', read1=['shared_R1.fastq.gz'], read2=['CPG_A_R2.fastq.gz'],
+        tmp_path,
+        'CPG_A',
+        read1=['shared_R1.fastq.gz'],
+        read2=['CPG_A_R2.fastq.gz'],
     )
     per_sg_csv_b = _make_per_sg_fastq_csv(
-        tmp_path, 'CPG_B', read1=['shared_R1.fastq.gz'], read2=['CPG_B_R2.fastq.gz'],
+        tmp_path,
+        'CPG_B',
+        read1=['shared_R1.fastq.gz'],
+        read2=['CPG_B_R2.fastq.gz'],
     )
     with pytest.raises(ValueError, match=r'shared_R1\.fastq\.gz'):
         submit_dragen_batch._load_per_sg_fastq_lists(
@@ -506,24 +534,30 @@ def test_build_fastq_data_inputs_handles_duplicate_fastq_rows(tmp_path, monkeypa
     most recent (last) ID and not silently send both — and must not
     spuriously fail the count check."""
     fastq_ids_path = _make_fastq_ids_path(
-        'fil.OLD_R1   CPG_A_R1.fastq.gz\n'
-        'fil.OLD_R2   CPG_A_R2.fastq.gz\n'
-        'fil.NEW_R1   CPG_A_R1.fastq.gz\n'  # re-upload duplicate
-        'fil.NEW_R2   CPG_A_R2.fastq.gz\n',  # re-upload duplicate
+        {
+            'fil.OLD_R1': 'CPG_A_R1.fastq.gz',
+            'fil.OLD_R2': 'CPG_A_R2.fastq.gz',
+            'fil.NEW_R1': 'CPG_A_R1.fastq.gz',  # re-upload duplicate
+            'fil.NEW_R2': 'CPG_A_R2.fastq.gz',
+        },  # re-upload duplicate
         tmp_path,
     )
     per_sg_csv = _make_per_sg_fastq_csv(
-        tmp_path, 'CPG_A',
-        read1=['CPG_A_R1.fastq.gz'], read2=['CPG_A_R2.fastq.gz'],
+        tmp_path,
+        'CPG_A',
+        read1=['CPG_A_R1.fastq.gz'],
+        read2=['CPG_A_R2.fastq.gz'],
     )
     monkeypatch.setattr(
-        submit_dragen_batch, 'config_retrieve',
+        submit_dragen_batch,
+        'config_retrieve',
         lambda key, default=None: {('ica', 'data_prep', 'output_folder'): 'test/'}.get(tuple(key), default),
     )
     monkeypatch.setattr(submit_dragen_batch, 'BUCKET_NAME', 'test-bucket')
     # Stub the upload helper — duplicate detection happens before upload.
     monkeypatch.setattr(
-        submit_dragen_batch, '_upload_per_batch_fastq_list',
+        submit_dragen_batch,
+        '_upload_per_batch_fastq_list',
         lambda **kwargs: 'fil.uploaded_csv',
     )
 

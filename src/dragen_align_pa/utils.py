@@ -1,13 +1,12 @@
 import json
 import re
 import subprocess
+from collections.abc import Callable
 from math import ceil
 from typing import TYPE_CHECKING, Any
 
 import cpg_utils
 from cloudpathlib.exceptions import NoStatError
-from collections.abc import Callable
-
 from cpg_flow.inputs import get_multicohort
 from cpg_flow.stage import Stage, StageInput
 from cpg_flow.targets import Cohort, SequencingGroup
@@ -105,43 +104,20 @@ def run_subprocess_with_log(
 
 
 def _resolve_sg_canonical_design(sg: SequencingGroup) -> str:
-    """Resolve one SG's canonical exome design from its assay metadata.
+    """Resolve one SG's canonical exome design from its metadata."""
 
-    Reads every assay's `meta['sequencing_library']`, maps each through
-    DESIGN_TO_CANONICAL, and requires the SG to resolve to exactly one
-    canonical design.
-    """
-    raw_values: set[str] = set()
-    for assay in sg.assays or ():
-        sequencing_library = assay.meta.get('sequencing_library')
-        if sequencing_library:
-            raw_values.add(str(sequencing_library))
-    if not raw_values:
+    sequencing_library: str | None = sg.meta.get('sequencing_library')
+    if not sequencing_library:
         raise RuntimeError(
-            f"Sequencing group {sg.id} has no assay.meta['sequencing_library']; "
-            f'cannot resolve exome design.',
+            f"Sequencing group {sg.id} has no meta['sequencing_library']; cannot resolve exome design.",
         )
-
-    canonical: set[str] = set()
-    unmapped: set[str] = set()
-    for raw in raw_values:
-        match = DESIGN_TO_CANONICAL.get(raw)
-        if match is None:
-            unmapped.add(raw)
-        else:
-            canonical.add(match)
-    if unmapped:
+    if sequencing_library not in DESIGN_TO_CANONICAL:
         raise RuntimeError(
-            f'Sequencing group {sg.id} has unmapped sequencing_library value(s): '
-            f'{sorted(unmapped)}. Add these to DESIGN_TO_CANONICAL in '
+            f'Sequencing group {sg.id} has sequencing_library {sequencing_library!r} that '
+            f"doesn't map to a canonical design. Add it to DESIGN_TO_CANONICAL in "
             f'dragen_align_pa.constants.',
         )
-    if len(canonical) != 1:
-        raise RuntimeError(
-            f'Sequencing group {sg.id} maps to multiple canonical designs: '
-            f'{sorted(canonical)}.',
-        )
-    return canonical.pop()
+    return DESIGN_TO_CANONICAL[sequencing_library]
 
 
 def get_bed_names_for_seqtype() -> dict[str, str]:
@@ -206,8 +182,7 @@ def assert_cohort_design_matches_configured_bed(cohort: Cohort) -> None:
     valid_beds = DESIGN_TO_BEDS.get(cohort_design)
     if valid_beds is None:
         raise RuntimeError(
-            f'No DESIGN_TO_BEDS entry for design {cohort_design!r}; '
-            f'update dragen_align_pa.constants.',
+            f'No DESIGN_TO_BEDS entry for design {cohort_design!r}; update dragen_align_pa.constants.',
         )
 
     # get_bed_names_for_seqtype raises if exome bed_names is missing or has
@@ -222,8 +197,7 @@ def assert_cohort_design_matches_configured_bed(cohort: Cohort) -> None:
             f'{sorted(valid_beds)}. Check the config against the cohort design.',
         )
     logger.info(
-        f'Exome design check passed: cohort {cohort.id} -> {cohort_design}, '
-        f'beds {sorted(set(bed_names.values()))}.',
+        f'Exome design check passed: cohort {cohort.id} -> {cohort_design}, beds {sorted(set(bed_names.values()))}.',
     )
 
 
@@ -300,9 +274,7 @@ def get_per_sg_state_path(
             f'cohort in the MultiCohort, found {len(matching)}.',
         )
     cohort = matching[0]
-    state_path = inputs.as_dict(target=cohort, stage=state_stage)[
-        f'{sequencing_group.name}_pipeline_id_and_arguid'
-    ]
+    state_path = inputs.as_dict(target=cohort, stage=state_stage)[f'{sequencing_group.name}_pipeline_id_and_arguid']
     return cohort, state_path
 
 
@@ -374,9 +346,14 @@ def get_manifest_path_for_cohort(cohort: Cohort) -> cpg_utils.Path:
     logger.info(f'Using access level: {access_level}')
 
     if access_level == 'test':
-        manifest_type: str = 'control'
-        required_basename_str: str = 'control_manifest'
-        required_dirname_str: str = 'control_manifests'
+        if config_retrieve(['manifest', 'control_manifest'], default=False):
+            manifest_type: str = 'control'
+            required_basename_str: str = 'control_manifest'
+            required_dirname_str: str = 'control_manifests'
+        else:
+            manifest_type = 'test'
+            required_basename_str = 'test_manifest'
+            required_dirname_str = 'fewgenomes-test-flowcell'  # current hardcode only for fewgenomes-test.
     else:
         manifest_type = 'production'
         required_basename_str = 'production_manifest'
