@@ -3,16 +3,46 @@
 ## Purpose
 
 Perform alignment (from fastq) or realignment (from CRAM) using Dragen v3.7.8 with ICA.
+It handles both fastQ and CRAM input, and WGS and WES data.
 
 The pipeline manages preparing ICA for analysis (creating input and output locations), running and monitoring of both Dragen (alignment and variant calling)
 and Dragen MLR (variant recalibration). It finishes by streaming the data back to GCS, generating a Somalier fingerprint for each CRAM, 
 reheadering the MLR gVCF files (the MLR step silently drops the gVCF block info from the header), and deletes the data in ICA.
 
-## Pipeline Overview v4.0.0
+## Pipeline Flow v4.0.0
 
 <div align="center">
     <img src="workflow_dag.svg" alt="Dragen Alignment Workflow DAG" width="80%"/>
 </div>
+
+## Running the Pipeline
+
+```bash
+analysis-runner \
+--dataset your-dataset \
+--access test \
+--config path/to/your-config.toml \
+--output-dir '' \
+--description "DRAGEN alignment for your-cohort" \
+--image "australia-southeast1-docker.pkg.dev/cpg-common/images-dev/dragen_align_pa:image-tag" \
+dragen_align_pa
+```
+
+  * `--dataset`: The Metamist dataset associated with your cohort.
+  * `--access`: The access level for the pipeline run. Valid options are `test`, `full`. `standard` breaks GCS upload.
+  * `--config`: The path to your local TOML configuration file.
+  * `--output-dir`: This is required by `analysis-runner` but is not used by this pipeline. You can leave it as `''`.
+  * `--description`: A description for the pipeline run.
+  * `--image`: The full path to the pipeline's Docker image. The example uses a `-dev` image, but production runs will use a production (i.e. `images`, not `images-dev`)
+
+
+  ## Configuring the pipeline
+  The default [`config file`](config/dragen_align_pa_defaults.toml) should be used as a base to configure the cohort that you are running.
+
+  Config files should be reviewed and merged into the `production-pipelines-configuration` repository prior to running on production data. You can also find the values for config settings such as `ica.projects.dragen_align` in the config files in this repository.
+  Valid entries for config settings such as `dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names` can be found in [`constants.py`](src/dragen_align_pa/constants.py).
+
+## Brief Overview
 
 The workflow performs the following main steps:
 
@@ -34,7 +64,8 @@ The workflow performs the following main steps:
 
 ## Prerequisites
 
-1.  **Metamist Cohort:** You must have a cohort created in Metamist containing the sequencing groups you wish to process.
+1.  **Cohort:** A cohort must exist in Metamist containing the sequencing groups you wish to process.
+  2. For fastQ input, there must also be a corresponding manifest file registered in Metamist, under the `manifest` analysis type.
 2.  **Configuration File:** You must create a TOML configuration file. A reference can be found at `config/dragen_align_pa_defaults.toml`.
 
 ## Configuration
@@ -79,21 +110,7 @@ The pipeline is launched using `analysis-runner`.
 
 **Example Invocation:**
 
-```bash
-analysis-runner \
---dataset <your-dataset> \
---access test \
---config <path/to/your-config.toml> \
---output-dir '' \
---description "DRAGEN alignment for <your-cohort>" \
---image "australia-southeast1-docker.pkg.dev/cpg-common/images-dev/dragen_align_pa:<image-tag>" \
-dragen_align_pa
-```
 
-  * `--dataset`: The Metamist dataset associated with your cohort.
-  * `--config`: The path to your local TOML configuration file.
-  * `--output-dir`: This is required by `analysis-runner` but is not used by this pipeline. You can leave it as `''`.
-  * `--image`: The full path to the pipeline's Docker image. The example uses a `-dev` image, but production runs will use a production (i.e. no `-dev` image)
 
 ## Pipeline Management (Important)
 
