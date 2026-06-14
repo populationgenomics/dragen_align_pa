@@ -126,9 +126,9 @@ additional_files = []
 #                                                  probes physically cover beyond the target
 #                                                  coords. Broader than Regions.
 [dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names]
-vc_target = ""
-cnv_target = ""
-sv_call_regions = ""
+vc_target = "Twist_VCGS_Exome_Covered_Targets_hg38.bed"
+cnv_target = "Twist_VCGS_Exome_Covered_Targets_hg38.bed"
+sv_call_regions = "Twist_VCGS_Exome_Covered_Targets_hg38.bed"
 
 # Per-run user override hooks. Appended after the preset values.
 [dragen_align_pa.manage_dragen_pipeline.user]
@@ -162,7 +162,7 @@ coverage_region_beds = [
 
 [ica.qc.exome]
 coverage_region_beds = [
-    'Twist_VCGS_Exome_Covered_Targets_hg38.bed',
+    'Twist_VCGS_Exome_Covered_Targets_hg38.bed', # Example for Twist capture region
     'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed',
 ]
 

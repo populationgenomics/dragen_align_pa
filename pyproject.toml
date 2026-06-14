@@ -9,7 +9,7 @@ readme = "README.md"
 # # currently cpg-flow is pinned to this version.
 # # Keep [tool.ruff] target-version and [tool.mypy] python_version in sync with this.
 requires-python = ">=3.11,<3.12"
-version="3.2.2"
+version="4.0.0"
 license={ "file" = "LICENSE" }
 classifiers=[
     'Environment :: Console',
@@ -129,7 +129,7 @@ section-order = ["future", "standard-library", "third-party", "first-party", "lo
 "tests/**" = ["SLF001", "PLR2004", "ANN202", "ANN003", "ARG005"]
 
 [tool.bumpversion]
-current_version = "3.2.2"
+current_version = "4.0.0"
 parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
 serialize = ["{major}.{minor}.{patch}"]
 allow_dirty = false
