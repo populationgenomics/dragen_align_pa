@@ -183,3 +183,12 @@ reference_data/
 
 # Mac
 .DS_Store
+
+# Real ICA bundle downloads (never commit)
+/ica-demo-bundle/
+
+# Synthetic fixture output (script default)
+/tests/fixtures/ica-demo-bundle/
+
+# persona-review report (transient)
+tmp_review_feedback.md

@@ -57,6 +57,9 @@ def somalier_extract(
         }
     )
 
+    # declare_resource_group attaches `somalier_output` to the job as a
+    # ResourceGroup at runtime, but the typing surface only exposes Resource —
+    # which has neither __getattr__ nor __getitem__ for the dynamic keys.
     declared_output_file = somalier_job.somalier_output.somalier_file  # type: ignore[attr-defined]
 
     somalier_job.command(

@@ -38,13 +38,15 @@ def run(  # noqa: PLR0915
                 ica_md5_fh,
                 sep=r'\s+',  # Matches one or more whitespace chars
                 header=None,  # Explicitly state no header
-                names=['IcaChecksum', 'IcaRawPath'],  # Use descriptive names
-                dtype={'IcaChecksum': str, 'IcaRawPath': str},
+                names=['IcaChecksum', 'IcaFileId', 'IcaRawPath'],  # Use descriptive names
+                dtype={'IcaChecksum': str, 'IcaFileId': str, 'IcaRawPath': str},
             )
             # Extract filename from the path provided by ICA MD5 tool
             # Assuming format like '/path/to/filename.fastq.gz'
             ica_md5_data['Filenames'] = ica_md5_data['IcaRawPath'].str.split('/').str[-1]
-            ica_md5_data = ica_md5_data.set_index('Filenames')[['IcaChecksum']]  # Keep only checksum, index by filename
+            # Keep only checksum, index by filename
+            # Dropping the 'IcaFileId' column as it was only needed to read in the data correctly
+            ica_md5_data = ica_md5_data.set_index('Filenames')[['IcaChecksum']]
 
         # Merge (outer join handles files present in only one list)
         merged_checksum_data: pd.DataFrame = supplied_manifest_data.join(
@@ -68,9 +70,6 @@ def run(  # noqa: PLR0915
                     f"Checksum MISMATCH for '{filename}': Manifest='{manifest_checksum}', ICA='{ica_checksum}'"
                 )
                 mismatched_files.append(f'{filename} (CHECKSUM MISMATCH)')
-            else:
-                # Checksums match
-                logger.info(f"Checksum OK for '{filename}'")
 
     except FileNotFoundError as e:
         logger.error(f'Input file not found during MD5 validation: {e}')

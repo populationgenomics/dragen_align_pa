@@ -9,7 +9,7 @@ readme = "README.md"
 # # currently cpg-flow is pinned to this version.
 # # Keep [tool.ruff] target-version and [tool.mypy] python_version in sync with this.
 requires-python = ">=3.11,<3.12"
-version="3.5.2"
+version="4.0.0"
 license={ "file" = "LICENSE" }
 classifiers=[
     'Environment :: Console',
@@ -75,6 +75,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ['tests']
+pythonpath = ['src']
 
 [tool.ruff]
 line-length = 120
@@ -93,8 +94,6 @@ fixable = ["A", "B", "C", "D", "E", "F", "G", "I", "N", "Q", "S", "T", "W", "ANN
 
 ignore = [
     "ANN001", # Missing type annotation for function argument
-    "ANN101", # Missing type annotation for self in method
-    "ANN102", # Missing type annotation for `cls` in classmethod
     "ANN201", # Missing return type annotation for public function
     "ANN401", # Dynamically typed expressions (typing.Any) are disallowed
     "ANN204", # Missing type annotation for special method `__init__`
@@ -121,17 +120,16 @@ ignore = [
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 
 [tool.ruff.lint.per-file-ignores]
-# Test code is held to a looser standard than production:
-# - SLF001: tests legitimately reach into private helpers/attributes.
-# - PLR2004: tests compare against literal "magic" values (counts, HTTP
-#   status codes, indices) where extracting a named constant adds no clarity.
-# - ANN202/ANN003: full return/kwargs annotations on test helpers/fixtures
-#   are noise.
-# - ARG005: unused lambda args in stubs are intentional.
+# Test files relax a handful of lints that don't earn their keep in test code:
+# - SLF001: tests legitimately access private members of the module under test.
+# - PLR2004: tests compare against literal "magic" values (counts, indices, etc.).
+# - ANN202: return-type annotations on inner helpers / factories in tests add noise.
+# - ANN003: **kwargs typing on test helpers (e.g. _write_state(**fields)) is verbose.
+# - ARG005: lambda stubs in monkeypatch.setattr often ignore the called args.
 "tests/**" = ["SLF001", "PLR2004", "ANN202", "ANN003", "ARG005"]
 
 [tool.bumpversion]
-current_version = "3.5.2"
+current_version = "4.0.0"
 parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
 serialize = ["{major}.{minor}.{patch}"]
 allow_dirty = false
@@ -149,13 +147,6 @@ commit_args = ""
 filename = "Dockerfile"
 search = "ENV VERSION={current_version}"
 replace = "ENV VERSION={new_version}"
-
-[[tool.bumpversion.files]]
-filename = "config/dragen_align_pa_defaults.toml"
-regex = true
-parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)-.*"
-search = "dragen_align_pa:{current_version}"
-replace = "dragen_align_pa:{new_version}"
 
 [[tool.bumpversion.files]]
 filename = "README.md"

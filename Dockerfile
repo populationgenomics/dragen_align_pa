@@ -1,9 +1,9 @@
 FROM australia-southeast1-docker.pkg.dev/cpg-common/images/cpg_hail_gcloud:0.2.138.cpg2-1
 
 # Dragen align pa pipeline version.
-ENV VERSION=3.5.2
+ENV VERSION=4.0.0
 
-ARG ICA_CLI_VERSION="2.45.0"
+ARG ICA_CLI_VERSION="2.46.0"
 ARG SOMALIER_VERSION="0.3.1"
 
 RUN apt update && apt install -y \
@@ -36,8 +36,6 @@ RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
     && pip install . \
     && pip install third_party/popgen_cli-2.1.0-py3-none-any.whl \
     && pip install typing-extensions==4.13.0 \
-    && pip install multiqc==1.30
-
-RUN wget https://github.com/brentp/somalier/releases/download/v${SOMALIER_VERSION}/somalier && \
+    && wget https://github.com/brentp/somalier/releases/download/v${SOMALIER_VERSION}/somalier && \
     chmod +x somalier && \
     mv somalier /usr/local/bin/

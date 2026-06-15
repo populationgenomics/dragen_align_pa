@@ -1,4 +1,4 @@
-# This is an example config file detailing all the optioons used for running the realignment pipeline
+# This is an example config file detailing all the options used for running the realignment pipeline
 [workflow]
 name = 'dragen_align_pa'
 output_prefix = ""
@@ -9,10 +9,6 @@ skip_stages = ['DeleteDataInIca']
 
 # Can be fastq or CRAM, depending on the source of the reads for alignment
 reads_type = "fastq"
-
-# Set to false to skip the DRAGEN CYP2D6 pharmacogenomics caller.
-# Default true matches the historical pipeline configuration.
-enable_cyp2d6 = true
 
 # used to make sure we don't repeat previously completed stages
 check_expected_outputs = true
@@ -28,17 +24,19 @@ lane = 'lane'
 machine_id = 'machine_id'
 flowcell = 'flowcell'
 sample_id = 'sample_id'
-
-[images]
-# This image contains the entire pipeline code. The version is automatically bumped by bump-my-version (or other version
-# incrememt tools), but you may need to change the final -1 suffix to the correct suffix.
-ica = "australia-southeast1-docker.pkg.dev/cpg-common/images/dragen_align_pa:3.5.2-1"
+# Whether to treat the manifest as a control manifest (i.e. a manifest for control samples)
+# If false, will default to using the test manifest in fewgenomes-test
+control_manifest = false
 
 # Projects in ICA to run different analyses
 [ica.projects]
 dragen_align = "main_dragen_project"
 dragen_mlr = "mlr_job_project"
 dragen_mlr_project_id = "mlr_project_id"
+# Supplier project where third-party FASTQ uploads live; we operate against this
+# project (not `dragen_align`) to delete linked FASTQs in `DeleteDataInIca`.
+# Only consulted in FASTQ mode.
+fastq_source_project_id = "fastq_source_project_id"
 
 # Flags to manage existing pipeline runs: set the appropriate flag to true and resubmit the job to cancel or resume monitoring.
 [ica.management]
@@ -47,6 +45,10 @@ monitor_previous = false
 # For testing purposes, set to true to force a new pipeline submission even if a previous run succeeded.
 force_resubmit = false
 
+# How many times to try ICA API requests before giving up.
+[ica.retry]
+max_retries = 10
+
 # The base folders in ICA where data are uploaded, and Dragen results are written.
 # This is automatically prefixed by the dataset and access level, so these values would result in
 # cpg-[dataset]-[access_level]/test-cram-upload and cpg-[dataset]-[access_level]/test-dragen-378 when run.
@@ -54,7 +56,7 @@ force_resubmit = false
 upload_folder = "test-cram-upload"
 output_folder = "test-dragen-378"
 
-# These tags are used in the ICA UI. You can also use the mfor filtering via the API, but I don't do any of that in this pipeline.
+# These tags are used in the ICA UI. You can also use them for filtering via the API, but I don't do any of that in this pipeline.
 [ica.tags]
 technical_tags = ['test_technical_tag']
 user_tags = ['test_user_tags']
@@ -63,22 +65,15 @@ reference_tags = ['test_reference_tags']
 [ica.api]
 batch_size = 30
 
-# Transient-error retry for ICA status polling (check_ica_pipeline_status).
-# max_retries = retries AFTER the initial attempt, so total tries = max_retries + 1.
-# Read at call time, so this can be tuned per-run without rebuilding the image.
-# NB: worst-case backoff is ~32s per retry at the cap, so a large value can
-# exceed a tight polling cycle.
-[ica.retry]
-max_retries = 10
+# Bulk output download: how many pre-signed URLs to mint per :createDownloadUrls
+# call. Larger batches make fewer (rate-limited) API calls but hold URLs longer
+# before they're streamed; keep comfortably inside the pre-signed URL TTL.
+[ica.download]
+url_batch_size = 50
 
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]
 dragen_version = 'dragen_3_7_8'
-# F2 instance CRAM pipeline
-cram = 'cbac3d1f-737f-44f2-9a40-f7f2589b5fad'
-
-# F2 instance Fastq pipeline
-fastq = '393e2423-3c0d-42f2-aa83-910a48a9c32c'
 # Dragen hash table for 3.7.8
 dragen_ht_id = 'fil.854d49a151a24edae5d708da2935b1b0'
 
@@ -89,28 +84,89 @@ md5_pipeline_id = "e767f290-bc60-4281-b11d-6a65c9791253"
 [ica.pipelines.md5]
 chunk_size = "100"
 
+# Unified DRAGEN378 pipeline (single pipeline for CRAM/FASTQ, WGS/WES)
+[dragen_align_pa.manage_dragen_pipeline]
+pipeline_id = "aa2661f0-2d2f-4d84-989a-c435f35016d3"
+batch_size = 5
+# Toggle the DRAGEN CYP2D6 pharmacogenomic caller. Defaults to on; set false to skip.
+enable_cyp2d6 = true
+
+# WGS-only flags. Empty preset is fine; cnv_segmentation_mode is divergent vs WES.
+[dragen_align_pa.manage_dragen_pipeline.presets.genome]
+cnv_segmentation_mode = "SLM"
+additional_args = "--cnv-enable-self-normalization true"
+additional_files = []
+
+# WES-only flags. Your run's config TOML must set [bed_names] below; blank
+# values here are fail-fast markers that halt the run before ICA submission.
+[dragen_align_pa.manage_dragen_pipeline.presets.exome]
+cnv_segmentation_mode = "HSLM"
+# Bases added on either side of vc_target for variant calling. Maps to DRAGEN's
+# --vc-target-bed-padding flag; only affects the small variant caller (CNV and
+# SV have no DRAGEN padding flag). Set to 0 to omit the flag entirely;
+# override per-cohort if you want padding (e.g. 50 for Twist).
+vc_target_bed_padding = 0
+additional_args = "--sv-exome true --sv-call-regions-bed {sv_call_regions} --vc-target-bed {vc_target} --cnv-target-bed {cnv_target} --cnv-target-factor-threshold 5 --cnv-merge-threshold 0.4 --cnv-enable-self-normalization false"
+# Auto-populated from bed_names below; list extras here (e.g. PoN files) as basenames.
+additional_files = []
+
+# BED basenames for each DRAGEN target slot. Set these in your run's config
+# TOML using names registered in dragen_align_pa.constants.ICA_FILE_IDS.
+#
+# Registered BEDs today:
+#   Twist_VCGS_Exome_Covered_Targets_hg38.bed   -- Twist exome design.
+#                                                  The narrower target coordinates
+#                                                  (Twist doesn't distribute a
+#                                                  probe-Covered BED for this design).
+#   S30409818_Regions.bed                       -- Agilent CREv2 Regions.
+#                                                  Target coordinates (narrower).
+#   S30409818_Covered.bed                       -- Agilent CREv2 Covered.
+#                                                  The full coordinate space of the probes
+#                                                  themselves, including flanking bases the
+#                                                  probes physically cover beyond the target
+#                                                  coords. Broader than Regions.
+[dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names]
+vc_target = "Twist_VCGS_Exome_Covered_Targets_hg38.bed"
+cnv_target = "Twist_VCGS_Exome_Covered_Targets_hg38.bed"
+sv_call_regions = "Twist_VCGS_Exome_Covered_Targets_hg38.bed"
+
+# Per-run user override hooks. Appended after the preset values.
+[dragen_align_pa.manage_dragen_pipeline.user]
+additional_args = ""
+additional_files = []
+
 # IDs for all CRAM references that were previously used to generate the CRAM files that are to be realigned
 [ica.cram_references]
 
-# Choice for which CRAM reference to use. Current choices are 'dragmap' or 'gatk'
-old_cram_reference = 'dragmap'
-
-# Folder containing reference (bgz with gz suffix) + fai index used to align the CRAM file that you want to realign with Dragen
-# Dragmap reference FASTA
-dragmap = 'fol.df2129db2c88419cbe0408dd600dce1f'
-
-# Homo_sapiens_assembly38 (unmaksed), used for tob-wgs
-# dragmap = 'fol.d45ec3a17cf241f5b61b08dd7c524fb7'
-
-# GATK reference FASTA
-gatk = ''
+# Choice for which CRAM reference to use.
+# Current choices are 'hg38_masked.fasta' or 'hg38_unmasked.fasta'
+# Check constants.py for more
+reference = 'hg38_masked.fasta'
 
 [ica.qc]
-cross_cont_vcf = 'fil.1a7a2d0442854127e5d608da2935b1b0'
-coverage_region_1 = 'fil.ad60897bc97e4646f28c08da33ba0a20'
-coverage_region_2 = 'fil.c4ade57f5ffe4baff28d08da33ba0a20'
+# Cross-contamination SNP VCF basename — resolved to an ICA file ID at
+# submission time via `dragen_align_pa.constants.ICA_FILE_IDS`. Seqtype-agnostic,
+# so it lives at [ica.qc] (not under a per-seqtype block below).
+cross_cont_vcf = 'SNP_NCBI_GRCh38.vcf'
 
-[ica.mlr]
+# Coverage-region BED basenames, split by sequencing type. The submitter reads
+# the [ica.qc.<workflow.sequencing_type>] block matching the run, so WGS regions
+# never reach an exome run (or vice versa). Names are resolved to ICA file IDs
+# via `dragen_align_pa.constants.ICA_FILE_IDS`; an unregistered name raises at
+# submitter startup. DRAGEN accepts at most 3 coverage-region BEDs per run.
+[ica.qc.genome]
+coverage_region_beds = [
+    'wgs_coverage_regions.hg38_minus_N.interval_list.bed',
+    'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed', # This one for exomes as well
+]
+
+[ica.qc.exome]
+coverage_region_beds = [
+    'Twist_VCGS_Exome_Covered_Targets_hg38.bed', # Example for Twist capture region
+    'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed',
+]
+
+[dragen_align_pa.manage_dragen_mlr]
 config_json = "fil.91c3e63114fc43dc31ed08dde927d6b4"
 mlr_hash_table = "ica://ourdna-dragen-mlr-jobs/data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9"
 analysis_instance_tier = "economy"

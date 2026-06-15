@@ -1,6 +1,6 @@
+import json
 import os
 import time
-from collections.abc import Callable
 from functools import partial
 from typing import Literal
 
@@ -11,7 +11,7 @@ from cpg_utils.config import config_retrieve, try_get_ar_guid
 from icasdk.apis.tags import project_analysis_api, project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils, utils
+from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
 from dragen_align_pa.constants import BUCKET_NAME
 from dragen_align_pa.jobs import run_intake_qc_pipeline
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
@@ -19,14 +19,13 @@ from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
 
 def _get_fastq_ica_id_list(
     fastq_filenames: list[str],
-    fastq_ids_outpath: cpg_utils.Path,
     api_instance: project_data_api.ProjectDataApi,
     path_parameters: dict[str, str],
-) -> list[str]:
+) -> dict[str, str]:
     """
     Finds ICA file IDs for a list of fastq filenames.
     """
-    fastq_ids: list[str] = []
+    ica_fastq_info: dict[str, str] = {}
 
     # Handle potentially large lists by batching API calls
     batch_size = config_retrieve(['ica', 'api', 'batch_size'], default=20)
@@ -35,27 +34,28 @@ def _get_fastq_ica_id_list(
         logger.info(
             f'Querying ICA for {len(batch_filenames)} FASTQ IDs (batch {i // batch_size + 1})...',
         )
-        api_response = api_instance.get_project_data_list(  # pyright: ignore[reportUnknownVariableType]
-            path_params=path_parameters,  # pyright: ignore[reportArgumentType]
+        api_response = ica_api_utils.ica_retry(
+            api_instance.get_project_data_list,
+            path_params=path_parameters,
             query_params={'filename': batch_filenames, 'filenameMatchMode': 'EXACT'},
-        )  # type: ignore[no-untyped-call]
-        for item in api_response.body['items']:  # pyright: ignore[reportUnknownArgumentType]
-            file_id = item['data']['id']  # pyright: ignore[reportUnknownVariableType]
-            fastq_ids.append(file_id)  # type: ignore[arg-type]
+        )
+        for item in api_response.body['items']:
+            file_name: str = item['data']['details']['name']
+            file_id: str = item['data']['id']
+            ica_fastq_info[file_id] = file_name
 
-    if len(fastq_ids) != len(fastq_filenames):
-        logger.warning(
-            f'Mismatch: Found {len(fastq_ids)} file IDs in ICA, '
+    if len(ica_fastq_info) != len(fastq_filenames):
+        logger.error(
+            f'Mismatch: Found {len(ica_fastq_info)} file IDs in ICA, '
             f'but {len(fastq_filenames)} were expected from manifest.',
         )
-        # This could be a critical error, depending on requirements
-        # For now, we'll just log and continue with the files we found.
+        raise ValueError(
+            f'Mismatch: Found {len(ica_fastq_info)} file IDs in ICA, '
+            f'but {len(fastq_filenames)} were expected from manifest.'
+        )
 
-    with fastq_ids_outpath.open('w') as fq_outpath:
-        fq_outpath.write('\n'.join(fastq_ids))
-
-    logger.info(f'Found {len(fastq_ids)} total FASTQ file IDs.')
-    return fastq_ids
+    logger.info(f'Found {len(ica_fastq_info)} total FASTQ file IDs.')
+    return ica_fastq_info
 
 
 def _create_md5_output_folder(
@@ -71,8 +71,8 @@ def _create_md5_output_folder(
     object_id, _ = ica_utils.create_upload_object_id(
         api_instance=api_instance,
         path_params=path_parameters,
-        sg_name=cohort_name,
-        file_name=cohort_name,  # Folder name is the cohort name
+        folder_name=cohort_name,
+        file_name=cohort_name,
         folder_path=folder_path,
         object_type='FOLDER',
     )
@@ -116,11 +116,20 @@ def run(
 
     cohort_name: str = cohort.name
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
-        supplied_manifest_data: pd.DataFrame = pd.read_csv(
-            manifest_fh,
-            usecols=[config_retrieve(['manifest', 'filenames'])],
-        )
-    fastq_filenames: list[str] = supplied_manifest_data[config_retrieve(['manifest', 'filenames'])].to_list()
+        try:
+            supplied_manifest_data: pd.DataFrame = pd.read_csv(
+                manifest_fh,
+                usecols=[config_retrieve(['manifest', 'filenames'])],
+            )
+            fastq_filenames: list[str] = supplied_manifest_data[config_retrieve(['manifest', 'filenames'])].to_list()
+        except ValueError:
+            manifest_fh.seek(0)
+            header: list[str] = manifest_fh.readline().split()
+            logger.error(
+                f'Expected to read the column: {config_retrieve(["manifest", "filenames"])} from the manifest file\n'
+                f'Got instead: {header}'
+            )
+            raise
 
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     project_id: str = secrets['projectID']
@@ -134,27 +143,15 @@ def run(
         api_instance = project_data_api.ProjectDataApi(api_client)
 
         # Get all ica file ids for the fastq files
-        ica_fastq_ids: list[str] = _get_fastq_ica_id_list(
+        ica_fastq_info: dict[str, str] = _get_fastq_ica_id_list(
             fastq_filenames=fastq_filenames,
-            fastq_ids_outpath=outputs['fastq_ids_outpath'],
             api_instance=api_instance,
             path_parameters=path_parameters,
         )
 
-        if not ica_fastq_ids:
+        if not ica_fastq_info:
             logger.error('No FASTQ file IDs found in ICA. Cannot start MD5 pipeline.')
             raise ValueError('No FASTQ file IDs found in ICA.')
-
-        # Define local path for the FASTQ ID list
-        batch_tmpdir = os.environ.get('BATCH_TMPDIR', '/io')
-        local_fastq_list_path = os.path.join(batch_tmpdir, f'{cohort_name}_{ar_guid}_fastq_ids.txt')
-
-        # Download the file from GCS to the local path
-        gcs_fastq_list_path = str(outputs['fastq_ids_outpath'])
-        utils.run_subprocess_with_log(
-            ['gcloud', 'storage', 'cp', gcs_fastq_list_path, local_fastq_list_path],
-            f'Download {os.path.basename(gcs_fastq_list_path)} from GCS',
-        )
 
         # Upload the FASTQ ID list to ICA
         fastq_list_folder = (
@@ -162,18 +159,28 @@ def run(
         )
         fastq_list_filename = f'{cohort_name}_{ar_guid}_fastq_ids.txt'
 
+        # Write the FASTQ ID list to a temporary file
+        # If not running with Hail Batch, make the file in the working directory
+        if not os.environ.get('BATCH_TMPDIR'):
+            fastq_list_filename_path: str = os.path.join('.', fastq_list_filename)
+        else:
+            fastq_list_filename_path = os.path.join(os.environ['BATCH_TMPDIR'], fastq_list_filename)
+        with open(fastq_list_filename_path, 'w') as fq_outpath:
+            fq_outpath.write('\n'.join(ica_fastq_info.keys()))
+
         ica_cli_utils.authenticate_ica_cli()
         ica_cli_utils.upload_local_file(
-            local_file_path=local_fastq_list_path,
+            local_file_path=fastq_list_filename_path,
             ica_folder_path=fastq_list_folder,
         )
+        with outputs['fastq_ids_outpath'].open('w') as fq_outpath:
+            json.dump(ica_fastq_info, fq_outpath)
 
         # Find the uploaded file to get its ID, with retries for eventual consistency
         fastq_list_file_details = None
         max_retries = 5
         retry_delay_seconds = 15
         for attempt in range(max_retries):
-            logger.info(f"Attempt {attempt + 1}/{max_retries} to find uploaded file '{fastq_list_filename}'...")
             fastq_list_file_details = ica_api_utils.get_file_details_from_ica(
                 api_instance=api_instance,
                 path_params=path_parameters,
@@ -214,10 +221,6 @@ def run(
         md5_outputs_folder_id=md5_outputs_folder_id,
     )
 
-    def _create_submit_callable_factory(target_name: str, ar_guid: str) -> Callable[[], str]:
-        del target_name, ar_guid  # MD5 binds its ar_guid eagerly above
-        return submit_callable
-
     manage_ica_pipeline_loop(
         targets_to_process=[cohort],
         outputs=outputs,
@@ -226,7 +229,7 @@ def run(
         success_file_key_template='md5sum_pipeline_success',
         pipeline_id_file_key_template='md5sum_pipeline_run',
         error_log_key=f'{cohort_name}_md5_errors',
-        submit_function_factory=_create_submit_callable_factory,
+        submit_function_factory=lambda _target_name: submit_callable,
         allow_retry=True,
         sleep_time_seconds=300,
     )

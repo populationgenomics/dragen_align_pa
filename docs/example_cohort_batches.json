@@ -1,0 +1,47 @@
+{
+  "batch_size": 5,
+  "batches": [
+    {
+      "analysis_output_folder_fid": null,
+      "ar_guid": "a4803541-174c-4672-b5a2-c51f41b9213e",
+      "batch_index": 0,
+      "cram_fids": [
+        "fil.bb294f5810b843ccc6e008dec23f702b",
+        "fil.040823510f5b44e56c2408dec1c4e370"
+      ],
+      "error_strategy": "auto",
+      "fastq_list_fid": null,
+      "has_been_retried": true,
+      "passfail": null,
+      "passfail_seen": false,
+      "pipeline_id": "28cbc30b-01dd-4c47-b3ae-9a476e372973",
+      "retried_sgs": ["ID0001", "ID0002"],
+      "retry_generation": 0,
+      "sg_names": ["ID0001", "ID0002"],
+      "status": "FAILED",
+      "user_reference": "example_cohort-batch0000_a4803541-174c-4672-b5a2-c51f41b9213e_"
+    },
+    {
+      "analysis_output_folder_fid": null,
+      "ar_guid": "d9bf386f-53fa-479a-818b-58e50e59edae",
+      "batch_index": 1,
+      "cram_fids": [
+        "fil.bb294f5810b843ccc6e008dec23f702b",
+        "fil.040823510f5b44e56c2408dec1c4e370"
+      ],
+      "error_strategy": "auto",
+      "fastq_list_fid": null,
+      "has_been_retried": false,
+      "passfail": null,
+      "passfail_seen": false,
+      "pipeline_id": "e5c75418-0449-414b-add0-688cf4ed2b66",
+      "retried_sgs": [],
+      "retry_generation": 1,
+      "sg_names": ["ID0001", "ID0002"],
+      "status": "SUCCEEDED",
+      "user_reference": "example_cohort-batch0001_d9bf386f-53fa-479a-818b-58e50e59edae_"
+    }
+  ],
+  "n_batches": 2,
+  "schema_version": 1
+}

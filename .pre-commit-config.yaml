@@ -7,8 +7,10 @@ repos:
       - id: check-yaml
         exclude: '\.*conda/.*'
       - id: end-of-file-fixer
+        # Preserve the third-party ICA pipeline XML verbatim (Illumina export).
+        exclude: '^third_party/dragen378-custom-unified-f2-v1\.xml$'
       - id: trailing-whitespace
-        exclude: '\.txt$|\.tsv$'
+        exclude: '\.txt$|\.tsv$|^third_party/dragen378-custom-unified-f2-v1\.xml$'
       - id: check-case-conflict
       - id: check-merge-conflict
       - id: detect-private-key

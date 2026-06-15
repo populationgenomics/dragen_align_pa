@@ -1,82 +1,214 @@
+"""Delete cohort outputs + source CRAMs/FASTQs from ICA to release storage.
+
+Two project-scoped passes:
+- DRAGEN runs project: the cohort-level analysis output folder (cascades
+  to per-batch analyses, per-SG outputs, per-batch FASTQ list CSVs) + the
+  per-SG uploaded CRAM file IDs.
+- Supplier project (FASTQ mode only): the linked FASTQ file IDs from
+  `FastqIntakeQc`'s outpath.
+
+Each pass fires all deletes, sleeps `settle_seconds` (default 60) for ICA's
+async delete state machine, then verifies via `get_project_data` (404 or
+`status='DELETING'` is success). Failures across both passes are aggregated
+into a TSV log at `get_pipeline_path('{cohort}_delete_errors.log')`; on any
+failure the job raises so the cpg-flow stage shows red.
+"""
+
 import json
-from typing import Literal
+import time
+from dataclasses import dataclass
+from typing import Any, Literal
 
 import cpg_utils
+from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_data_api
 from icasdk.exceptions import ApiException, ApiValueError
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
+from dragen_align_pa.utils import get_pipeline_path
+
+_DELETING_STATUS = 'DELETING'
+_HTTP_NOT_FOUND = 404
+
+
+@dataclass(frozen=True)
+class DeleteFailure:
+    """One row in the failure log. `kind` is human-readable for the TSV."""
+
+    project_id: str
+    fid: str
+    kind: str
+    context: str
+
+    def as_tsv(self) -> str:
+        return f'{self.project_id}\t{self.fid}\t{self.kind}\t{self.context}'
+
+
+def _read_cohort_folder_fid(path: cpg_utils.Path) -> str:
+    with path.open() as fh:
+        return json.load(fh)['analysis_output_fid']
+
+
+def _read_cram_fids(paths: dict[str, cpg_utils.Path]) -> list[str]:
+    fids: list[str] = []
+    for path in paths.values():
+        with path.open() as fh:
+            fids.append(json.load(fh)['cram_fid'])
+    logger.info(f'Collected {len(fids)} CRAM FIDs across {len(paths)} SGs')
+    return fids
+
+
+def _read_fastq_fids(path: cpg_utils.Path) -> list[str]:
+    with path.open() as fh:
+        fids: list[str] = list(json.load(fh).keys())
+    logger.info(f'Collected {len(fids)} FASTQ FIDs from {path}')
+    return fids
+
+
+def _delete_and_verify(
+    api_instance: project_data_api.ProjectDataApi,
+    project_id: str,
+    fids: list[str],
+    settle_seconds: int,
+) -> list[DeleteFailure]:
+    """Fire all deletes, wait for ICA's async state machine, then verify each."""
+    if not fids:
+        return []
+
+    failures: list[DeleteFailure] = []
+    delete_errors: dict[str, str] = {}
+
+    for fid in fids:
+        path_params = {'projectId': project_id, 'dataId': fid}
+        try:
+            api_instance.delete_data(path_params=path_params)
+        except ApiValueError:
+            # icasdk returns None from a non-Optional signature; the call
+            # actually succeeded. Verify will confirm.
+            pass
+        except ApiException as e:
+            delete_errors[fid] = repr(e)
+
+    # ICA's delete is async — wait for state to advance to DELETING (or 404).
+    if settle_seconds > 0:
+        logger.info(f'Sleeping {settle_seconds}s for ICA delete propagation in project {project_id}')
+        time.sleep(settle_seconds)
+
+    for fid in fids:
+        path_params = {'projectId': project_id, 'dataId': fid}
+        try:
+            response = api_instance.get_project_data(path_params=path_params)
+            status = response.body['data']['details'].get('status', 'UNKNOWN')
+            if status == _DELETING_STATUS:
+                continue
+            failures.append(
+                DeleteFailure(
+                    project_id=project_id,
+                    fid=fid,
+                    kind=f'still_present (status={status})',
+                    context=delete_errors.get(fid, ''),
+                )
+            )
+        except ApiException as e:
+            if getattr(e, 'status', None) == _HTTP_NOT_FOUND:
+                continue
+            failures.append(
+                DeleteFailure(
+                    project_id=project_id,
+                    fid=fid,
+                    kind='verify_failed',
+                    context=f'{e!r} | delete: {delete_errors.get(fid, "")}',
+                )
+            )
+
+    return failures
+
+
+def _write_failure_log(cohort_name: str, failures: list[DeleteFailure]) -> cpg_utils.Path:
+    error_log_path = get_pipeline_path(filename=f'{cohort_name}_delete_errors.log')
+    with error_log_path.open('w') as fh:
+        fh.write('project_id\tfid\tkind\tcontext\n')
+        for f in failures:
+            fh.write(f.as_tsv() + '\n')
+    return error_log_path
+
+
+def _write_success_marker(
+    output_path: cpg_utils.Path,
+    cohort_name: str,
+    cohort_folder_fid: str,
+    cram_count: int,
+    fastq_count: int | None,
+) -> None:
+    payload: dict[str, Any] = {
+        'cohort_name': cohort_name,
+        'runs_project': {
+            'cohort_folder': cohort_folder_fid,
+            'cram_count': cram_count,
+        },
+    }
+    if fastq_count is not None:
+        payload['fastq_source_project'] = {'fastq_count': fastq_count}
+    with output_path.open('w') as fh:
+        json.dump(payload, fh)
 
 
 def run(
-    analysis_output_fids_paths: dict[str, cpg_utils.Path],
+    cohort_name: str,
+    output_path: cpg_utils.Path,
+    cohort_analysis_output_fid_path: cpg_utils.Path,
     cram_fid_paths_dict: dict[str, cpg_utils.Path] | None,
     fastq_ids_list_path: cpg_utils.Path | None,
+    settle_seconds: int = 60,
 ) -> None:
+    """Entry point — called from the `DeleteDataInIca` stage's PythonJob.
+
+    `settle_seconds` is a parameter (not a constant) so unit tests can pass 0
+    to skip the production 60s wait. Production callers always use the default.
+    """
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    project_id: str = secrets['projectID']
+    runs_project_id = secrets['projectID']
 
-    path_params: dict[str, str] = {'projectId': project_id}
-    fids: list[str] = []
+    cohort_folder_fid = _read_cohort_folder_fid(cohort_analysis_output_fid_path)
+    cram_fids = _read_cram_fids(cram_fid_paths_dict) if cram_fid_paths_dict else []
+    fastq_fids = _read_fastq_fids(fastq_ids_list_path) if fastq_ids_list_path else []
 
-    # 1. Collect all generated data FIDs (analysis output folders)
-    logger.info(f'Collecting {len(analysis_output_fids_paths)} analysis output folder FIDs...')
-    for sg_name, path in analysis_output_fids_paths.items():
-        try:
-            with path.open() as fid_handle:
-                fids.append(json.load(fid_handle)['analysis_output_fid'])
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f'Could not read analysis_output_fid for {sg_name}: {e}')
+    runs_project_fids = [cohort_folder_fid, *cram_fids]
 
-    # 2. Collect source CRAM FIDs if they exist
-    if cram_fid_paths_dict:
-        logger.info(f'Collecting {len(cram_fid_paths_dict)} source CRAM FIDs...')
-        for sg_name, path in cram_fid_paths_dict.items():
-            try:
-                with path.open() as fid_handle:
-                    fids.append(json.load(fid_handle)['cram_fid'])
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f'Could not read cram_fid for {sg_name}: {e}')
-
-    # 3. Collect source FASTQ FIDs if they exist
-    if fastq_ids_list_path:
-        logger.info(f'Collecting source FASTQ FIDs from {fastq_ids_list_path}...')
-        try:
-            with fastq_ids_list_path.open() as fastq_handle:
-                for line in fastq_handle:
-                    if line.strip():
-                        # File format is 'file_id\tfile_name'
-                        file_id = line.split()[0]
-                        fids.append(file_id)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f'Could not read FASTQ FIDs from {fastq_ids_list_path}: {e}')
-
-    # 4. Delete all collected FIDs
-    logger.info(f'Attempting to delete {len(fids)} total data objects from ICA...')
+    failures: list[DeleteFailure] = []
     with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
-        for f_id in fids:
-            request_path_params = path_params | {'dataId': f_id}
-            try:
-                # The API returns None (invalid as defined by the sdk) but deletes
-                # the data anyway.
-                # We replace contextlib.suppress with an explicit try/except
-                # to log the suppressed error.
-                logger.info(f'Requesting deletion of ICA FID: {f_id}')
-                api_instance.delete_data(  # type: ignore[ReportUnknownVariableType]
-                    path_params=request_path_params,  # type: ignore[ReportUnknownVariableType]
-                )
-            except ApiValueError as e:
-                logger.warning(
-                    f'Suppressed spurious ApiValueError for f_id {f_id}. '
-                    f'Deletion is expected to have proceeded. Error: {e}',
-                )
-            except ApiException as e:
-                logger.warning(
-                    f'API exception for {f_id}. Has it already been deleted? Error: {e}',
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.error(f'Unexpected error deleting {f_id}: {e}')
 
-    logger.info('ICA data deletion job complete.')
+        failures += _delete_and_verify(
+            api_instance=api_instance,
+            project_id=runs_project_id,
+            fids=runs_project_fids,
+            settle_seconds=settle_seconds,
+        )
+
+        if fastq_fids:
+            fastq_project_id: str = config_retrieve(
+                ['ica', 'projects', 'fastq_source_project_id'],
+            )
+            failures += _delete_and_verify(
+                api_instance=api_instance,
+                project_id=fastq_project_id,
+                fids=fastq_fids,
+                settle_seconds=settle_seconds,
+            )
+
+    if failures:
+        error_log_path = _write_failure_log(cohort_name, failures)
+        raise RuntimeError(
+            f'{len(failures)} FIDs failed cleanup; see {error_log_path}. '
+            f'Re-run the stage to retry (already-deleted items return 404 quickly).',
+        )
+
+    _write_success_marker(
+        output_path=output_path,
+        cohort_name=cohort_name,
+        cohort_folder_fid=cohort_folder_fid,
+        cram_count=len(cram_fids),
+        fastq_count=len(fastq_fids) if fastq_ids_list_path is not None else None,
+    )

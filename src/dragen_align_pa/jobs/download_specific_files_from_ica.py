@@ -2,21 +2,22 @@
 Download specific files (e.g., CRAM, GVCF) from ICA using the Python SDK.
 """
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import cpg_utils
 from cpg_flow.targets import SequencingGroup
-from cpg_utils.config import config_retrieve
+from cpg_utils.config import get_driver_image
 from google.cloud import storage
 from google.cloud.storage.bucket import Bucket
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
-from dragen_align_pa.constants import (
-    BUCKET_NAME,
-)
 from dragen_align_pa.file_types import FileTypeSpec
+from dragen_align_pa.utils import get_ica_sample_folder, initialise_python_job
+
+if TYPE_CHECKING:
+    from hailtop.batch.job import PythonJob
 
 
 def _orchestrate_download(
@@ -98,37 +99,31 @@ def _orchestrate_download(
 def run(
     sequencing_group: SequencingGroup,
     file_spec: FileTypeSpec,
-    pipeline_id_arguid_path: cpg_utils.Path,
+    ica_folder_path: str,
     gcs_output_dir: cpg_utils.Path,
 ) -> None:
     """
     The main Python function for the download job.
     Coordinates helper functions to list, filter, and stream files.
 
+    `ica_folder_path` is the pre-resolved ICA folder (caller resolves it via
+    `utils.get_ica_sample_folder`, which reads the per-SG state file and
+    builds `/{BUCKET}/{output_folder}/{cohort}/{user_reference}-{pipeline_id}/{sg}/`).
+
     `gcs_output_dir` is the directory the calling stage declared in `expected_outputs`
     (e.g. `outputs['gvcf'].parent`); both bucket and prefix are derived from it so the
     download lands exactly where the stage promised.
     """
     sg_name: str = sequencing_group.name
-    ica_analysis_output_folder: str = config_retrieve(
-        ['ica', 'data_prep', 'output_folder'],
-    )
-    logger.info(f'Downloading {file_spec.gcs_prefix} data for {sg_name}.')
-
     main_file_name: str = f'{sg_name}.{file_spec.data_suffix}'
     index_file_name: str = f'{sg_name}.{file_spec.index_suffix}'
     md5_file_name: str = f'{sg_name}.{file_spec.data_suffix}.{file_spec.md5_suffix}'
     md5_gcp_name: str = f'{sg_name}.{file_spec.data_suffix}.md5sum'  # Always save as .md5sum in GCS
 
-    # --- 2. Get Pipeline ID and AR GUID ---
-    pipeline_id, ar_guid = ica_utils.get_pipeline_details(pipeline_id_arguid_path)
-    base_ica_folder_path = (
-        f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{sg_name}/{sg_name}{ar_guid}-{pipeline_id}/{sg_name}/'
-    )
-    logger.info(f'Targeting ICA folder: {base_ica_folder_path}')
-
     # --- 3. Setup GCS Client ---
-    gcs_output_bucket_name, _, gcs_output_path_prefix = str(gcs_output_dir).removeprefix('gs://').partition('/')
+    gcs_output_bucket_name, _, gcs_output_path_prefix = (
+        str(gcs_output_dir).removeprefix('gs://').partition('/')
+    )
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(gcs_output_bucket_name)
 
@@ -141,7 +136,7 @@ def run(
         _orchestrate_download(
             api_instance=api_instance,
             path_parameters=path_parameters,
-            base_ica_folder_path=base_ica_folder_path,
+            base_ica_folder_path=ica_folder_path,
             gcs_bucket=gcs_bucket,
             gcs_output_path_prefix=gcs_output_path_prefix,
             main_file_name=main_file_name,
@@ -151,3 +146,58 @@ def run(
         )
 
     logger.info(f'Successfully downloaded and verified all files for {sg_name}.')
+
+
+def resolve_and_run(
+    sequencing_group: SequencingGroup,
+    file_spec: FileTypeSpec,
+    pipeline_id_arguid_path: cpg_utils.Path,
+    cohort_name: str,
+    gcs_output_dir: cpg_utils.Path,
+) -> None:
+    """Resolve the SG's batched ICA folder from the per-SG state file, then download.
+
+    Wraps `get_ica_sample_folder` + `run` so callers don't need to thread the
+    folder path through themselves.
+    """
+    ica_folder_path = get_ica_sample_folder(
+        pipeline_id_arguid_path=pipeline_id_arguid_path,
+        sg_name=sequencing_group.name,
+        cohort_name=cohort_name,
+    )
+    run(
+        sequencing_group=sequencing_group,
+        file_spec=file_spec,
+        ica_folder_path=ica_folder_path,
+        gcs_output_dir=gcs_output_dir,
+    )
+
+
+def make_download_job(
+    job_name: str,
+    sequencing_group: SequencingGroup,
+    file_spec: FileTypeSpec,
+    pipeline_id_arguid_path: cpg_utils.Path,
+    cohort_name: str,
+    gcs_output_dir: cpg_utils.Path,
+) -> 'PythonJob':
+    """Build a Hail PythonJob that resolves the SG's ICA folder and downloads `file_spec`.
+
+    The three Download*FromIca stages share identical job-construction boilerplate
+    (image, storage, memory, spot, then `resolve_and_run`); this is the single place
+    that boilerplate lives.
+    """
+    job = initialise_python_job(job_name=job_name, target=sequencing_group, tool_name='ICA-Python')
+    job.image(image=get_driver_image())
+    job.storage('8Gi')
+    job.memory('8Gi')
+    job.spot(is_spot=False)
+    job.call(
+        resolve_and_run,
+        sequencing_group=sequencing_group,
+        file_spec=file_spec,
+        pipeline_id_arguid_path=pipeline_id_arguid_path,
+        cohort_name=cohort_name,
+        gcs_output_dir=gcs_output_dir,
+    )
+    return job

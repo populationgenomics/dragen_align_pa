@@ -6,6 +6,7 @@ and ica_cli modules.
 
 import hashlib
 import json
+import time
 from typing import TYPE_CHECKING
 
 import cpg_utils
@@ -13,7 +14,9 @@ import icasdk
 import requests
 from google.cloud import exceptions as gcs_exceptions
 from icasdk.model.create_data import CreateData
+from icasdk.model.data_id_or_path_list import DataIdOrPathList
 from loguru import logger
+from tenacity import retry, retry_always, stop_after_attempt, wait_exponential
 
 from dragen_align_pa import ica_api_utils
 
@@ -25,7 +28,7 @@ if TYPE_CHECKING:
 def create_upload_object_id(
     api_instance: 'project_data_api.ProjectDataApi',
     path_params: dict[str, str],
-    sg_name: str,
+    folder_name: str,
     file_name: str,
     folder_path: str,
     object_type: str,
@@ -36,8 +39,8 @@ def create_upload_object_id(
     Args:
         api_instance (project_data_api.ProjectDataApi): An instance of the ProjectDataApi
         path_params (dict[str, str]): A dict with the projectId
-        sg_name (str): The name of the sequencing group
-        file_name (str): The name of the file to upload e.g. SYNxxxx.CRAM
+        folder_name (str): Name used when creating a FOLDER object (ignored for FILE)
+        file_name (str): The name of the file to upload e.g. CPGxxxx.CRAM
         folder_path (str): The base path to the object in ICA to create
         object_type (str): The type of the object to create. Must be one of ['FILE', 'FOLDER']
 
@@ -61,7 +64,6 @@ def create_upload_object_id(
         logger.info(f'Found existing {object_type} with ID {object_id} and status {status}')
         return object_id, status
 
-    logger.info(f'Creating a new {object_type} object at {folder_path}/{file_name}')
     try:
         if object_type == 'FILE':
             body = CreateData(
@@ -71,7 +73,7 @@ def create_upload_object_id(
             )
         else:
             body = CreateData(
-                name=sg_name,
+                name=folder_name,
                 folderPath=f'{folder_path}/',
                 dataType=object_type,
             )
@@ -128,6 +130,39 @@ def get_md5_from_ica(
         raise
 
 
+def batch_create_download_urls(
+    api_instance: 'project_data_api.ProjectDataApi',
+    path_parameters: dict[str, str],
+    file_ids: list[str],
+) -> dict[str, str]:
+    """Mint pre-signed download URLs for many files in ONE ICA API call.
+
+    Uses the batch `:createDownloadUrls` endpoint instead of one
+    `:createDownloadUrl` POST per file, collapsing the per-file rate-limited
+    call volume — the dominant 429 source when a folder has many outputs —
+    from N to 1. (A pre-signed URL is per-object, so this returns N URLs in
+    one response, not a single folder URL.)
+
+    Returns a `{dataId: url}` map; the response is keyed by `dataId` so callers
+    match URLs back to the file IDs they already hold. An empty `file_ids`
+    short-circuits without an API call.
+
+    Goes through `ica_retry`, so a transient 429/503 on the batch mint is
+    absorbed like every other data-plane call.
+    """
+    if not file_ids:
+        return {}
+    response = ica_api_utils.ica_retry(
+        api_instance.create_download_urls_for_data,
+        body=DataIdOrPathList(dataIds=file_ids),
+        path_params=path_parameters,  # pyright: ignore[reportArgumentType]
+    )
+    return {
+        item['dataId']: item['url']  # pyright: ignore[reportUnknownVariableType]
+        for item in response.body['items']  # pyright: ignore[reportUnknownVariableType]
+    }
+
+
 def stream_ica_file_to_gcs(
     api_instance: 'project_data_api.ProjectDataApi',
     path_parameters: dict[str, str],
@@ -136,10 +171,15 @@ def stream_ica_file_to_gcs(
     gcs_bucket: 'Bucket',
     gcs_prefix: str,
     expected_md5_hash: str | None = None,
+    download_url: str | None = None,
 ) -> None:
     """
     Streams a file from ICA to GCS and optionally verifies its MD5.
     (Used by download_specific_files_from_ica.py and download_ica_pipeline_outputs.py)
+
+    If `download_url` is supplied (e.g. pre-minted in bulk via
+    `batch_create_download_urls`), the per-file `:createDownloadUrl` call is
+    skipped. Otherwise a URL is minted for this single file.
     """
     gcs_blob_path = f'{gcs_prefix}/{file_name}'
     blob = gcs_bucket.blob(gcs_blob_path)
@@ -150,20 +190,22 @@ def stream_ica_file_to_gcs(
     )
 
     try:
-        # 1. Get pre-signed URL
-        url_response = ica_api_utils.ica_retry(
-            api_instance.create_download_url_for_data,  # pyright: ignore[reportUnknownVariableType]
-            path_params=path_parameters | {'dataId': file_id},  # pyright: ignore[reportArgumentType]
-        )
-        download_url = url_response.body['url']  # pyright: ignore[reportUnknownVariableType]
+        # 1. Get pre-signed URL (mint per-file only if one wasn't pre-supplied)
+        resolved_url: str = download_url  # type: ignore[assignment]
+        if download_url is None:
+            url_response = ica_api_utils.ica_retry(
+                api_instance.create_download_url_for_data,  # pyright: ignore[reportUnknownVariableType]
+                path_params=path_parameters | {'dataId': file_id},  # pyright: ignore[reportArgumentType]
+            )
+            resolved_url = url_response.body['url']  # pyright: ignore[reportUnknownVariableType]
 
         # 2. Download and upload as a stream
         md5_hasher = hashlib.md5()  # noqa: S324
         with requests.get(
-            download_url,  # pyright: ignore[reportUnknownArgumentType]
+            resolved_url,
             stream=True,
             timeout=600,
-        ) as r:  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+        ) as r:  # pyright: ignore[reportUnknownVariableType]
             r.raise_for_status()
 
             # Stream directly to GCS
@@ -208,92 +250,106 @@ def stream_ica_file_to_gcs(
         raise
 
 
-def list_and_filter_ica_files(
+def list_ica_files(
     api_instance: 'project_data_api.ProjectDataApi',
     path_parameters: dict[str, str],
     base_ica_folder_path: str,
+    *,
+    recursive: bool = False,
 ) -> list[tuple[str, str]]:
-    """
-    Lists all files in the ICA folder, handles pagination,
-    and filters out CRAMs/GVCFs.
-    (Used by download_ica_pipeline_outputs.py)
-    """
-    files_to_download: list[tuple[str, str]] = []
-    page_token: str | None = None
-    logger.info('Listing files in ICA folder...')
+    """List files under an ICA folder. Pagination is handled internally.
 
-    while True:
-        query_params = {  # pyright: ignore[reportUnknownVariableType]
-            'parentFolderPath': base_ica_folder_path,
-            'type': 'FILE',
-            'pageSize': '1000',
-        }
-        if page_token:
-            query_params['pageToken'] = page_token
+    Returns ``(name_or_relative_path, file_id)`` tuples.
 
-        try:
+    With ``recursive=False`` (default), lists only files directly inside
+    ``base_ica_folder_path``; the first tuple element is the leaf file
+    name. With ``recursive=True``, walks subfolders and returns relative
+    paths (e.g. ``'report_files/samples/foo.csv'``) — pass the relative
+    path directly to ``stream_ica_file_to_gcs`` as ``file_name`` and the
+    GCS object key preserves the nested layout.
+
+    No extension filtering — callers compose any filter they need (e.g.
+    ``[(n, f) for n, f in list_ica_files(...) if not n.endswith(...)]``).
+
+    Folder traversal uses separate ``type=FOLDER`` queries — the ICA SDK's
+    ``get_project_data_list`` does not expose a recursive flag. The walk
+    is not transactional: if a subfolder query fails after some files
+    have been collected, those collected entries are discarded and the
+    ``icasdk.ApiException`` propagates. Callers should re-run on failure.
+    """
+    base = base_ica_folder_path.rstrip('/') + '/'
+
+    def _list_children(parent: str, type_: str) -> list[dict]:
+        items: list[dict] = []
+        page_token: str | None = None
+        while True:
+            query_params: dict[str, object] = {
+                'parentFolderPath': parent,
+                'type': type_,
+                'pageSize': '1000',
+            }
+            if page_token:
+                query_params['pageToken'] = page_token
             api_response = ica_api_utils.ica_retry(
                 api_instance.get_project_data_list,  # pyright: ignore[reportUnknownVariableType]
                 path_params=path_parameters,  # pyright: ignore[reportArgumentType]
                 query_params=query_params,  # type: ignore[reportArgumentType]
             )
-        except icasdk.ApiException as e:
-            logger.error(
-                f'Exception when calling ProjectDataApi->get_project_data_list: {e}',
-            )
-            raise
+            items.extend(api_response.body.get('items', []))  # pyright: ignore[reportUnknownArgumentType]
+            page_token = api_response.body.get('nextPageToken')  # pyright: ignore[reportUnknownVariableType]
+            if not page_token:
+                break
+        return items
 
-        # --- Filter files ---
-        for item in api_response.body['items']:  # pyright: ignore[reportUnknownVariableType]
+    files: list[tuple[str, str]] = []
+
+    def _walk(parent: str, relative_prefix: str) -> None:
+        for item in _list_children(parent, 'FILE'):
             details = item['data'].get('details', {})  # pyright: ignore[reportUnknownVariableType]
-            file_name = details.get('name')  # pyright: ignore[reportUnknownVariableType]
-            file_id = item['data'].get('id')  # pyright: ignore[reportUnknownVariableType]
-
-            if not file_name or not file_id:
-                logger.warning(f'Skipping item with missing name or id: {item}')
+            name = details.get('name')  # pyright: ignore[reportUnknownVariableType]
+            fid = item['data'].get('id')  # pyright: ignore[reportUnknownVariableType]
+            if not name or not fid:
+                logger.warning(f'Skipping item with missing name or id under {parent}: {item}')
                 continue
+            files.append((f'{relative_prefix}{name}', fid))  # pyright: ignore[reportUnknownArgumentType]
 
-            # Exclude CRAMs, GVCFs, and their indices
-            if not file_name.endswith(
-                ('.cram', '.cram.crai', '.gvcf.gz', '.gvcf.gz.tbi'),
-            ):
-                files_to_download.append(
-                    (file_name, file_id),
-                )  # pyright: ignore[reportUnknownArgumentType]
+        if not recursive:
+            return
 
-        page_token = api_response.body.get(
-            'nextPageToken',
-        )  # pyright: ignore[reportUnknownVariableType]
-        if not page_token:
-            break  # Exit loop if no more pages
+        for item in _list_children(parent, 'FOLDER'):
+            details = item['data'].get('details', {})  # pyright: ignore[reportUnknownVariableType]
+            name = details.get('name')  # pyright: ignore[reportUnknownVariableType]
+            if not name:
+                continue
+            _walk(f'{parent}{name}/', f'{relative_prefix}{name}/')
 
-    logger.info(f'Found {len(files_to_download)} files to download.')
-    return files_to_download
+    _walk(base, '')
+    logger.info(f'List under {base} (recursive={recursive}) found {len(files)} files.')
+    return files
 
 
 def check_file_existence(
     api_instance: 'project_data_api.ProjectDataApi',
     path_params: dict[str, str],
     ica_folder_path: str,
-    cram_name: str,
+    file_name: str,
 ) -> str | None:
     """
-    Checks if the CRAM file already exists in ICA and returns its status.
+    Checks if the file already exists in ICA and returns its status.
     (Used by upload_data_to_ica.py)
     """
-    logger.info(f'Checking existence of {cram_name}...')
-    cram_data = ica_api_utils.get_file_details_from_ica(
+    file_data = ica_api_utils.get_file_details_from_ica(
         api_instance,
         path_params,
         ica_folder_path,
-        cram_name,
+        file_name,
     )
-    if cram_data:
-        return cram_data['details']['status']  # pyright: ignore[reportUnknownVariableType]
+    if file_data:
+        return file_data['details']['status']  # pyright: ignore[reportUnknownVariableType]
     return None
 
 
-def finalize_upload(
+def finalise_upload(
     api_instance: 'project_data_api.ProjectDataApi',
     path_params: dict[str, str],
     paths: dict[str, str],
@@ -303,7 +359,12 @@ def finalize_upload(
     Re-fetches the file ID from ICA and writes the output JSON file.
     (Used by upload_data_to_ica.py)
     """
-    logger.info(f'Re-fetching file ID for {paths["sg_name"]}...')
+    wait_for_file_available(
+        api_instance=api_instance,
+        path_params=path_params,
+        file_name=paths['cram_name'],
+        folder_path=paths['ica_folder_path'],
+    )
     cram_data = ica_api_utils.get_file_details_from_ica(
         api_instance,
         path_params,
@@ -318,8 +379,6 @@ def finalize_upload(
             f'Failed to find file ID in ICA after upload for {paths["sg_name"]}.',
         )
 
-    logger.info(f'CRAM FID: {cram_fid}')
-
     # Write only the CRAM FID to the output JSON
     output_data = {'cram_fid': cram_fid}
     with cpg_utils.to_path(output_path_str).open('w') as f:
@@ -330,14 +389,31 @@ def finalize_upload(
     )
 
 
-def get_pipeline_details(
-    pipeline_id_arguid_path: cpg_utils.Path,
-) -> tuple[str, str]:
+@retry(
+    retry=retry_always,  # ICA API exceptions are opaque and hard to pin down
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    reraise=True,
+)
+def wait_for_file_available(
+    api_instance: 'project_data_api.ProjectDataApi',
+    path_params: dict[str, str],
+    file_name: str,
+    folder_path: str,
+) -> bool:
     """
-    Loads pipeline ID and AR GUID from the provided path.
+    Files in ICA don't become available immediately after upload.
+    This function guards against that by retrying the file existence check up to 4 times.
+    It has an initial 2 second sleep to guard against the first check failing due to race conditions.
     """
-    with pipeline_id_arguid_path.open('r') as f:
-        data = json.load(f)
-        pipeline_id = data['pipeline_id']
-        ar_guid = f'_{data["ar_guid"]}_'
-    return pipeline_id, ar_guid
+    time.sleep(2)  # Guard against race condition where file is not yet available
+    result: str | None = check_file_existence(
+        api_instance=api_instance,
+        path_params=path_params,
+        ica_folder_path=folder_path,
+        file_name=file_name,
+    )
+    if not result or result != 'AVAILABLE':
+        raise FileNotFoundError(f'File: {file_name} not found at path: {folder_path} immediately after calling upload')
+    logger.info(f'File: {file_name} is available (status: {result})')
+    return True

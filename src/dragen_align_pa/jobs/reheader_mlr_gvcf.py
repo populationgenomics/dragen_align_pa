@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 from cpg_utils.config import config_retrieve, image_path
 from cpg_utils.hail_batch import Batch, get_batch
@@ -8,6 +8,7 @@ from cpg_utils.hail_batch import Batch, get_batch
 if TYPE_CHECKING:
     import cpg_utils
     from hailtop.batch.job import BashJob
+    from hailtop.batch.resource import ResourceGroup
 
 
 def reheader_mlr_gvcf(
@@ -24,9 +25,16 @@ def reheader_mlr_gvcf(
     job.image(image_path('bcftools', '1.23-2'))
     job.storage(storage=config_retrieve(['workflow', 'reheader_mlr_gvcf', 'storage'], '16GB'))
 
-    gvcf_input_group = b.read_input_group(
-        base_gvcf=str(base_gvcf_path),
-        recal_gvcf=str(recal_gvcf_path),
+    # Hail Batch's b.read_input_group / job.declare_resource_group return a
+    # ResourceGroup at runtime, but the static return types resolve to the
+    # Resource base which lacks __getitem__. Cast so mypy permits the
+    # bracket-style key access used in the f-string below.
+    gvcf_input_group = cast(
+        'ResourceGroup',
+        b.read_input_group(
+            base_gvcf=str(base_gvcf_path),
+            recal_gvcf=str(recal_gvcf_path),
+        ),
     )
 
     job.declare_resource_group(
@@ -36,9 +44,7 @@ def reheader_mlr_gvcf(
         }
     )
 
-    # mypy 1.19 narrows job.<resource_group_name> to the base Resource type,
-    # which isn't statically indexable; the runtime object is a ResourceGroup.
-    reheadered_gvcf_outputs: Any = job.reheadered_gvcf
+    reheadered_gvcf_outputs = cast('ResourceGroup', job.reheadered_gvcf)
 
     job.command(
         f"""

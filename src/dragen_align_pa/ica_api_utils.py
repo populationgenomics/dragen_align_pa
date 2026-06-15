@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, TypeVar
 
 import icasdk
 from cpg_utils.config import config_retrieve
+from google.api_core import exceptions as gax_exceptions
 from google.cloud import secretmanager
 from icasdk import ApiClient, Configuration
 from icasdk.apis.tags import project_analysis_api, project_data_api
@@ -21,8 +22,11 @@ from loguru import logger
 from tenacity import (
     RetryCallState,
     Retrying,
+    retry,
     retry_if_exception,
+    retry_if_exception_type,
     stop_after_attempt,
+    wait_exponential,
     wait_fixed,
     wait_random_exponential,
 )
@@ -47,6 +51,15 @@ _DEFAULT_ICA_MAX_RETRIES: Final = 10
 
 # --- Secret Management & Auth ---
 
+# Secret Manager occasionally returns gRPC 504 (DeadlineExceeded) on transient
+# load spikes; GAPIC's default retry policy does NOT cover DeadlineExceeded,
+# so a single blip propagates and crashes whichever job is calling. We retry
+# both that and ServiceUnavailable (gRPC UNAVAILABLE / HTTP 503).
+_TRANSIENT_SECRET_MANAGER_EXCEPTIONS: Final = (
+    gax_exceptions.DeadlineExceeded,
+    gax_exceptions.ServiceUnavailable,
+)
+
 
 @functools.cache
 def _secret_client() -> secretmanager.SecretManagerServiceClient:
@@ -54,11 +67,30 @@ def _secret_client() -> secretmanager.SecretManagerServiceClient:
     return secretmanager.SecretManagerServiceClient()
 
 
+@functools.lru_cache(maxsize=1)
+@retry(
+    retry=retry_if_exception_type(_TRANSIENT_SECRET_MANAGER_EXCEPTIONS),
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    reraise=True,
+)
 def get_ica_secrets() -> dict[Literal['projectID', 'apiKey'], str]:
-    """Gets the project ID and API key used to interact with ICA
+    """Gets the project ID and API key used to interact with ICA.
+
+    Cached for the lifetime of the process (the secret payload doesn't
+    change during a run). The previous behaviour fetched fresh on every
+    monitor-loop poll and every batch submission, which meant a single
+    transient Secret Manager 504 could tear down a long-running monitor
+    job. With the cache, only the very first call hits Secret Manager; all
+    subsequent calls return the cached dict without an RPC.
+
+    Retries transient Secret Manager failures (DeadlineExceeded /
+    ServiceUnavailable) with exponential backoff before giving up. Other
+    error classes (e.g. PermissionDenied, NotFound) propagate immediately
+    — they indicate IAM / config problems that retrying won't fix.
 
     Returns:
-        dict[str, str]: A dictionary with the keys projectId and apiKey
+        dict[str, str]: A dictionary with the keys projectID and apiKey
     """
     client = _secret_client()
     secret_path: str = client.secret_version_path(
@@ -146,12 +178,13 @@ def _ica_retrying() -> Retrying:
         stop=stop_after_attempt(max_retries + 1),
         # wait_random_exponential gives a fully-randomised exponential backoff
         # (each wait is random in [0, min(2^attempt, max)]), which desynchronises
-        # concurrent retries against a shared rate limit. The additive
-        # wait_fixed(2) is a hard 2s floor: wait_random_exponential can otherwise
-        # pick a near-zero first wait, letting a worker hammer ICA instantly
-        # after a 429. NB: worst-case backoff scales with max_retries (~32s per
-        # retry at the cap), so a large max_retries can exceed a tight polling
-        # cycle — tune both together.
+        # concurrent retries against a shared rate limit — non-negotiable at
+        # 16-wide fan-out, where lockstep backoff is a self-inflicted second
+        # wave. The additive wait_fixed(2) is a hard 2s floor: wait_random_exponential
+        # can otherwise pick a near-zero first wait, letting a worker hammer ICA
+        # instantly after a 429. NB: worst-case backoff scales with max_retries
+        # (~32s per retry at the cap), so a large max_retries can exceed a tight
+        # polling cycle (e.g. MLR's 330s) — tune both together.
         wait=wait_random_exponential(multiplier=1, min=2, max=30) + wait_fixed(2),
         before_sleep=_log_ica_retry,
         reraise=True,
@@ -178,7 +211,7 @@ def check_ica_pipeline_status(
     api_instance: project_analysis_api.ProjectAnalysisApi,
     path_params: dict[str, str],
 ) -> str:
-    """Check the status of an ICA pipeline via a pipeline ID.
+    """Check the status of an ICA pipeline via a pipeline ID
 
     Transient ICA 429/503 errors are retried with jittered exponential backoff
     (see `ica_retry`); other errors propagate on the first occurrence.
@@ -238,9 +271,6 @@ def check_object_already_exists(
             'filename': [file_name],
             'filenameMatchMode': 'EXACT',
         } | query_params
-    logger.info(
-        f'Checking to see if the {object_type} object already exists at {folder_path}/{file_name}',
-    )
     try:
         api_response = ica_retry(
             api_instance.get_project_data_list,  # type: ignore[ReportUnknownVariableType]
@@ -248,7 +278,7 @@ def check_object_already_exists(
             query_params=query_params,  # type: ignore[ReportUnknownVariableType]
         )  # type: ignore[ReportUnknownVariableType]
 
-        if len(api_response.body['items']) == 0:  # type: ignore[ReportUnknownVariableType]
+        if not api_response.body['items']:  # type: ignore[ReportUnknownVariableType]
             return None
 
         object_data = api_response.body['items'][0]['data']  # pyright: ignore[reportUnknownVariableType]
@@ -281,7 +311,6 @@ def find_file_id_by_name(
     Finds a specific file ID in an ICA folder by its exact name.
     (Used by download_specific_files_from_ica.py)
     """
-    logger.info(f"Searching for file '{file_name}' in '{parent_folder_path}'...")
     try:
         api_response = ica_retry(
             api_instance.get_project_data_list,  # pyright: ignore[reportUnknownVariableType]
@@ -295,7 +324,7 @@ def find_file_id_by_name(
         )
 
         items = api_response.body.get('items', [])  # pyright: ignore[reportUnknownVariableType]
-        if len(items) == 0:  # pyright: ignore[reportUnknownArgumentType]
+        if not items:  # pyright: ignore[reportUnknownArgumentType]
             raise FileNotFoundError(
                 f'File not found in ICA: {parent_folder_path}{file_name}',
             )
@@ -308,7 +337,6 @@ def find_file_id_by_name(
         if not file_id:
             raise ValueError(f"Found file item for '{file_name}' but it has no ID.")
 
-        logger.info(f'Found file ID: {file_id}')
         return file_id  # pyright: ignore[reportUnknownVariableType]
 
     except icasdk.ApiException as e:
@@ -343,7 +371,7 @@ def get_file_details_from_ica(
             query_params=query_params,
         )
         items = api_response.body.get('items', [])
-        if len(items) > 0:
+        if items:
             return items[0]['data']  # pyright: ignore[reportUnknownVariableType]
 
     except icasdk.ApiException as e:
