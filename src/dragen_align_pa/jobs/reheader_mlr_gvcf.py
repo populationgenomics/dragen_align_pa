@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from cpg_utils.config import image_path
+from cpg_utils.config import config_retrieve, image_path
 from cpg_utils.hail_batch import Batch, get_batch
 
 if TYPE_CHECKING:
@@ -23,7 +23,7 @@ def reheader_mlr_gvcf(
     b: Batch = get_batch()
     job: BashJob = b.new_bash_job(name='reheader_mlr_gvcf')
     job.image(image_path('bcftools', '1.23-2'))
-    job.storage(storage='16GB')
+    job.storage(storage=config_retrieve(['workflow', 'reheader_mlr_gvcf', 'storage'], '16GB'))
 
     # Hail Batch's b.read_input_group / job.declare_resource_group return a
     # ResourceGroup at runtime, but the static return types resolve to the
