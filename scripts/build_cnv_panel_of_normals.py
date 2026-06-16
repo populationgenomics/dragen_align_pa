@@ -1,10 +1,9 @@
 """
 Build a DRAGEN CNV Panel of Normals (PON) from already-run target counts.
 
-This is a STANDALONE, one-off operator script — NOT a cpg_flow pipeline stage.
-It does no CNV math. DRAGEN does all panel normalisation itself at run time
-(per-target median across the listed samples, preconditioning, tangent
-normalisation). DRAGEN does NOT accept a pre-computed/merged PON file — its
+This is a STANDALONE, one-off operator script.
+It does no CNV math. DRAGEN does all panel normalisation itself at run time. 
+DRAGEN does NOT accept a pre-computed/merged PON file, its
 "PON" is simply a list of per-sample gc-corrected target-counts files.
 
 So this script's whole job is data management, in five steps, per panel:
@@ -31,30 +30,18 @@ WHY BASENAMES IN THE LIST (not ICA paths or file IDs):
     count files are passed to the analysis as data inputs (by file ID), land
     next to the list in cwd, and the list refers to them by bare basename.
 
-WIRING STILL TO DO (downstream of this script — the part the test exercises):
+WIRING STILL TO DO (downstream of this script, the part the test exercises):
     The submitter (`jobs/submit_dragen_batch.py`) has no `cnv_normals_list` /
     `cnv_normals_files` parameterCode yet. Passing the list + the count files
     into the DRAGEN ICA analysis (and adding `--cnv-normals-list` /
     `--cnv-input` to the DRAGEN args) is a separate pipeline change. This
     script only produces and registers the artifacts that change will consume.
 
-SCOPE NOTE (wiring vs correctness):
-    For a wiring test, scientific validity does not matter (per Alex). A small
-    panel of any sex, even WGS counts standing in for WES, is fine — the goal
-    is only that DRAGEN accepts the list, resolves the files, and the CNV stage
-    completes. Production correctness (>=50 samples, sex-matched panels per
-    capture kit, identical interval settings, gc-corrected-vs-plain choice) is
-    NOT enforced here — see docs/panel_of_normals_plan.md.
-
-Run inside the project Docker image (icasdk is not available locally) with ICA
-auth available the same way the pipeline jobs get it (cpg-common secret).
-
 Example (bioheart WGS wiring panel from 4 of the 5 COH2308 SGs; 5th is the case):
 
     python scripts/build_cnv_panel_of_normals.py \\
         --panel-name bioheart-wgs-wiring-20260611 \\
         --sequencing-groups CPG305326 CPG305334 CPG305342 CPG305359 \\
-        --gcs-metrics-prefix gs://cpg-bioheart-test/ica/dragen_3_7_8/output/dragen_metrics \\
         --ica-reference-folder /references/exo_CNV_panels_normals/bioheart-wgs-wiring-20260611 \\
         --provenance-prefix gs://cpg-bioheart-test/ica/dragen_3_7_8/pon_provenance
 """
@@ -86,7 +73,7 @@ def _gcs_counts_path(gcs_metrics_prefix: str, sg: str, counts_suffix: str) -> st
 
 
 def _preserve_to_provenance(gcs_counts_path: str, provenance_prefix: str, panel_name: str, basename: str) -> str:
-    """Step 2: copy the counts file to a durable provenance location. Returns the dest path."""
+    """Copy the counts file to a durable provenance location. Returns the dest path."""
     dest = f'{provenance_prefix.rstrip("/")}/{panel_name}/{basename}'
     utils.run_subprocess_with_log(
         ['gcloud', 'storage', 'cp', gcs_counts_path, dest],
@@ -101,9 +88,9 @@ def _upload_counts_to_ica(
     gcs_counts_path: str,
     ica_reference_folder: str,
     basename: str,
-    local_dir: str,
+    ica_local_dir: str,
 ) -> str:
-    """Steps 3: download counts from GCS, upload to the ICA reference folder, return its file ID."""
+    """Download counts from GCS, upload to the ICA reference folder, return its file ID."""
     ica_folder_path = ica_reference_folder.rstrip('/') + '/'
     utils.validate_cli_path_input(gcs_counts_path, 'gcs_counts_path')
     utils.validate_cli_path_input(ica_folder_path, 'ica_folder_path')
@@ -114,16 +101,12 @@ def _upload_counts_to_ica(
         logger.info(f'{basename} already AVAILABLE in ICA reference folder; reusing {existing["id"]}.')
         return existing['id']
 
-    local_path = os.path.join(local_dir, basename)
+    local_path = os.path.join(ica_local_dir, basename)
     utils.run_subprocess_with_log(
         ['gcloud', 'storage', 'cp', gcs_counts_path, local_path],
         f'Download {basename} from GCS',
     )
     ica_cli_utils.upload_local_file(local_path, ica_folder_path)
-    try:
-        os.remove(local_path)
-    except OSError as e:
-        logger.warning(f'Could not remove local file {local_path}: {e}')
 
     return _require_file_id(api_instance, path_params, ica_folder_path, basename)
 
@@ -144,7 +127,6 @@ def _require_file_id(
 def build_panel(
     panel_name: str,
     sequencing_groups: list[str],
-    gcs_metrics_prefix: str,
     ica_reference_folder: str,
     provenance_prefix: str | None,
     counts_suffix: str,
@@ -155,31 +137,35 @@ def build_panel(
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     path_params = {'projectId': secrets['projectID']}
 
+    metrics_prefix = str(utils.get_output_path('dragen_metrics'))
+
     file_ids: dict[str, str] = {}
 
     # The icav2 CLI (used for uploads) needs to be authenticated once up front.
     ica_cli_utils.authenticate_ica_cli()
 
-    with ica_api_utils.get_ica_api_client() as api_client, tempfile.TemporaryDirectory() as local_dir:
+    with ica_api_utils.get_ica_api_client() as api_client, tempfile.TemporaryDirectory() as ica_local_dir:
         api_instance = project_data_api.ProjectDataApi(api_client)
 
         for sg in sequencing_groups:
             basename = _counts_basename(sg, counts_suffix)
-            gcs_counts_path = _gcs_counts_path(gcs_metrics_prefix, sg, counts_suffix)
+            gcs_counts_path = _gcs_counts_path(metrics_prefix, sg, counts_suffix)
             logger.info(f'[{panel_name}] {sg}: {gcs_counts_path}')
 
-            # Step 2 — preserve (optional; skipped if no provenance prefix given).
             if provenance_prefix:
                 _preserve_to_provenance(gcs_counts_path, provenance_prefix, panel_name, basename)
 
-            # Step 3 — persist to ICA reference storage.
             file_ids[basename] = _upload_counts_to_ica(
-                api_instance, path_params, gcs_counts_path, ica_reference_folder, basename, local_dir,
+                api_instance=api_instance,
+                path_params=path_params, 
+                gcs_counts_path=gcs_counts_path, 
+                ica_reference_folder=ica_reference_folder, 
+                basename=basename, 
+                ica_local_dir=ica_local_dir,
             )
 
-        # Step 4 — write the list (basenames, one per line) and upload it.
         list_basename = f'{panel_name}.normals.txt'
-        list_local = os.path.join(local_dir, list_basename)
+        list_local = os.path.join(ica_local_dir, list_basename)
         with open(list_local, 'w') as fh:
             for sg in sequencing_groups:
                 fh.write(_counts_basename(sg, counts_suffix) + '\n')
@@ -191,7 +177,7 @@ def build_panel(
 
 
 def _print_registration_snippet(panel_name: str, file_ids: dict[str, str]) -> None:
-    """Step 5 — emit a paste-ready ICA_FILE_IDS block for constants.py."""
+    """Emit a paste-ready ICA_FILE_IDS block for constants.py."""
     logger.info(
         f'Panel "{panel_name}" built. Add these to dragen_align_pa.constants.ICA_FILE_IDS '
         f'so the submitter can resolve them by name:',
@@ -207,11 +193,6 @@ def main() -> None:
     parser.add_argument('--panel-name', required=True, help='Panel label, used for the list filename and folder.')
     parser.add_argument(
         '--sequencing-groups', required=True, nargs='+', help='CPG sequencing-group IDs to include as normals.',
-    )
-    parser.add_argument(
-        '--gcs-metrics-prefix', required=True,
-        help='GCS prefix holding <SG>/<SG>.target.counts.*; e.g. '
-             'gs://cpg-bioheart-test/ica/dragen_3_7_8/output/dragen_metrics',
     )
     parser.add_argument(
         '--ica-reference-folder', required=True,
@@ -230,7 +211,6 @@ def main() -> None:
     file_ids = build_panel(
         panel_name=args.panel_name,
         sequencing_groups=args.sequencing_groups,
-        gcs_metrics_prefix=args.gcs_metrics_prefix,
         ica_reference_folder=args.ica_reference_folder,
         provenance_prefix=args.provenance_prefix,
         counts_suffix=args.counts_suffix,
