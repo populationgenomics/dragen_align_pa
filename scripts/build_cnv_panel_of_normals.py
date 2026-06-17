@@ -2,7 +2,7 @@
 Build a DRAGEN CNV Panel of Normals (PON) from already-run target counts.
 
 This is a STANDALONE, one-off operator script.
-It does no CNV math. DRAGEN does all panel normalisation itself at run time. 
+It does no CNV math. DRAGEN does all panel normalisation itself at run time.
 DRAGEN does NOT accept a pre-computed/merged PON file, its
 "PON" is simply a list of per-sample gc-corrected target-counts files.
 
@@ -41,7 +41,7 @@ Example (bioheart WGS wiring panel from 4 of the 5 COH2308 SGs; 5th is the case)
 
     python scripts/build_cnv_panel_of_normals.py \\
         --panel-name bioheart-wgs-wiring-20260611 \\
-        --sequencing-groups CPG305326 CPG305334 CPG305342 CPG305359 \\
+        --sequencing-groups CPGAAAAAA CPGBBBBBB CPGCCCCCC CPGDDDDDD  \\
         --ica-reference-folder /references/exo_CNV_panels_normals/bioheart-wgs-wiring-20260611 \\
         --provenance-prefix gs://cpg-bioheart-test/ica/dragen_3_7_8/pon_provenance
 """
@@ -131,7 +131,7 @@ def build_panel(
     provenance_prefix: str | None,
     counts_suffix: str,
 ) -> dict[str, str]:
-    """Run steps 1–5 for one panel. Returns {basename: ica_file_id} for every
+    """Run steps 1-5 for one panel. Returns {basename: ica_file_id} for every
     artifact registered (the counts files and the normals list)."""
     ica_folder_path = ica_reference_folder.rstrip('/') + '/'
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
@@ -157,10 +157,10 @@ def build_panel(
 
             file_ids[basename] = _upload_counts_to_ica(
                 api_instance=api_instance,
-                path_params=path_params, 
-                gcs_counts_path=gcs_counts_path, 
-                ica_reference_folder=ica_reference_folder, 
-                basename=basename, 
+                path_params=path_params,
+                gcs_counts_path=gcs_counts_path,
+                ica_reference_folder=ica_reference_folder,
+                basename=basename,
                 ica_local_dir=ica_local_dir,
             )
 
