@@ -11,12 +11,13 @@ Uses a hybrid PythonJob approach:
 import os
 from typing import Literal
 
+import cpg_utils.config
 from cpg_flow.targets import SequencingGroup
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
-from dragen_align_pa.constants import BUCKET_NAME
+from dragen_align_pa.constants import BUCKET_NAME, DRAGEN_VERSION
 from dragen_align_pa.utils import validate_cli_path_input
 
 
@@ -30,16 +31,26 @@ def _setup_paths(
     sg_name: str = sequencing_group.name
     cram_name = f'{sg_name}.cram'
 
-    # Ensure we get the .cram path, not .crai
-    gcs_base_path = str(sequencing_group.cram)
-    if gcs_base_path.endswith('.cram.crai'):
-        gcs_cram_path = gcs_base_path.removesuffix('.crai')
-    elif not gcs_base_path.endswith('.cram'):
-        raise ValueError(
-            f'Unexpected path for sequencing_group.cram: {gcs_base_path}',
+    if cpg_utils.config.config_retrieve(['dragen_align_pa', 'upload_data_to_ica', 'use_dragen_crams'], False):
+        gcs_cram_path: cpg_utils.Path | str = (
+            sequencing_group.dataset.prefix()
+            / 'ica'
+            / DRAGEN_VERSION
+            / 'output'
+            / 'cram'
+            / f'{sequencing_group.name}.cram'
         )
     else:
-        gcs_cram_path = gcs_base_path
+        # Ensure we get the .cram path, not .crai
+        gcs_base_path: str = str(sequencing_group.cram.path)
+        if gcs_base_path.endswith('.cram.crai'):
+            gcs_cram_path = gcs_base_path.removesuffix('.crai')
+        elif not gcs_base_path.endswith('.cram'):
+            raise ValueError(
+                f'Unexpected path for sequencing_group.cram: {gcs_base_path}',
+            )
+        else:
+            gcs_cram_path = gcs_base_path
 
     logger.info(f'Resolved CRAM path to upload: {gcs_cram_path}')
 
@@ -49,7 +60,7 @@ def _setup_paths(
     return {
         'sg_name': sg_name,
         'cram_name': cram_name,
-        'gcs_cram_path': gcs_cram_path,
+        'gcs_cram_path': str(gcs_cram_path),
         'local_cram_path': local_cram_path,
         'ica_folder_path': f'/{BUCKET_NAME}/{upload_folder}/{sg_name}/',
     }
