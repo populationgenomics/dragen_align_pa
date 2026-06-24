@@ -67,16 +67,30 @@ DEFAULT_COUNTS_SUFFIX = '.target.counts.gc-corrected.gz'
 
 
 def _counts_basename(sg: str, counts_suffix: str) -> str:
+    """Filename (no directory) of a sequencing group's target-counts file."""
     return f'{sg}{counts_suffix}'
 
 
 def _gcs_counts_path(gcs_metrics_prefix: str, sg: str, counts_suffix: str) -> str:
-    """Pipeline layout: <prefix>/<SG>/<SG>.target.counts.gc-corrected.gz."""
+    """GCS path to a sequencing group's counts file: <prefix>/<SG>/<SG><counts_suffix>."""
     return f'{gcs_metrics_prefix.rstrip("/")}/{sg}/{_counts_basename(sg, counts_suffix)}'
 
 
 def _preserve_to_provenance(gcs_counts_path: str, provenance_prefix: str, panel_name: str, basename: str) -> str:
-    """Copy the counts file to a durable provenance location. Returns the dest path."""
+    """Snapshot a counts file to a durable GCS provenance location.
+
+    Args:
+        gcs_counts_path: Source GCS path of the counts file.
+        provenance_prefix: GCS prefix under which to store the snapshot.
+        panel_name: Panel label; used as the destination subfolder.
+        basename: Counts filename, reused as the destination filename.
+
+    Returns:
+        The GCS path the file was copied to.
+
+    Raises:
+        subprocess.CalledProcessError: If the gcloud copy fails.
+    """
     dest = f'{provenance_prefix.rstrip("/")}/{panel_name}/{basename}'
     utils.run_subprocess_with_log(
         ['gcloud', 'storage', 'cp', gcs_counts_path, dest],
@@ -93,7 +107,26 @@ def _upload_counts_to_ica(
     basename: str,
     ica_local_dir: str,
 ) -> str:
-    """Download counts from GCS, upload to the ICA reference folder, return its file ID."""
+    """Persist one counts file to ICA reference storage and return its file ID.
+
+    Skips the download + upload round-trip if the file is already AVAILABLE in
+    the target folder, so re-runs are idempotent.
+
+    Args:
+        api_instance: ICA project-data API client.
+        path_params: ICA path params (the projectId).
+        gcs_counts_path: Source GCS path of the counts file.
+        ica_reference_folder: Destination ICA reference folder.
+        basename: Counts filename, used both in ICA and to look the file up.
+        ica_local_dir: Local scratch dir used to stage the download before upload.
+
+    Returns:
+        The ICA file ID (``fil.…``) of the uploaded or already-present file.
+
+    Raises:
+        FileNotFoundError: If the file is not AVAILABLE in ICA after upload.
+        ValueError: If ICA returns no file ID for it.
+    """
     ica_folder_path = ica_reference_folder.rstrip('/') + '/'
     utils.validate_cli_path_input(gcs_counts_path, 'gcs_counts_path')
     utils.validate_cli_path_input(ica_folder_path, 'ica_folder_path')
@@ -120,7 +153,20 @@ def _require_file_id(
     ica_folder_path: str,
     basename: str,
 ) -> str:
-    """Re-fetch the file ID after upload; fail loudly if ICA can't find it."""
+    """Look up an uploaded file's ICA file ID.
+
+    Args:
+        api_instance: ICA project-data API client.
+        path_params: ICA path params (the projectId).
+        ica_folder_path: ICA folder the file lives in.
+        basename: The file's name.
+
+    Returns:
+        The ICA file ID (``fil.…``).
+
+    Raises:
+        ValueError: If ICA has no file ID for ``basename`` in that folder.
+    """
     data = ica_api_utils.get_file_details_from_ica(api_instance, path_params, ica_folder_path, basename)
     if not data or not data.get('id'):
         raise ValueError(f'Upload of {basename} to {ica_folder_path} reported no file ID in ICA.')
@@ -204,7 +250,12 @@ def build_panel(
 
 
 def _print_registration_snippet(panel_name: str, file_ids: dict[str, str]) -> None:
-    """Print the panel's basename->file-ID map as a JSON block to merge into ICA_FILE_IDS."""
+    """Print the panel's basename->file-ID map as a JSON block for ICA_FILE_IDS.
+
+    Args:
+        panel_name: Panel label, shown in the printed header.
+        file_ids: Map of artifact basename to ICA file ID.
+    """
     logger.info(
         f'Panel "{panel_name}" built ({len(file_ids)} entries). Merge this block into '
         f'ICA_FILE_IDS in dragen_align_pa.constants:',
@@ -214,6 +265,7 @@ def _print_registration_snippet(panel_name: str, file_ids: dict[str, str]) -> No
 
 
 def main() -> None:
+    """Parse CLI args, build the panel, and print its ICA_FILE_IDS block."""
     parser = argparse.ArgumentParser(description='Build a DRAGEN CNV Panel of Normals from existing target counts.')
     parser.add_argument('--panel-name', required=True, help='Panel label, used for the list filename and folder.')
     parser.add_argument(
