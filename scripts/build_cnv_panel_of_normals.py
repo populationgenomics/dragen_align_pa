@@ -47,6 +47,7 @@ Example (bioheart WGS wiring panel from 4 of the 5 COH2308 SGs; 5th is the case)
 """
 
 import argparse
+import json
 import os
 import tempfile
 from typing import Literal
@@ -54,12 +55,14 @@ from typing import Literal
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils, ica_cli_utils, utils
+from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils, utils
 
-# DRAGEN names gc-corrected counts <SG>.target.counts.gc-corrected.gz. The PON
-# list points at these (guide p.130 example, and gc-corrected is recommended
-# for WGS downstream). Override via --counts-suffix for plain counts on WES
-# designs below the ~200k-target GC-correction threshold (guide p.127).
+# WES tool (WGS self-normalises and never builds a PON). DRAGEN's gc-corrected
+# counts <SG>.target.counts.gc-corrected.gz are the right PON input when GC
+# correction is on, which is the default for WES designs with enough targets.
+# Designs below the ~200k-target threshold should run with GC correction
+# disabled (guide p.127): pass --counts-suffix .target.counts.gz to build the
+# panel from the plain counts instead.
 DEFAULT_COUNTS_SUFFIX = '.target.counts.gc-corrected.gz'
 
 
@@ -107,7 +110,7 @@ def _upload_counts_to_ica(
         f'Download {basename} from GCS',
     )
     ica_cli_utils.upload_local_file(local_path, ica_folder_path)
-
+    ica_utils.wait_for_file_available(api_instance, path_params, file_name=basename, folder_path=ica_folder_path)
     return _require_file_id(api_instance, path_params, ica_folder_path, basename)
 
 
@@ -131,8 +134,31 @@ def build_panel(
     provenance_prefix: str | None,
     counts_suffix: str,
 ) -> dict[str, str]:
-    """Run steps 1-5 for one panel. Returns {basename: ica_file_id} for every
-    artifact registered (the counts files and the normals list)."""
+    """Build one Panel of Normals and persist it to ICA reference storage.
+
+    Counts are read from the current run's config-derived output directory, so
+    invoke this in the config context whose bucket holds them.
+
+    Args:
+        panel_name: Panel label; names the ``.normals.txt`` list and the
+            provenance subfolder.
+        sequencing_groups: Sequencing group IDs whose gc-corrected target
+            counts form the panel.
+        ica_reference_folder: Destination ICA folder for the uploaded counts
+            and list file.
+        provenance_prefix: GCS prefix to snapshot counts into before upload;
+            ``None`` skips the preservation step.
+        counts_suffix: Suffix of the per-SG counts file (e.g.
+            ``.target.counts.gc-corrected.gz``).
+
+    Returns:
+        Mapping of each uploaded artifact's basename (the per-SG counts files
+        and the normals list) to its ICA ``fil.…`` ID, ready to paste into
+        ``ICA_FILE_IDS``.
+
+    Raises:
+        ValueError: If an upload completes but ICA returns no file ID for it.
+    """
     ica_folder_path = ica_reference_folder.rstrip('/') + '/'
     secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
     path_params = {'projectId': secrets['projectID']}
@@ -171,21 +197,20 @@ def build_panel(
                 fh.write(_counts_basename(sg, counts_suffix) + '\n')
         logger.info(f'[{panel_name}] wrote {list_basename} with {len(sequencing_groups)} entries.')
         ica_cli_utils.upload_local_file(list_local, ica_folder_path)
+        ica_utils.wait_for_file_available(api_instance, path_params, file_name=list_basename, folder_path=ica_folder_path)
         file_ids[list_basename] = _require_file_id(api_instance, path_params, ica_folder_path, list_basename)
 
     return file_ids
 
 
 def _print_registration_snippet(panel_name: str, file_ids: dict[str, str]) -> None:
-    """Emit a paste-ready ICA_FILE_IDS block for constants.py."""
+    """Print the panel's basename->file-ID map as a JSON block to merge into ICA_FILE_IDS."""
     logger.info(
-        f'Panel "{panel_name}" built. Add these to dragen_align_pa.constants.ICA_FILE_IDS '
-        f'so the submitter can resolve them by name:',
+        f'Panel "{panel_name}" built ({len(file_ids)} entries). Merge this block into '
+        f'ICA_FILE_IDS in dragen_align_pa.constants:',
     )
-    print(f'\n    # --- CNV PON: {panel_name} ---')
-    for basename, fid in file_ids.items():
-        print(f"    '{basename}': '{fid}',")
-    print()
+    print(f'\n# --- CNV PON: {panel_name} ---')
+    print(json.dumps(file_ids, indent=4))
 
 
 def main() -> None:
