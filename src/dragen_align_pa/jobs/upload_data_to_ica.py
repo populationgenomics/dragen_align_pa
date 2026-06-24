@@ -27,8 +27,8 @@ def _setup_paths(
 ) -> dict[str, str]:
     """Resolve the GCS source, local scratch, and ICA destination paths for the upload.
 
-    In DRAGEN mode (``use_dragen_crams``) the source is the DRAGEN realignment
-    output CRAM; otherwise it is the sequencing group's own CRAM.
+    Allows for using Dragen generated CRAMs if the config setting
+    'dragen_align_pa.upload_data_to_ica.use_dragen_crams' is true.
 
     Args:
         sequencing_group: The sequencing group whose CRAM is being uploaded;
@@ -36,12 +36,12 @@ def _setup_paths(
         upload_folder: ICA folder name under which the CRAM is staged.
 
     Returns:
-        A dict with keys ``sg_name``, ``cram_name``, ``gcs_cram_path``,
-        ``local_cram_path``, and ``ica_folder_path``.
+        A dict with keys 'sg_name', 'cram_name', 'gcs_cram_path',
+        'local_cram_path', and 'ica_folder_path'.
 
     Raises:
-        ValueError: In non-DRAGEN mode, if ``sequencing_group.cram.path`` is
-            neither a ``.cram`` nor a ``.cram.crai`` path.
+        ValueError: In non-DRAGEN mode, if 'sequencing_group.cram.path' is
+            neither a '.cram' nor a '.cram.crai' path.
     """
     sg_name: str = sequencing_group.name
     cram_name = f'{sg_name}.cram'
