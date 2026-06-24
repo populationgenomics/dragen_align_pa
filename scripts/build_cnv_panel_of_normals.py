@@ -243,7 +243,12 @@ def build_panel(
                 fh.write(_counts_basename(sg, counts_suffix) + '\n')
         logger.info(f'[{panel_name}] wrote {list_basename} with {len(sequencing_groups)} entries.')
         ica_cli_utils.upload_local_file(list_local, ica_folder_path)
-        ica_utils.wait_for_file_available(api_instance, path_params, file_name=list_basename, folder_path=ica_folder_path)
+        ica_utils.wait_for_file_available(
+            api_instance,
+            path_params,
+            file_name=list_basename,
+            folder_path=ica_folder_path
+        )
         file_ids[list_basename] = _require_file_id(api_instance, path_params, ica_folder_path, list_basename)
 
     return file_ids
