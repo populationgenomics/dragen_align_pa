@@ -422,6 +422,14 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     additional_file_names: list[str] = list(dict.fromkeys(list(preset_files) + list(user_files) + bed_name_files))
     additional_file_ids = [resolve_ica_file_id(name) for name in additional_file_names]
 
+    # Raw ICA file IDs passed straight through, bypassing the ICA_FILE_IDS name
+    # registry. For run-specific inputs whose per-sample IDs don't belong in
+    # shared constants (e.g. CNV panel-of-normals count files + normals list).
+    raw_file_ids: list[str] = config_retrieve(
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_file_ids'], default=[],
+    )
+    additional_file_ids.extend(raw_file_ids)
+
     inputs: list[AnalysisDataInput] = [AnalysisDataInput(parameterCode='ref_tar', dataIds=[dragen_ht_id])]
     if coverage_region_bed_ids:
         inputs.append(AnalysisDataInput(parameterCode='qc_coverage_region_beds', dataIds=coverage_region_bed_ids))

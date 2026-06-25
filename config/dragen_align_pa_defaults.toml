@@ -137,7 +137,12 @@ sv_call_regions = "Twist_VCGS_Exome_Covered_Targets_hg38.bed"
 # Per-run user override hooks. Appended after the preset values.
 [dragen_align_pa.manage_dragen_pipeline.user]
 additional_args = ""
+# Extra input file basenames, resolved to ICA file IDs via ICA_FILE_IDS.
 additional_files = []
+# Raw ICA file IDs (fil.…) passed straight through without name resolution, for
+# run-specific inputs that shouldn't be registered in ICA_FILE_IDS (e.g. CNV
+# panel-of-normals count files + normals list).
+additional_file_ids = []
 
 # IDs for all CRAM references that were previously used to generate the CRAM files that are to be realigned
 [ica.cram_references]
