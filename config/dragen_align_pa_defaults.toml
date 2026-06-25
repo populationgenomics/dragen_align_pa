@@ -84,6 +84,10 @@ md5_pipeline_id = "e767f290-bc60-4281-b11d-6a65c9791253"
 [ica.pipelines.md5]
 chunk_size = "100"
 
+# Allow upload of Dragen crams, as they are not referenced directly by sequencing_group.cram
+[dragen_align_pa.upload_data_to_ica]
+use_dragen_crams = false
+
 # Unified DRAGEN378 pipeline (single pipeline for CRAM/FASTQ, WGS/WES)
 [dragen_align_pa.manage_dragen_pipeline]
 pipeline_id = "aa2661f0-2d2f-4d84-989a-c435f35016d3"
