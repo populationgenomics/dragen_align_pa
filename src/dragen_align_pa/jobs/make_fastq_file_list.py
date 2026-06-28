@@ -81,7 +81,14 @@ def _write_fastq_list_file(fq_df: pd.DataFrame, outputs: dict[str, cpg_utils.Pat
 
 def run(outputs: dict[str, cpg_utils.Path], cohort: Cohort, manifest_file_path: cpg_utils.Path) -> None:
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
-        supplied_manifest_data: pd.DataFrame = pd.read_csv(manifest_fh)
+        supplied_manifest_data: pd.DataFrame = pd.read_csv(
+            manifest_fh,
+            dtype={
+                config_retrieve(['manifest', 'lane']): str,
+                config_retrieve(['manifest', 'machine_id']): str,
+                config_retrieve(['manifest', 'flowcell']): str,
+            },
+        )
 
     for sequencing_group in cohort.get_sequencing_groups():
         fq_df: pd.DataFrame = supplied_manifest_data[
