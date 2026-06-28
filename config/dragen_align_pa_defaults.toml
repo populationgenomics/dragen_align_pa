@@ -63,7 +63,10 @@ user_tags = ['test_user_tags']
 reference_tags = ['test_reference_tags']
 
 [ica.api]
-batch_size = 30
+# How many fastq samples to query ICA for in a batch.
+# Filenames get base64 encoded when returned by the ICA API, and the API has a hard limit of 2000 characters in the
+# response. For AGRF delivered fastq files, 15 samples per batch is the maximum.
+batch_size = 15
 
 # Bulk output download: how many pre-signed URLs to mint per :createDownloadUrls
 # call. Larger batches make fewer (rate-limited) API calls but hold URLs longer
