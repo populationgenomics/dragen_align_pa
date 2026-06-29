@@ -310,12 +310,13 @@ def find_file_id_by_name(
     Finds a specific file ID in an ICA folder by its exact name.
     (Used by download_specific_files_from_ica.py)
     """
+    ica_normalised_folder_path: str = '/' + parent_folder_path.strip('/') + '/'
     try:
         api_response = ica_retry(
             api_instance.get_project_data_list,  # pyright: ignore[reportUnknownVariableType]
             path_params=path_parameters,
             query_params={  # pyright: ignore[reportUnknownVariableType]
-                'parentFolderPath': '/' + parent_folder_path.strip('/') + '/',
+                'parentFolderPath': ica_normalised_folder_path,
                 'filename': [file_name],
                 'filenameMatchMode': 'EXACT',
                 'pageSize': '2',
@@ -325,7 +326,7 @@ def find_file_id_by_name(
         items = api_response.body.get('items', [])  # pyright: ignore[reportUnknownVariableType]
         if not items:  # pyright: ignore[reportUnknownArgumentType]
             raise FileNotFoundError(
-                f'File not found in ICA: {parent_folder_path}{file_name}',
+                f'File not found in ICA: {ica_normalised_folder_path}{file_name}',
             )
         if len(items) > 1:  # pyright: ignore[reportUnknownArgumentType]
             logger.warning(

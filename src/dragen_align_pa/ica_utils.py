@@ -54,7 +54,7 @@ def create_upload_object_id(
     # Normalise to a single leading slash and no trailing slash; the existence
     # check and CreateData below both append their own '/', so a caller passing
     # a trailing slash would otherwise produce a double slash in the ICA path.
-    folder_path = '/' + folder_path.strip('/')
+    folder_path = '/' + folder_path.strip('/') + '/'
 
     existing_object_details: tuple[str, str] | None = ica_api_utils.check_object_already_exists(
         api_instance=api_instance,
@@ -73,13 +73,13 @@ def create_upload_object_id(
         if object_type == 'FILE':
             body = CreateData(
                 name=file_name,
-                folderPath=f'{folder_path}/',
+                folderPath=folder_path,
                 dataType=object_type,
             )
         else:
             body = CreateData(
                 name=folder_name,
-                folderPath=f'{folder_path}/',
+                folderPath=folder_path,
                 dataType=object_type,
             )
         api_response = ica_api_utils.ica_retry(
