@@ -154,8 +154,7 @@ def _log_ica_retry(retry_state: RetryCallState) -> None:
     fn_name = getattr(retry_state.fn, '__name__', repr(retry_state.fn))
     sleep = retry_state.next_action.sleep if retry_state.next_action else 0.0
     logger.warning(
-        f'ICA {fn_name} returned {status}; retrying '
-        f'(attempt {retry_state.attempt_number}) after {sleep:.1f}s',
+        f'ICA {fn_name} returned {status}; retrying (attempt {retry_state.attempt_number}) after {sleep:.1f}s',
     )
 
 
@@ -262,7 +261,7 @@ def check_object_already_exists(
         tuple[str, str] | None: (object_ID, object_status) if it exists, or else None
     """
     query_params: dict[str, Sequence[str] | list[str] | str] = {
-        'filePath': [f'{folder_path}/{file_name}'],
+        'filePath': [f'/{folder_path.strip("/")}/{file_name}'],
         'filePathMatchMode': 'STARTS_WITH_CASE_INSENSITIVE',
         'type': object_type,
     }
@@ -311,12 +310,13 @@ def find_file_id_by_name(
     Finds a specific file ID in an ICA folder by its exact name.
     (Used by download_specific_files_from_ica.py)
     """
+    ica_normalised_folder_path: str = '/' + parent_folder_path.strip('/') + '/'
     try:
         api_response = ica_retry(
             api_instance.get_project_data_list,  # pyright: ignore[reportUnknownVariableType]
             path_params=path_parameters,
             query_params={  # pyright: ignore[reportUnknownVariableType]
-                'parentFolderPath': parent_folder_path,
+                'parentFolderPath': ica_normalised_folder_path,
                 'filename': [file_name],
                 'filenameMatchMode': 'EXACT',
                 'pageSize': '2',
@@ -326,7 +326,7 @@ def find_file_id_by_name(
         items = api_response.body.get('items', [])  # pyright: ignore[reportUnknownVariableType]
         if not items:  # pyright: ignore[reportUnknownArgumentType]
             raise FileNotFoundError(
-                f'File not found in ICA: {parent_folder_path}{file_name}',
+                f'File not found in ICA: {ica_normalised_folder_path}{file_name}',
             )
         if len(items) > 1:  # pyright: ignore[reportUnknownArgumentType]
             logger.warning(
@@ -359,7 +359,7 @@ def get_file_details_from_ica(
     """
     try:
         query_params: dict[str, Any] = {
-            'parentFolderPath': ica_folder_path,
+            'parentFolderPath': '/' + ica_folder_path.strip('/') + '/',
             'filename': [file_name],
             'filenameMatchMode': 'EXACT',
             'pageSize': '2',

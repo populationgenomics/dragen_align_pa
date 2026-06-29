@@ -51,6 +51,11 @@ def create_upload_object_id(
         tuple[str, str]: (object_ID, status)
         Status will be from ICA, e.g. 'AVAILABLE', 'PARTIAL'.
     """
+    # Normalise to a single leading slash and no trailing slash; the existence
+    # check and CreateData below both append their own '/', so a caller passing
+    # a trailing slash would otherwise produce a double slash in the ICA path.
+    folder_path = '/' + folder_path.strip('/') + '/'
+
     existing_object_details: tuple[str, str] | None = ica_api_utils.check_object_already_exists(
         api_instance=api_instance,
         path_params=path_params,
@@ -68,13 +73,13 @@ def create_upload_object_id(
         if object_type == 'FILE':
             body = CreateData(
                 name=file_name,
-                folderPath=f'{folder_path}/',
+                folderPath=folder_path,
                 dataType=object_type,
             )
         else:
             body = CreateData(
                 name=folder_name,
-                folderPath=f'{folder_path}/',
+                folderPath=folder_path,
                 dataType=object_type,
             )
         api_response = ica_api_utils.ica_retry(
@@ -277,7 +282,7 @@ def list_ica_files(
     have been collected, those collected entries are discarded and the
     ``icasdk.ApiException`` propagates. Callers should re-run on failure.
     """
-    base = base_ica_folder_path.rstrip('/') + '/'
+    base = '/' + base_ica_folder_path.strip('/') + '/'
 
     def _list_children(parent: str, type_: str) -> list[dict]:
         items: list[dict] = []
