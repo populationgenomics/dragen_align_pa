@@ -42,20 +42,15 @@ def run(
 
         logger.info(f'Finding MD5 results for pipeline {pipeline_id}...')
 
-        api_response = ica_api_utils.ica_retry(
-            api_instance.get_project_data_list,  # pyright: ignore[reportUnknownVariableType]
-            path_params=path_parameters,  # pyright: ignore[reportArgumentType]
-            query_params={
-                'filename': ['all_md5.txt'],
-                'filenameMatchMode': 'EXACT',
-                'parentFolderPath': f'{folder_path}/{cohort_name}/{cohort_name}_{ar_guid}-{pipeline_id}/',
-            },  # pyright: ignore[reportArgumentType]
-        )  # type: ignore  # noqa: PGH003
-
-        if not api_response.body['items']:  # pyright: ignore[reportUnknownVariableType]
-            raise FileNotFoundError(f'Could not find "all_md5.txt" in output folder for pipeline {pipeline_id}')
-
-        md5sum_results_id: str = api_response.body['items'][0]['data']['id']  # pyright: ignore[reportUnknownVariableType]
+        # Routes through find_file_id_by_name so the parentFolderPath slash
+        # normalisation lives in one place (raises FileNotFoundError if absent).
+        parent_folder_path = f'{folder_path}/{cohort_name}/{cohort_name}_{ar_guid}-{pipeline_id}/'
+        md5sum_results_id: str = ica_api_utils.find_file_id_by_name(
+            api_instance=api_instance,
+            path_parameters=path_parameters,
+            parent_folder_path=parent_folder_path,
+            file_name='all_md5.txt',
+        )
         logger.info(f'Found MD5 results file ID: {md5sum_results_id}')
 
         # Get a pre-signed URL
