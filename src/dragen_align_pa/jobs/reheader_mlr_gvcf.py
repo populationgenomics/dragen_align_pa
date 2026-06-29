@@ -41,6 +41,8 @@ def reheader_mlr_gvcf(
         reheadered_gvcf={
             'gvcf.gz': '{root}.gvcf.gz',
             'gvcf.gz.tbi': '{root}.gvcf.gz.tbi',
+            'gvcf.gz.md5sum': '{root}.gvcf.gz.md5sum',
+            'gvcf.gz.tbi.md5sum': '{root}.gvcf.gz.tbi.md5sum',
         }
     )
 
@@ -53,6 +55,9 @@ def reheader_mlr_gvcf(
         bcftools annotate --no-version --write-index=tbi \\
             -h <(bcftools view -h {gvcf_input_group['base_gvcf']} | grep '^##GVCFBlock') \\
             {gvcf_input_group['recal_gvcf']} -o {reheadered_gvcf_outputs['gvcf.gz']} -Oz
+
+        md5sum {reheadered_gvcf_outputs['gvcf.gz']} > {reheadered_gvcf_outputs['gvcf.gz.md5sum']}
+        md5sum {reheadered_gvcf_outputs['gvcf.gz.tbi']} > {reheadered_gvcf_outputs['gvcf.gz.tbi.md5sum']}
 
         """
     )
