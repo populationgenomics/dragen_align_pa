@@ -13,14 +13,21 @@ So this script's whole job is data management, in five steps, per panel:
     2. PRESERVE — copy each counts file to a durable GCS provenance location,
                   so a later DRAGEN re-run of that SG can't overwrite the
                   original we built the panel from.
-    3. PERSIST  — upload each counts file to ICA *reference* storage. Per-run
-                  ICA outputs get deleted; reference data persists run-to-run.
-                  Each upload yields a `fil.…` ID.
-    4. LIST     — write `<panel>.normals.txt`, one BASENAME per line (see note
-                  below), and upload it to ICA too (it needs its own file ID).
-    5. REGISTER — print a ready-to-paste snippet for `ICA_FILE_IDS` in
-                  `dragen_align_pa.constants`, keyed by the list + counts
-                  basenames, so the submitter can resolve them by name.
+    3. PERSIST  — rewrite each file's sample identity with a suffix (default
+                  `_pon`) and upload it to ICA *reference* storage under the
+                  renamed basename. Per-run ICA outputs get deleted; reference
+                  data persists run-to-run. Each upload yields a `fil.…` ID.
+    4. LIST     — write `<panel>.normals.txt`, one renamed BASENAME per line
+                  (see note below), and upload it to ICA too (its own file ID).
+    5. REGISTER — print a ready-to-paste JSON block of basename -> `fil.…` ID
+                  for the run config (user.additional_file_ids) / `ICA_FILE_IDS`.
+
+WHY THE RENAME (`--rename-suffix`, default `_pon`):
+    DRAGEN aborts CNV calling if a case sample is detected as a member of its
+    own panel of normals (`caseSampleNotInPoN`). Suffixing every panel sample's
+    identity — the filename, the `#Original input file` line, and the counts
+    column-header sample name — guarantees no panel entry matches a case SG, so
+    a sample can sit in a panel that is also used to call it.
 
 WHY BASENAMES IN THE LIST (not ICA paths or file IDs):
     `constants.py` documents that ICA localises all analysis inputs into a
@@ -47,6 +54,7 @@ Example (bioheart WGS wiring panel from 4 of the 5 COH2308 SGs; 5th is the case)
 """
 
 import argparse
+import gzip
 import json
 import os
 import tempfile
@@ -65,10 +73,19 @@ from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils, utils
 # panel from the plain counts instead.
 DEFAULT_COUNTS_SUFFIX = '.target.counts.gc-corrected.gz'
 
+# 0-based index of the sample-name column in a counts-file header line:
+# contig, start, stop, name, <sample>, improper_pairs.
+_SAMPLE_NAME_COLUMN = 4
+
 
 def _counts_basename(sg: str, counts_suffix: str) -> str:
     """Filename (no directory) of a sequencing group's target-counts file."""
     return f'{sg}{counts_suffix}'
+
+
+def _pon_basename(sg: str, counts_suffix: str, rename_suffix: str) -> str:
+    """Renamed (suffixed) counts filename for the panel copy uploaded to ICA."""
+    return _counts_basename(f'{sg}{rename_suffix}', counts_suffix)
 
 
 def _gcs_counts_path(gcs_metrics_prefix: str, sg: str, counts_suffix: str) -> str:
@@ -99,52 +116,93 @@ def _preserve_to_provenance(gcs_counts_path: str, provenance_prefix: str, panel_
     return dest
 
 
+def _rewrite_counts_identity(local_in: str, local_out: str, sg: str, rename_suffix: str) -> None:
+    """Suffix the sample identity in a gzipped counts file so it can't match a case SG.
+
+    Prevents DRAGEN's ``caseSampleNotInPoN`` abort by renaming every
+    identity-bearing field; data rows pass through unchanged.
+
+    Args:
+        local_in: Source gzipped counts file.
+        local_out: Destination for the rewritten gzipped counts file.
+        sg: Sequencing-group token suffixed in ``#`` comment lines (e.g. the
+            ``#Original input file`` line).
+        rename_suffix: Suffix appended to the sample identity (e.g. ``_pon``).
+            Also appended to the column-header sample name (the 5th field of the
+            first non-comment line), whatever its value — on re-ID'd samples it
+            differs from ``sg``.
+    """
+    pon = f'{sg}{rename_suffix}'
+    header_seen = False
+    with gzip.open(local_in, 'rt') as fin, gzip.open(local_out, 'wt') as fout:
+        for line in fin:
+            if line.startswith('#'):
+                out_line = line.replace(sg, pon)
+            elif not header_seen:
+                fields = line.rstrip('\n').split('\t')
+                if len(fields) > _SAMPLE_NAME_COLUMN:
+                    fields[_SAMPLE_NAME_COLUMN] = f'{fields[_SAMPLE_NAME_COLUMN]}{rename_suffix}'
+                out_line = '\t'.join(fields) + '\n'
+                header_seen = True
+            else:
+                out_line = line
+            fout.write(out_line)
+
+
 def _upload_counts_to_ica(
     api_instance: 'project_data_api.ProjectDataApi',
     path_params: dict[str, str],
     gcs_counts_path: str,
     ica_reference_folder: str,
-    basename: str,
+    sg: str,
+    counts_suffix: str,
+    rename_suffix: str,
     ica_local_dir: str,
 ) -> str:
-    """Persist one counts file to ICA reference storage and return its file ID.
+    """Rename a counts file's sample identity and persist it to ICA reference storage.
 
-    Skips the download + upload round-trip if the file is already AVAILABLE in
-    the target folder, so re-runs are idempotent.
+    Downloads the original counts, rewrites its identity to ``<sg><rename_suffix>``,
+    and uploads it under the renamed basename. Skips the round-trip if the
+    renamed file is already AVAILABLE, so re-runs are idempotent.
 
     Args:
         api_instance: ICA project-data API client.
         path_params: ICA path params (the projectId).
-        gcs_counts_path: Source GCS path of the counts file.
+        gcs_counts_path: Source GCS path of the original counts file.
         ica_reference_folder: Destination ICA reference folder.
-        basename: Counts filename, used both in ICA and to look the file up.
-        ica_local_dir: Local scratch dir used to stage the download before upload.
+        sg: Sequencing-group ID of the source counts file.
+        counts_suffix: Suffix of the counts file (e.g. ``.target.counts.gc-corrected.gz``).
+        rename_suffix: Suffix applied to the panel sample identity (e.g. ``_pon``).
+        ica_local_dir: Local scratch dir used to stage the download + rewrite.
 
     Returns:
-        The ICA file ID (``fil.…``) of the uploaded or already-present file.
+        The ICA file ID (``fil.…``) of the uploaded or already-present renamed file.
 
     Raises:
         FileNotFoundError: If the file is not AVAILABLE in ICA after upload.
         ValueError: If ICA returns no file ID for it.
     """
     ica_folder_path = ica_reference_folder.rstrip('/') + '/'
+    pon_basename = _pon_basename(sg, counts_suffix, rename_suffix)
     utils.validate_cli_path_input(gcs_counts_path, 'gcs_counts_path')
     utils.validate_cli_path_input(ica_folder_path, 'ica_folder_path')
 
-    # Skip the round-trip if it's already AVAILABLE in ICA (idempotent re-runs).
-    existing = ica_api_utils.get_file_details_from_ica(api_instance, path_params, ica_folder_path, basename)
+    # Skip the round-trip if the renamed file is already AVAILABLE in ICA.
+    existing = ica_api_utils.get_file_details_from_ica(api_instance, path_params, ica_folder_path, pon_basename)
     if existing and existing['details']['status'] == 'AVAILABLE':
-        logger.info(f'{basename} already AVAILABLE in ICA reference folder; reusing {existing["id"]}.')
+        logger.info(f'{pon_basename} already AVAILABLE in ICA reference folder; reusing {existing["id"]}.')
         return existing['id']
 
-    local_path = os.path.join(ica_local_dir, basename)
+    original_local = os.path.join(ica_local_dir, _counts_basename(sg, counts_suffix))
     utils.run_subprocess_with_log(
-        ['gcloud', 'storage', 'cp', gcs_counts_path, local_path],
-        f'Download {basename} from GCS',
+        ['gcloud', 'storage', 'cp', gcs_counts_path, original_local],
+        f'Download {sg} counts from GCS',
     )
-    ica_cli_utils.upload_local_file(local_path, ica_folder_path)
-    ica_utils.wait_for_file_available(api_instance, path_params, file_name=basename, folder_path=ica_folder_path)
-    return _require_file_id(api_instance, path_params, ica_folder_path, basename)
+    pon_local = os.path.join(ica_local_dir, pon_basename)
+    _rewrite_counts_identity(original_local, pon_local, sg, rename_suffix)
+    ica_cli_utils.upload_local_file(pon_local, ica_folder_path)
+    ica_utils.wait_for_file_available(api_instance, path_params, file_name=pon_basename, folder_path=ica_folder_path)
+    return _require_file_id(api_instance, path_params, ica_folder_path, pon_basename)
 
 
 def _require_file_id(
@@ -179,6 +237,7 @@ def build_panel(
     ica_reference_folder: str,
     provenance_prefix: str | None,
     counts_suffix: str,
+    rename_suffix: str,
 ) -> dict[str, str]:
     """Build one Panel of Normals and persist it to ICA reference storage.
 
@@ -196,11 +255,13 @@ def build_panel(
             ``None`` skips the preservation step.
         counts_suffix: Suffix of the per-SG counts file (e.g.
             ``.target.counts.gc-corrected.gz``).
+        rename_suffix: Suffix applied to each panel sample's identity (filename,
+            ``#Original input file`` line, and column-header sample name) so no
+            panel entry matches a case SG (e.g. ``_pon``).
 
     Returns:
-        Mapping of each uploaded artifact's basename (the per-SG counts files
-        and the normals list) to its ICA ``fil.…`` ID, ready to paste into
-        ``ICA_FILE_IDS``.
+        Mapping of each uploaded artifact's renamed basename (the per-SG counts
+        files and the normals list) to its ICA ``fil.…`` ID.
 
     Raises:
         ValueError: If an upload completes but ICA returns no file ID for it.
@@ -220,19 +281,22 @@ def build_panel(
         api_instance = project_data_api.ProjectDataApi(api_client)
 
         for sg in sequencing_groups:
-            basename = _counts_basename(sg, counts_suffix)
+            original_basename = _counts_basename(sg, counts_suffix)
+            pon_basename = _pon_basename(sg, counts_suffix, rename_suffix)
             gcs_counts_path = _gcs_counts_path(metrics_prefix, sg, counts_suffix)
-            logger.info(f'[{panel_name}] {sg}: {gcs_counts_path}')
+            logger.info(f'[{panel_name}] {sg} -> {pon_basename}: {gcs_counts_path}')
 
             if provenance_prefix:
-                _preserve_to_provenance(gcs_counts_path, provenance_prefix, panel_name, basename)
+                _preserve_to_provenance(gcs_counts_path, provenance_prefix, panel_name, original_basename)
 
-            file_ids[basename] = _upload_counts_to_ica(
+            file_ids[pon_basename] = _upload_counts_to_ica(
                 api_instance=api_instance,
                 path_params=path_params,
                 gcs_counts_path=gcs_counts_path,
                 ica_reference_folder=ica_reference_folder,
-                basename=basename,
+                sg=sg,
+                counts_suffix=counts_suffix,
+                rename_suffix=rename_suffix,
                 ica_local_dir=ica_local_dir,
             )
 
@@ -240,7 +304,7 @@ def build_panel(
         list_local = os.path.join(ica_local_dir, list_basename)
         with open(list_local, 'w') as fh:
             for sg in sequencing_groups:
-                fh.write(_counts_basename(sg, counts_suffix) + '\n')
+                fh.write(_pon_basename(sg, counts_suffix, rename_suffix) + '\n')
         logger.info(f'[{panel_name}] wrote {list_basename} with {len(sequencing_groups)} entries.')
         ica_cli_utils.upload_local_file(list_local, ica_folder_path)
         ica_utils.wait_for_file_available(
@@ -288,6 +352,12 @@ def main() -> None:
         '--counts-suffix', default=DEFAULT_COUNTS_SUFFIX,
         help=f'Counts file suffix (default {DEFAULT_COUNTS_SUFFIX}). Use .target.counts.gz for plain counts.',
     )
+    parser.add_argument(
+        '--rename-suffix', default='_pon',
+        help="Suffix applied to each panel sample's identity (filename + in-file "
+             'sample names) so DRAGEN never sees a case SG as a panel member. '
+             "Default '_pon'.",
+    )
     args = parser.parse_args()
 
     file_ids = build_panel(
@@ -296,6 +366,7 @@ def main() -> None:
         ica_reference_folder=args.ica_reference_folder,
         provenance_prefix=args.provenance_prefix,
         counts_suffix=args.counts_suffix,
+        rename_suffix=args.rename_suffix,
     )
     _print_registration_snippet(args.panel_name, file_ids)
 
