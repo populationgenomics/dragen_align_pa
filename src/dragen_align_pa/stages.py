@@ -680,9 +680,11 @@ class ReheaderMlrGvcf(SequencingGroupStage):
         return {
             'gvcf': get_output_path(filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz'),
             'gvcf_tbi': get_output_path(filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz.tbi'),
-            'gvcf_md5': get_output_path(filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz.md5'),
+            'gvcf_md5': get_output_path(
+                filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz.md5sum'
+            ),
             'gvcf_tbi_md5': get_output_path(
-                filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz.tbi.md5'
+                filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz.tbi.md5sum'
             ),
         }
 
