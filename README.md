@@ -5,6 +5,8 @@
 Perform alignment (from fastq) or realignment (from CRAM) using Dragen v3.7.8 with ICA.
 It handles both fastQ and CRAM input, and WGS and WES data.
 
+Exome CNV uses a Panel of Normals (reference-based normalisation); WGS self-normalises.
+
 ## Pipeline Flow
 
 <div align="center">
@@ -133,6 +135,18 @@ When successful, the pipeline downloads all results to your dataset's GCS bucket
       * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/somalier/`
   * **Pipeline Batch Metrics:**
       * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/dragen_batch_metrics/`
+
+## Panel of Normals (Exome CNV)
+**Generation**
+- The standalone `scripts/build_cnv_panel_of_normals.py`
+    * Because of how illumina designed the ICA DRAGEN pipeline, we need to push the samples we have chosen to use as the PON through the pipeline once to generate the exome targets counts files.
+    * This script takes a list of sequencing groups (all from one library prep/capture technology) and preserves their GC-corrected target counts TSV files in a user provided GCS path.
+    * ICA DRAGEN (sensibly!) detects if a sample you want to call CNVs on is also in the PON, leading to the run being aborted (`caseSampleNotInPoN` error). To avoid this, we modify the sample names in the PON files by appending a user-defined suffix (defaults to `_pon`) to the sequencing group IDs in the file names and upload them to an ICA reference folder. The script then writes these ICA paths to a `normals.txt` file in the same reference folder.
+    * Once finished it emits the ICA file IDs.
+**Usage**
+- Wiring a panel into a run config:
+    * `user.additional_file_ids` (raw `fil.…` IDs) + `--cnv-normals-list` via `user.additional_args`; the exome preset already runs `--cnv-enable-self-normalization` false.
+
 
 ## FASTQ Manifest File Structure
 
