@@ -15,6 +15,7 @@ digraph DragenAlignPAWorkflow {
     // Other (SG/C): #8da0cb (blue)
     // START:        #ffffb3 (yellow)
     // END:          #fbb4ae (red)
+    // PoN (exome):  #decbe4 (purple) - standalone, out-of-band
 
     PrepareIcaForDragenAnalysis [fillcolor="#ffffb3", style="filled,bold", penwidth=3, label="PrepareIcaForDragenAnalysis\n(C)\nSTART"];
 
@@ -44,6 +45,20 @@ digraph DragenAlignPAWorkflow {
 
     DeleteDataInIca        [fillcolor="#fbb4ae", style="filled,bold", penwidth=3, label="DeleteDataInIca\n(C)\nEND"];
 
+    // Panel of Normals (exome CNV) - NOT a pipeline stage. Built out-of-band by
+    // scripts/build_cnv_panel_of_normals.py and consumed by the DRAGEN run for
+    // reference-based CNV normalisation on exome cohorts (WGS self-normalises).
+    subgraph cluster_pon {
+        label="Panel of Normals (standalone, exome CNV)";
+        labelloc=b;
+        style="dashed,rounded";
+        color="#984ea3";
+        fontsize=11;
+        BuildPon [fillcolor="#decbe4", style="filled,dashed", label="build_cnv_panel_of_normals.py\n(standalone script)"];
+        PonPanel [fillcolor="#decbe4", shape=cylinder, style=filled, label="PoN: per-sample counts\n+ normals.txt (ICA reference)"];
+        BuildPon -> PonPanel [color="#984ea3"];
+    }
+
     // Layered left-to-right ordering
     {rank=same; FastqIntakeQc; UploadDataToIca;}
     {rank=same; DownloadCramFromIca; DownloadGvcfFromIca; ManageDragenMlr; DownloadBatchArtefactsFromIca;}
@@ -57,6 +72,10 @@ digraph DragenAlignPAWorkflow {
 
     MakeFastqFileList -> ManageDragenPipeline;
     UploadDataToIca  -> ManageDragenPipeline;
+
+    // Exome CNV: the PoN feeds into the DRAGEN run as a config-provided input
+    // (user.additional_file_ids + --cnv-normals-list). Optional / exome-only.
+    PonPanel -> ManageDragenPipeline [style=dashed, color="#984ea3", constraint=false, label="exome CNV\n--cnv-normals-list"];
 
     ManageDragenPipeline -> ManageDragenMlr;
     ManageDragenPipeline -> DownloadCramFromIca;
