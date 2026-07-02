@@ -1,11 +1,10 @@
-from typing import Literal
-
+import cpg_utils.config
 import icasdk
-from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_analysis_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
+from dragen_align_pa.constants import resolve_ica_project_id
 
 
 def run(ica_pipeline_id: str, is_mlr: bool = False) -> dict[str, str]:
@@ -18,15 +17,12 @@ def run(ica_pipeline_id: str, is_mlr: bool = False) -> dict[str, str]:
     Returns:
         A dict indicating the cancelled pipeline ID.
     """
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    project_id: str = secrets['projectID']
 
-    if not is_mlr:
-        path_parameters: dict[str, str] = {'projectId': project_id}
+    if is_mlr:
+        project_id: str = resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_mlr']))
     else:
-        path_parameters = {
-            'projectId': config_retrieve(['ica', 'projects', 'dragen_mlr_project_id']),
-        }
+        project_id = resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align']))
+    path_parameters: dict[str, str] = {'projectId': project_id}
     path_parameters = path_parameters | {'analysisId': ica_pipeline_id}
 
     with ica_api_utils.get_ica_api_client() as api_client:

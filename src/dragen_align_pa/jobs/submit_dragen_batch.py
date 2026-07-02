@@ -23,7 +23,7 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.batches import IcaBatch, validate_error_strategy
-from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_file_id
+from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_file_id, resolve_ica_project_id
 from dragen_align_pa.utils import get_bed_names_for_seqtype
 
 # DRAGEN flags that don't depend on input type (CRAM vs FASTQ) or sequencing type (WGS vs WES).
@@ -427,7 +427,8 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     # registry. For run-specific inputs whose per-sample IDs don't belong in
     # shared constants (e.g. CNV panel-of-normals count files + normals list).
     raw_file_ids: list[str] = config_retrieve(
-        ['dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_file_ids'], default=[],
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_file_ids'],
+        default=[],
     )
     additional_file_ids.extend(raw_file_ids)
 
@@ -512,8 +513,7 @@ def run(
             f'fastq_ids_path and per_sg_fastq_list_paths.',
         )
 
-    secrets = ica_api_utils.get_ica_secrets()
-    project_id: str = secrets['projectID']
+    project_id: str = resolve_ica_project_id(config_retrieve(['ica', 'projects', 'dragen_align']))
 
     with analysis_output_fid_path.open('r') as fh:
         analysis_output_fid: str = json.load(fh)['analysis_output_fid']

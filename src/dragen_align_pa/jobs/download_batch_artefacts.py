@@ -8,12 +8,10 @@ batches file. Files are streamed directly from ICA to GCS via the existing
 import json
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Literal
 
-import cpg_utils
+import cpg_utils.config
 import icasdk
 import requests
-from cpg_utils.config import config_retrieve
 from google.cloud import exceptions as gcs_exceptions
 from google.cloud import storage
 from icasdk.apis.tags import project_data_api
@@ -21,7 +19,7 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.batches import BatchesFile
-from dragen_align_pa.constants import BUCKET_NAME
+from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_project_id
 
 
 @dataclass
@@ -91,11 +89,13 @@ def _stream_silently(
         )
     except (icasdk.ApiException, requests.RequestException, gcs_exceptions.GoogleCloudError) as e:
         logger.warning(f'{context}: streaming {file_name} failed ({e}); skipping.')
-        stats.stream_failures.append({
-            'context': context,
-            'file_name': file_name,
-            'error': str(e),
-        })
+        stats.stream_failures.append(
+            {
+                'context': context,
+                'file_name': file_name,
+                'error': str(e),
+            }
+        )
         return
     stats.success += 1
 
@@ -130,11 +130,13 @@ def _stream_named_file(
         logger.warning(
             f'ICA API error while looking up {file_name} in {parent_folder}: {e}; skipping.',
         )
-        stats.lookup_failures.append({
-            'parent_folder': parent_folder,
-            'file_name': file_name,
-            'error': str(e),
-        })
+        stats.lookup_failures.append(
+            {
+                'parent_folder': parent_folder,
+                'file_name': file_name,
+                'error': str(e),
+            }
+        )
         return
 
     _stream_silently(
@@ -165,7 +167,7 @@ def run(
     batches_file = BatchesFile(path=batches_file_path)
     batches_file.read()
 
-    output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
+    output_folder: str = cpg_utils.config.config_retrieve(['ica', 'data_prep', 'output_folder'])
 
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
@@ -186,12 +188,11 @@ def run(
     counts = Counter(b['batch_index'] for b in batches_file.batches)
     if duplicates := sorted(idx for idx, n in counts.items() if n > 1):
         raise ValueError(
-            f'Duplicate batch_index values in {batches_file_path}: {duplicates}; '
-            f'refusing to overwrite GCS artefacts.',
+            f'Duplicate batch_index values in {batches_file_path}: {duplicates}; refusing to overwrite GCS artefacts.',
         )
-
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    path_parameters = {'projectId': secrets['projectID']}
+    path_parameters = {
+        'projectId': resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align']))
+    }
 
     stats = _StreamStats()
     batches_processed = 0
@@ -242,14 +243,15 @@ def run(
                 )
             except icasdk.ApiException as e:
                 logger.warning(
-                    f'Batch {batch_name}: reports/ folder not enumerable at '
-                    f'{reports_folder} ({e}); skipping.',
+                    f'Batch {batch_name}: reports/ folder not enumerable at {reports_folder} ({e}); skipping.',
                 )
-                stats.lookup_failures.append({
-                    'parent_folder': reports_folder,
-                    'file_name': '<reports/ enumeration>',
-                    'error': str(e),
-                })
+                stats.lookup_failures.append(
+                    {
+                        'parent_folder': reports_folder,
+                        'file_name': '<reports/ enumeration>',
+                        'error': str(e),
+                    }
+                )
                 report_files = []
 
             for report_relative_path, report_id in report_files:

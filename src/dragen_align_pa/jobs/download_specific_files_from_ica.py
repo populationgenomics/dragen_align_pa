@@ -2,9 +2,9 @@
 Download specific files (e.g., CRAM, GVCF) from ICA using the Python SDK.
 """
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
-import cpg_utils
+import cpg_utils.config
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.config import get_driver_image
 from google.cloud import storage
@@ -13,6 +13,7 @@ from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
+from dragen_align_pa.constants import resolve_ica_project_id
 from dragen_align_pa.file_types import FileTypeSpec
 from dragen_align_pa.utils import get_ica_sample_folder, initialise_python_job
 
@@ -121,14 +122,13 @@ def run(
     md5_gcp_name: str = f'{sg_name}.{file_spec.data_suffix}.md5sum'  # Always save as .md5sum in GCS
 
     # --- 3. Setup GCS Client ---
-    gcs_output_bucket_name, _, gcs_output_path_prefix = (
-        str(gcs_output_dir).removeprefix('gs://').partition('/')
-    )
+    gcs_output_bucket_name, _, gcs_output_path_prefix = str(gcs_output_dir).removeprefix('gs://').partition('/')
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(gcs_output_bucket_name)
 
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    path_parameters: dict[str, str] = {'projectId': secrets['projectID']}
+    path_parameters: dict[str, str] = {
+        'projectId': resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align']))
+    }
 
     # --- 5. Run Orchestration ---
     with ica_api_utils.get_ica_api_client() as api_client:

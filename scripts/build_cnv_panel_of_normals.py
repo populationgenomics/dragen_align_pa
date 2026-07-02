@@ -58,12 +58,13 @@ import gzip
 import json
 import os
 import tempfile
-from typing import Literal
 
+import cpg_utils.config
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils, utils
+from dragen_align_pa.constants import resolve_ica_project_id
 
 # WES tool (WGS self-normalises and never builds a PON). DRAGEN's gc-corrected
 # counts <SG>.target.counts.gc-corrected.gz are the right PON input when GC
@@ -267,8 +268,9 @@ def build_panel(
         ValueError: If an upload completes but ICA returns no file ID for it.
     """
     ica_folder_path = ica_reference_folder.rstrip('/') + '/'
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    path_params = {'projectId': secrets['projectID']}
+    path_params = {
+        'projectId': resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align']))
+    }
 
     metrics_prefix = str(utils.get_output_path('dragen_metrics'))
 
@@ -308,10 +310,7 @@ def build_panel(
         logger.info(f'[{panel_name}] wrote {list_basename} with {len(sequencing_groups)} entries.')
         ica_cli_utils.upload_local_file(list_local, ica_folder_path)
         ica_utils.wait_for_file_available(
-            api_instance,
-            path_params,
-            file_name=list_basename,
-            folder_path=ica_folder_path
+            api_instance, path_params, file_name=list_basename, folder_path=ica_folder_path
         )
         file_ids[list_basename] = _require_file_id(api_instance, path_params, ica_folder_path, list_basename)
 
@@ -338,25 +337,32 @@ def main() -> None:
     parser = argparse.ArgumentParser(description='Build a DRAGEN CNV Panel of Normals from existing target counts.')
     parser.add_argument('--panel-name', required=True, help='Panel label, used for the list filename and folder.')
     parser.add_argument(
-        '--sequencing-groups', required=True, nargs='+', help='CPG sequencing-group IDs to include as normals.',
+        '--sequencing-groups',
+        required=True,
+        nargs='+',
+        help='CPG sequencing-group IDs to include as normals.',
     )
     parser.add_argument(
-        '--ica-reference-folder', required=True,
+        '--ica-reference-folder',
+        required=True,
         help='Destination ICA reference folder, e.g. /references/exo_CNV_panels_normals/<panel>',
     )
     parser.add_argument(
-        '--provenance-prefix', default=None,
+        '--provenance-prefix',
+        default=None,
         help='Optional GCS prefix to snapshot the counts into before upload (provenance). Omit to skip.',
     )
     parser.add_argument(
-        '--counts-suffix', default=DEFAULT_COUNTS_SUFFIX,
+        '--counts-suffix',
+        default=DEFAULT_COUNTS_SUFFIX,
         help=f'Counts file suffix (default {DEFAULT_COUNTS_SUFFIX}). Use .target.counts.gz for plain counts.',
     )
     parser.add_argument(
-        '--rename-suffix', default='_pon',
+        '--rename-suffix',
+        default='_pon',
         help="Suffix applied to each panel sample's identity (filename + in-file "
-             'sample names) so DRAGEN never sees a case SG as a panel member. '
-             "Default '_pon'.",
+        'sample names) so DRAGEN never sees a case SG as a panel member. '
+        "Default '_pon'.",
     )
     args = parser.parse_args()
 

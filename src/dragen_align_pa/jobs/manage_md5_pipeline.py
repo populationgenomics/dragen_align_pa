@@ -2,17 +2,16 @@ import json
 import os
 import time
 from functools import partial
-from typing import Literal
 
-import cpg_utils
+import cpg_utils.config
 import pandas as pd
 from cpg_flow.targets import Cohort
-from cpg_utils.config import config_retrieve, try_get_ar_guid
+from cpg_utils.config import try_get_ar_guid
 from icasdk.apis.tags import project_analysis_api, project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
-from dragen_align_pa.constants import BUCKET_NAME
+from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_project_id
 from dragen_align_pa.jobs import run_intake_qc_pipeline
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
 
@@ -28,7 +27,7 @@ def _get_fastq_ica_id_list(
     ica_fastq_info: dict[str, str] = {}
 
     # Handle potentially large lists by batching API calls
-    batch_size = config_retrieve(['ica', 'api', 'batch_size'], default=20)
+    batch_size = cpg_utils.config.config_retrieve(['ica', 'api', 'batch_size'], default=20)
     for i in range(0, len(fastq_filenames), batch_size):
         batch_filenames = fastq_filenames[i : i + batch_size]
         logger.info(
@@ -119,22 +118,23 @@ def run(
         try:
             supplied_manifest_data: pd.DataFrame = pd.read_csv(
                 manifest_fh,
-                usecols=[config_retrieve(['manifest', 'filenames'])],
+                usecols=[cpg_utils.config.config_retrieve(['manifest', 'filenames'])],
             )
-            fastq_filenames: list[str] = supplied_manifest_data[config_retrieve(['manifest', 'filenames'])].to_list()
+            fastq_filenames: list[str] = supplied_manifest_data[
+                cpg_utils.config.config_retrieve(['manifest', 'filenames'])
+            ].to_list()
         except ValueError:
             manifest_fh.seek(0)
             header: list[str] = manifest_fh.readline().split()
             logger.error(
-                f'Expected to read the column: {config_retrieve(["manifest", "filenames"])} from the manifest file\n'
-                f'Got instead: {header}'
+                f'Expected to read the column: {cpg_utils.config.config_retrieve(["manifest", "filenames"])} \n'
+                f'from the manifest file. Got instead: {header}'
             )
             raise
 
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    project_id: str = secrets['projectID']
-
-    path_parameters: dict[str, str] = {'projectId': project_id}
+    path_parameters: dict[str, str] = {
+        'projectId': resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align']))
+    }
     ar_guid: str = try_get_ar_guid()
     fastq_list_file_id: str
     md5_outputs_folder_id: str
@@ -155,7 +155,8 @@ def run(
 
         # Upload the FASTQ ID list to ICA
         fastq_list_folder = (
-            f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{cohort_name}/fastq_lists/'
+            f'/{BUCKET_NAME}/'
+            f'{cpg_utils.config.config_retrieve(["ica", "data_prep", "output_folder"])}/{cohort_name}/fastq_lists/'
         )
         fastq_list_filename = f'{cohort_name}_{ar_guid}_fastq_ids.txt'
 
@@ -205,7 +206,7 @@ def run(
         fastq_list_file_id = fastq_list_file_details['id']
 
         # Create output folder
-        folder_path: str = f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}'
+        folder_path: str = f'/{BUCKET_NAME}/{cpg_utils.config.config_retrieve(["ica", "data_prep", "output_folder"])}'
         md5_outputs_folder_id = _create_md5_output_folder(
             folder_path=folder_path,
             api_instance=api_instance,

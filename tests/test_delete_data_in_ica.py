@@ -15,8 +15,10 @@ import pytest
 
 from dragen_align_pa.jobs import delete_data_in_ica
 
-RUNS_PROJECT_ID = 'runs-project-id'
-FASTQ_PROJECT_ID = 'fastq-supplier-project-id'
+RUNS_PROJECT_NAME = 'OurDNA-DRAGEN-378'
+RUNS_PROJECT_ID = '5c3a60b0-1458-4e37-8877-ec6b25dc4003'
+FASTQ_PROJECT_NAME = 'ourdna-data-upload-agrf'
+FASTQ_PROJECT_ID = 'e7a1d085-f12e-4cff-acda-2334338585a8'
 
 
 def _write_cohort_fid(tmp_path: Path, fid: str = 'fol.cohort_xyz') -> Path:
@@ -100,13 +102,13 @@ def patched_env(monkeypatch):
         lambda: fake_client,
     )
 
-    def fake_config_retrieve(key, default=None):
-        if tuple(key) == ('ica', 'projects', 'fastq_source_project_id'):
-            return FASTQ_PROJECT_ID
-        return default
+    def fake_config_retrieve(key):
+        if tuple(key) == ('ica', 'projects', 'fastq_source_project'):
+            return FASTQ_PROJECT_NAME
+        return RUNS_PROJECT_NAME
 
     monkeypatch.setattr(
-        'dragen_align_pa.jobs.delete_data_in_ica.config_retrieve',
+        'dragen_align_pa.jobs.delete_data_in_ica.cpg_utils.config.config_retrieve',
         fake_config_retrieve,
     )
 
@@ -212,7 +214,7 @@ def test_spurious_apivalueerror_with_404_verify_is_success(tmp_path: Path, patch
         cohort_name='COH0003',
         output_path=marker_path,
         cohort_analysis_output_fid_path=cohort_path,
-        cram_fid_paths_dict=None,
+        cram_fid_paths_dict=_write_cram_fids(tmp_path, {'SYN1': 'fil.cram_good'}),
         fastq_ids_list_path=None,
         settle_seconds=0,
     )

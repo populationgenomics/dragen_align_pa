@@ -17,15 +17,15 @@ failure the job raises so the cpg-flow stage shows red.
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
-import cpg_utils
-from cpg_utils.config import config_retrieve
+import cpg_utils.config
 from icasdk.apis.tags import project_data_api
 from icasdk.exceptions import ApiException, ApiValueError
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
+from dragen_align_pa.constants import resolve_ica_project_id
 from dragen_align_pa.utils import get_pipeline_path
 
 _DELETING_STATUS = 'DELETING'
@@ -160,40 +160,37 @@ def run(
     cohort_analysis_output_fid_path: cpg_utils.Path,
     cram_fid_paths_dict: dict[str, cpg_utils.Path] | None,
     fastq_ids_list_path: cpg_utils.Path | None,
-    settle_seconds: int = 60,
+    settle_seconds: int = 5,
 ) -> None:
     """Entry point — called from the `DeleteDataInIca` stage's PythonJob.
 
     `settle_seconds` is a parameter (not a constant) so unit tests can pass 0
     to skip the production 60s wait. Production callers always use the default.
     """
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    runs_project_id = secrets['projectID']
-
-    cohort_folder_fid = _read_cohort_folder_fid(cohort_analysis_output_fid_path)
-    cram_fids = _read_cram_fids(cram_fid_paths_dict) if cram_fid_paths_dict else []
-    fastq_fids = _read_fastq_fids(fastq_ids_list_path) if fastq_ids_list_path else []
-
-    runs_project_fids = [cohort_folder_fid, *cram_fids]
-
     failures: list[DeleteFailure] = []
+    cohort_folder_fid: str = _read_cohort_folder_fid(cohort_analysis_output_fid_path)
+    cram_fids: list[str] = _read_cram_fids(cram_fid_paths_dict) if cram_fid_paths_dict else []
+    fastq_fids: list[str] = _read_fastq_fids(fastq_ids_list_path) if fastq_ids_list_path else []
+
+    if not cram_fid_paths_dict and not fastq_ids_list_path:
+        raise ValueError('Either cram_fid_paths_dict or fastq_ids_list_path must be provided')
+
     with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
-
+        project_id: str = resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align']))
         failures += _delete_and_verify(
             api_instance=api_instance,
-            project_id=runs_project_id,
-            fids=runs_project_fids,
+            project_id=project_id,
+            fids=[cohort_folder_fid, *cram_fids],
             settle_seconds=settle_seconds,
         )
-
-        if fastq_fids:
-            fastq_project_id: str = config_retrieve(
-                ['ica', 'projects', 'fastq_source_project_id'],
+        if fastq_ids_list_path:
+            project_id = resolve_ica_project_id(
+                cpg_utils.config.config_retrieve(['ica', 'projects', 'fastq_source_project'])
             )
             failures += _delete_and_verify(
                 api_instance=api_instance,
-                project_id=fastq_project_id,
+                project_id=project_id,
                 fids=fastq_fids,
                 settle_seconds=settle_seconds,
             )
