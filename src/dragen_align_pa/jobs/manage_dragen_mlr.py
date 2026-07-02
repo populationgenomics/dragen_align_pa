@@ -5,9 +5,8 @@ from collections.abc import Callable
 from functools import partial
 from typing import Any
 
-import cpg_utils
+import cpg_utils.config
 from cpg_flow.targets import Cohort
-from cpg_utils.config import config_retrieve
 from loguru import logger
 
 from dragen_align_pa import ica_cli_utils, utils
@@ -38,8 +37,12 @@ def _mlr_find_input_urls(ica_base_folder: str, sg_name: str) -> tuple[str, str]:
 
     # Assumes the CRAMs are in the 'OurDNA-DRAGEN-378' project.
     # This could be parameterized if needed.
-    cram_url: str = f'ica://OurDNA-DRAGEN-378/{cram_path.lstrip("/")}'
-    gvcf_url: str = f'ica://OurDNA-DRAGEN-378/{gvcf_path.lstrip("/")}'
+    cram_url: str = (
+        f'ica://{cpg_utils.config.config_retrieve(["ica", "projects", "dragen_align"])}/{cram_path.lstrip("/")}'
+    )
+    gvcf_url: str = (
+        f'ica://{cpg_utils.config.config_retrieve(["ica", "projects", "dragen_align"])}/{gvcf_path.lstrip("/")}'
+    )
 
     return cram_url, gvcf_url
 
@@ -189,13 +192,13 @@ def run(
     """
     Calls the generic pipeline manager with settings for the MLR pipeline.
     """
-    ica_analysis_output_folder: str = config_retrieve(
+    ica_analysis_output_folder: str = cpg_utils.config.config_retrieve(
         ['ica', 'data_prep', 'output_folder'],
     )
-    mlr_project: str = resolve_ica_project_id(config_retrieve(['ica', 'projects', 'dragen_mlr']))
-    dragen_align_project: str = resolve_ica_project_id(config_retrieve(['ica', 'projects', 'dragen_align']))
-    mlr_config_json: str = config_retrieve(['dragen_align_pa', 'manage_dragen_mlr', 'config_json'])
-    mlr_hash_table: str = config_retrieve(['dragen_align_pa', 'manage_dragen_mlr', 'mlr_hash_table'])
+    mlr_project: str = resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_mlr']))
+    dragen_align_project: str = cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align'])
+    mlr_config_json: str = cpg_utils.config.config_retrieve(['dragen_align_pa', 'manage_dragen_mlr', 'config_json'])
+    mlr_hash_table: str = cpg_utils.config.config_retrieve(['dragen_align_pa', 'manage_dragen_mlr', 'mlr_hash_table'])
     output_prefix: str = f'ica://{dragen_align_project}/{BUCKET_NAME}/{ica_analysis_output_folder}'
 
     def _create_submit_callable(sg_name: str) -> Callable[[], str]:
