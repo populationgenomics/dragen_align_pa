@@ -18,7 +18,7 @@ ICA_PROJECT_IDS: Final[dict[str, str]] = {
     'OurDNA-DRAGEN-378': '5c3a60b0-1458-4e37-8877-ec6b25dc4003',
     'ourdna-dragen-mlr-jobs': 'f2f55709-f8d4-4364-bb04-c41975d4c0ed',
     'ourdna-data-upload-agrf': 'e7a1d085-f12e-4cff-acda-2334338585a8',
-    'tenk10k': '<>',
+    'tenk10k': 'c6577fb2-a7ec-41f9-a0fd-af22fa359a4d',
     'tenk10k-mlr-jobs': '<>',
 }
 
