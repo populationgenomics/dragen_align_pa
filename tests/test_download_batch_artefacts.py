@@ -18,11 +18,10 @@ from google.cloud import exceptions as gcs_exceptions
 
 from dragen_align_pa.jobs import download_batch_artefacts
 from dragen_align_pa.jobs.download_batch_artefacts import (
-    _StreamStats,
     _stream_named_file,
     _stream_silently,
+    _StreamStats,
 )
-
 
 # ---------------------------------------------------------------------------
 # _StreamStats
@@ -123,11 +122,7 @@ def test_stream_silently_propagates_value_error():
 
 def _named_call(stats, *, lookup_exc=None, stream_exc=None, file_id='fid'):
     """Invoke _stream_named_file with optional lookup / stream failures."""
-    lookup = (
-        MagicMock(return_value=file_id)
-        if lookup_exc is None
-        else MagicMock(side_effect=lookup_exc)
-    )
+    lookup = MagicMock(return_value=file_id) if lookup_exc is None else MagicMock(side_effect=lookup_exc)
     stream = MagicMock(side_effect=stream_exc) if stream_exc else MagicMock()
     gcs_bucket = MagicMock()
     gcs_bucket.blob.return_value.exists.return_value = False
@@ -251,9 +246,10 @@ def patched_environment(tmp_path: Path, monkeypatch):
     )
 
     monkeypatch.setattr(
-        'dragen_align_pa.jobs.download_batch_artefacts.config_retrieve',
+        'dragen_align_pa.jobs.download_batch_artefacts.cpg_utils.config.config_retrieve',
         lambda key, default=None: {
             ('ica', 'data_prep', 'output_folder'): 'test-dragen-378',
+            ('ica', 'projects', 'dragen_align'): 'OurDNA-DRAGEN-378',
         }.get(tuple(key), default),
     )
 
@@ -345,7 +341,8 @@ def test_run_writes_marker_payload_with_partial_success(patched_environment, tmp
             raise outcome
 
     monkeypatch.setattr(
-        'dragen_align_pa.ica_utils.stream_ica_file_to_gcs', fake_stream,
+        'dragen_align_pa.ica_utils.stream_ica_file_to_gcs',
+        fake_stream,
     )
     monkeypatch.setattr(
         'dragen_align_pa.ica_utils.list_ica_files',

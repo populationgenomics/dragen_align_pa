@@ -2,9 +2,7 @@
 Download all non CRAM / GVCF outputs from ICA using the Python SDK.
 """
 
-from typing import Literal
-
-import cpg_utils
+import cpg_utils.config
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.config import config_retrieve
 from google.cloud import storage
@@ -12,9 +10,7 @@ from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils, utils
-from dragen_align_pa.constants import (
-    BUCKET_NAME,
-)
+from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_project_id
 
 
 def run(
@@ -50,8 +46,9 @@ def run(
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    path_parameters: dict[str, str] = {'projectId': secrets['projectID']}
+    path_parameters = {
+        'projectId': resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align']))
+    }
 
     with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
@@ -63,8 +60,7 @@ def run(
             base_ica_folder_path=ica_folder_path,
         )
         files_to_download = [
-            (name, fid) for name, fid in files
-            if not name.endswith(('.cram', '.cram.crai', '.gvcf.gz', '.gvcf.gz.tbi'))
+            (name, fid) for name, fid in files if not name.endswith(('.cram', '.cram.crai', '.gvcf.gz', '.gvcf.gz.tbi'))
         ]
 
         # Mint pre-signed URLs in batches via the :createDownloadUrls endpoint

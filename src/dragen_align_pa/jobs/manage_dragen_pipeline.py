@@ -13,9 +13,8 @@ Responsibilities:
 
 import json
 from collections.abc import Callable
-from typing import Literal
 
-import cpg_utils
+import cpg_utils.config
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_data_api
@@ -23,7 +22,7 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils
 from dragen_align_pa.batches import BatchesFile, IcaBatch, chunk_sgs_into_batches
-from dragen_align_pa.constants import BUCKET_NAME
+from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_project_id
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, submit_dragen_batch
 from dragen_align_pa.jobs.ica_pipeline_manager import (
     MonitoredTarget,
@@ -222,8 +221,9 @@ def _on_succeeded_factory(
         ica_parent = f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{batch.cohort_name}/'
         ica_folder = f'{ica_parent}{analysis_folder_name}/'
 
-        secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-        path_parameters = {'projectId': secrets['projectID']}
+        path_parameters: dict[str, str] = {
+            'projectId': resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align']))
+        }
 
         passfail = None
         folder_fid: str | None = None

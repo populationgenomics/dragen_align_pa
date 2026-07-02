@@ -12,6 +12,20 @@ BUCKET: Final = cpg_utils.to_path(output_path(suffix=''))
 BUCKET_NAME: Final = str(BUCKET).removeprefix('gs://').removesuffix('/')
 DRAGEN_VERSION: Final = config_retrieve(['ica', 'pipelines', 'dragen_version'])
 
+
+# ICA projects
+ICA_PROJECT_IDS: Final[dict[str, str]] = {
+    'OurDNA-DRAGEN-378': '5c3a60b0-1458-4e37-8877-ec6b25dc4003',
+    'ourdna-dragen-mlr-jobs': 'f2f55709-f8d4-4364-bb04-c41975d4c0ed',
+    'ourdna-data-upload-agrf': 'e7a1d085-f12e-4cff-acda-2334338585a8',
+    'tenk10k': '<>',
+    'tenk10k-mlr-jobs': '<>',
+}
+
+# MLR setup information
+mlr_hash_table = 'ica://ourdna-dragen-mlr-jobs/data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9'
+ANALYSIS_INSTANCE_TIER: Final[str] = 'economy'
+
 # Placeholder marker for ICA file IDs that haven't been minted yet (i.e. the
 # files exist in GCS but haven't been uploaded to ICA). Replace per-entry with
 # the real `fil.…` ID once the corresponding upload lands. Any value starting
@@ -74,6 +88,19 @@ DESIGN_TO_BEDS: Final[dict[str, frozenset[str]]] = {
     CANONICAL_DESIGN_CREV2: frozenset({'S30409818_Regions.bed', 'S30409818_Covered.bed'}),
     CANONICAL_DESIGN_TWIST: frozenset({'Twist_VCGS_Exome_Covered_Targets_hg38.bed'}),
 }
+
+
+def resolve_ica_project_id(name: str) -> str:
+    """Look up the ICA project ID for a registered project name.
+
+    Raises `KeyError` naming the unknown entry and listing the registered
+    names, so a config typo surfaces at submitter startup with an
+    immediately actionable message.
+    """
+    try:
+        return ICA_PROJECT_IDS[name]
+    except KeyError as e:
+        raise KeyError(f'Unknown ICA project name: {name}. Registered names: {list(ICA_PROJECT_IDS.keys())}') from e
 
 
 def resolve_ica_file_id(name: str) -> str:
