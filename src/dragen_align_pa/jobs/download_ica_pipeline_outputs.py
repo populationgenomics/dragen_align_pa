@@ -9,8 +9,9 @@ from google.cloud import storage
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils, ica_utils, utils
-from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_project_id
+from dragen_align_pa import ica_api_utils, ica_utils, paths, utils
+from dragen_align_pa.constants import BUCKET_NAME
+from dragen_align_pa.constants_registry import ica_project_name, resolve_ica_project_id
 
 
 def run(
@@ -21,7 +22,7 @@ def run(
     """Stream per-sample ICA artefacts to GCS.
 
     Resolves the ICA folder for this SG's batch output via
-    `utils.get_ica_sample_folder`, reading `pipeline_id_arguid_path` (the
+    `ica_utils.get_ica_sample_folder`, reading `pipeline_id_arguid_path` (the
     per-SG state file written by `ManageDragenPipeline`) + `cohort_name`.
     Only files inside the resolved folder are downloaded — batch-root
     artefacts (`passfail.json`, `summary.json`, `reports/`) sit one level
@@ -33,24 +34,21 @@ def run(
     reserved for cpg-flow stage definitions only.
     """
     sg_name: str = sequencing_group.name
-    ica_folder_path = utils.get_ica_sample_folder(
+    ica_folder_path = ica_utils.get_ica_sample_folder(
         pipeline_id_arguid_path,
         sg_name=sg_name,
         cohort_name=cohort_name,
     )
     logger.info(f'Downloading bulk ICA data for {sg_name} from {ica_folder_path}')
 
-    gcs_output_path_prefix = str(utils.get_output_path(filename=f'dragen_metrics/{sg_name}')).removeprefix(
-        f'gs://{BUCKET_NAME}/',
-    )
+    gcs_output_path_prefix = paths.gcs_relative_key(utils.get_output_path(filename=f'dragen_metrics/{sg_name}'))
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
-    path_parameters = {
-        'projectId': resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align']))
-    }
+    dragen_project = ica_project_name('dragen_align')
+    path_parameters = {'projectId': resolve_ica_project_id(dragen_project)}
 
-    with ica_api_utils.get_ica_api_client() as api_client:
+    with ica_api_utils.get_ica_api_client(dragen_project) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
 
         # --- List + inline filter for CRAM/gVCF (handled by sibling stages) ---

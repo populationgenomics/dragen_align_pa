@@ -19,7 +19,8 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.batches import BatchesFile
-from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_project_id
+from dragen_align_pa.constants import BUCKET_NAME
+from dragen_align_pa.constants_registry import ica_project_name, resolve_ica_project_id
 
 
 @dataclass
@@ -167,8 +168,6 @@ def run(
     batches_file = BatchesFile(path=batches_file_path)
     batches_file.read()
 
-    output_folder: str = cpg_utils.config.config_retrieve(['ica', 'data_prep', 'output_folder'])
-
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
     # Assert (don't silently removeprefix) so a future `output_path` override
@@ -190,14 +189,13 @@ def run(
         raise ValueError(
             f'Duplicate batch_index values in {batches_file_path}: {duplicates}; refusing to overwrite GCS artefacts.',
         )
-    path_parameters = {
-        'projectId': resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align']))
-    }
+    dragen_project = ica_project_name('dragen_align')
+    path_parameters = {'projectId': resolve_ica_project_id(dragen_project)}
 
     stats = _StreamStats()
     batches_processed = 0
 
-    with ica_api_utils.get_ica_api_client() as api_client:
+    with ica_api_utils.get_ica_api_client(dragen_project) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
         for batch_entry in batches_file.batches:
             if not batch_entry.get('pipeline_id'):
@@ -211,11 +209,12 @@ def run(
             batch_index = batch_entry['batch_index']
             batches_processed += 1
 
-            # Mirrors `get_ica_sample_folder` minus the per-SG suffix (batch root).
-            ica_folder = (
-                f'/{BUCKET_NAME}/{output_folder}/{cohort_name}/'
-                f'{batch_entry["user_reference"]}-{batch_entry["pipeline_id"]}/'
-            )
+            # Batch analysis-run root (the per-SG folders sit one level below this).
+            ica_folder = ica_utils.ica_run_path(
+                cohort_name,
+                batch_entry['user_reference'],
+                batch_entry['pipeline_id'],
+            ).as_folder()
             batch_name = f'{cohort_name}_batch{batch_index:04d}'
             gcs_prefix = f'{base_prefix}/{batch_name}'
 

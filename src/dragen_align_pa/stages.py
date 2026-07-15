@@ -35,7 +35,6 @@ from dragen_align_pa.jobs import (
     validate_md5_sums,
 )
 from dragen_align_pa.utils import (
-    assert_cohort_design_matches_configured_bed,
     calculate_needed_storage,
     get_batch_artefacts_root,
     get_manifest_path_for_cohort,
@@ -63,9 +62,6 @@ class PrepareIcaForDragenAnalysis(CohortStage):
         return get_prep_path(filename=f'{cohort.name}_analysis_output_fid.json')
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput:  # noqa: ARG002
-        # Exome runs: fail fast on design-mixed cohorts or mis-configured BEDs.
-        assert_cohort_design_matches_configured_bed(cohort)
-
         output: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
         job: PythonJob = initialise_python_job(

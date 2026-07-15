@@ -7,12 +7,11 @@ import json
 
 import cpg_utils.config
 import requests
-from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils
-from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_project_id
+from dragen_align_pa import ica_api_utils, ica_utils
+from dragen_align_pa.constants_registry import ica_project_name, resolve_ica_project_id
 
 
 def run(
@@ -23,13 +22,10 @@ def run(
     """
     Main function for the job.
     """
-    path_parameters: dict[str, str] = {
-        'projectId': resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align']))
-    }
+    dragen_project = ica_project_name('dragen_align')
+    path_parameters: dict[str, str] = {'projectId': resolve_ica_project_id(dragen_project)}
 
-    folder_path: str = f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}'
-
-    with ica_api_utils.get_ica_api_client() as api_client:
+    with ica_api_utils.get_ica_api_client(dragen_project) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
 
         # Get the ID
@@ -42,7 +38,7 @@ def run(
 
         # Routes through find_file_id_by_name so the parentFolderPath slash
         # normalisation lives in one place (raises FileNotFoundError if absent).
-        parent_folder_path = f'{folder_path}/{cohort_name}/{cohort_name}_{ar_guid}-{pipeline_id}/'
+        parent_folder_path = ica_utils.ica_md5_run_path(cohort_name, ar_guid, pipeline_id).as_folder()
         md5sum_results_id: str = ica_api_utils.find_file_id_by_name(
             api_instance=api_instance,
             path_parameters=path_parameters,

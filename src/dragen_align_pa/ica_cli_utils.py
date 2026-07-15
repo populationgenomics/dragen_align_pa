@@ -6,38 +6,54 @@ authentication and running CLI commands via subprocess.
 
 import json
 import os
-from typing import TYPE_CHECKING, Any, Final
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from dragen_align_pa import utils
+from dragen_align_pa import ica_api_utils, utils
+from dragen_align_pa.constants_registry import resolve_ica_api_key_field, resolve_ica_project_id
 
 if TYPE_CHECKING:
     from subprocess import CompletedProcess
 
-# --- Constants ---
-
-ICA_CLI_SETUP: Final = """
-mkdir -p $HOME/.icav2
-echo "server-url: ica.illumina.com" > /root/.icav2/config.yaml
-
-set +x
-gcloud secrets versions access latest --secret=illumina_cpg_workbench_api --project=cpg-common | jq -r .apiKey > key
-gcloud secrets versions access latest --secret=illumina_cpg_workbench_api --project=cpg-common | jq -r .projectID > projectID
-echo "x-api-key: $(cat key)" >> $HOME/.icav2/config.yaml
-icav2 projects enter $(cat projectID)
-set -x
-"""  # noqa: E501
-
 # --- CLI Wrappers ---
 
 
-def authenticate_ica_cli() -> None:
+def _write_icav2_config(project_name: str) -> None:
+    """Write the icav2 CLI config (`~/.icav2/config.yaml`) for `project_name`.
+
+    Fetches and validates the secret with the shared Python guard (`get_ica_secrets`, which
+    raises if the project's API-key field is missing or blank), then writes the key straight
+    to the config file. The key never enters a shell command string, so it cannot leak into
+    the command that `run_subprocess_with_log` logs — unlike fetching it via `gcloud | jq`
+    inside the shell (and `set +x` would not have hidden it from that Python-side log line).
+
+    Args:
+        project_name: The ICA project whose dataset API key configures the CLI.
     """
-    Authenticates the icav2 CLI.
+    secrets = ica_api_utils.get_ica_secrets(project_name)
+    api_key = secrets[resolve_ica_api_key_field(project_name)]
+    config_dir = Path.home() / '.icav2'
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / 'config.yaml').write_text(f'server-url: ica.illumina.com\nx-api-key: {api_key}\n')
+
+
+def authenticate_ica_cli(project_name: str) -> None:
+    """Configure the icav2 CLI for `project_name` and enter that project.
+
+    Writes the CLI config with the project's dataset API key in Python (no `gcloud`/`jq` shell
+    step, and the key never touches a logged command), then enters the resolved project.
+
+    Args:
+        project_name: The ICA project to authenticate against (an `[ica.projects]` value);
+            selects the dataset API key and the project the CLI enters.
     """
-    # This command uses shell=True, but ICA_CLI_SETUP is a trusted constant
-    utils.run_subprocess_with_log(ICA_CLI_SETUP, 'Authenticate ICA CLI', shell=True)  # noqa: S604
+    _write_icav2_config(project_name)
+    utils.run_subprocess_with_log(
+        ['icav2', 'projects', 'enter', resolve_ica_project_id(project_name)],
+        f'Enter ICA project {project_name}',
+    )
 
 
 def upload_local_file(local_file_path: str, ica_folder_path: str) -> None:
@@ -100,17 +116,22 @@ def find_ica_file_path_by_name(parent_folder: str, file_name: str) -> str:
         raise
 
 
-def perform_upload_if_needed(cram_status: str | None, paths: dict[str, str]) -> None:
-    """
-    Handles the actual download from GCS and upload to ICA using CLIs.
-    (Used by upload_data_to_ica.py)
+def perform_upload_if_needed(cram_status: str | None, paths: dict[str, str], project_name: str) -> None:
+    """Download a CRAM from GCS and upload it to ICA using the CLIs (used by upload_data_to_ica.py).
+
+    Args:
+        cram_status: The CRAM's current ICA status; `AVAILABLE` means already uploaded, so the
+            upload is skipped.
+        paths: The GCS/local/ICA paths for the CRAM (keys `cram_name`, `local_cram_path`,
+            `gcs_cram_path`, `ica_folder_path`).
+        project_name: The ICA project to upload into; selects the CLI's dataset API key.
     """
     if cram_status == 'AVAILABLE':
         logger.info(f'{paths["cram_name"]} already AVAILABLE in ICA. Skipping.')
         return
 
     # Authenticate ICA CLI
-    authenticate_ica_cli()
+    authenticate_ica_cli(project_name)
 
     local_dir = os.path.dirname(paths['local_cram_path'])
     if not os.path.exists(local_dir):

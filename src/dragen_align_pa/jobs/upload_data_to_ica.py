@@ -16,7 +16,9 @@ from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
-from dragen_align_pa.constants import BUCKET_NAME, DRAGEN_VERSION, resolve_ica_project_id
+from dragen_align_pa.constants import DRAGEN_VERSION
+from dragen_align_pa.constants_registry import ica_project_name, resolve_ica_project_id
+from dragen_align_pa.paths import IcaPath
 from dragen_align_pa.utils import validate_cli_path_input
 
 
@@ -76,7 +78,7 @@ def _setup_paths(
         'cram_name': cram_name,
         'gcs_cram_path': str(gcs_cram_path),
         'local_cram_path': local_cram_path,
-        'ica_folder_path': f'/{BUCKET_NAME}/{upload_folder}/{sg_name}/',
+        'ica_folder_path': IcaPath.under_bucket(upload_folder, sg_name).as_folder(),
     }
 
 
@@ -96,13 +98,12 @@ def run(
     validate_cli_path_input(paths['ica_folder_path'], 'ica_folder_path')
 
     # 2. --- Authenticate Python SDK ---
-    path_parameters: dict[str, str] = {
-        'projectId': resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align']))
-    }
+    dragen_project = ica_project_name('dragen_align')
+    path_parameters: dict[str, str] = {'projectId': resolve_ica_project_id(dragen_project)}
 
     # 3. --- Check File Existence ---
     cram_status: str | None = None
-    with ica_api_utils.get_ica_api_client() as api_client:
+    with ica_api_utils.get_ica_api_client(dragen_project) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
         cram_status = ica_utils.check_file_existence(
             api_instance=api_instance,
@@ -112,7 +113,7 @@ def run(
         )
 
         # 4. --- Perform Upload (if needed) ---
-        ica_cli_utils.perform_upload_if_needed(cram_status, paths)
+        ica_cli_utils.perform_upload_if_needed(cram_status, paths, dragen_project)
 
         # 5. --- Get Final File ID and Write Output ---
         ica_utils.finalise_upload(

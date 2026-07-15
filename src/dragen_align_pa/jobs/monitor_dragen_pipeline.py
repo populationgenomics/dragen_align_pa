@@ -1,8 +1,7 @@
-from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_analysis_api
 
 from dragen_align_pa import ica_api_utils
-from dragen_align_pa.constants import resolve_ica_project_id
+from dragen_align_pa.constants_registry import ica_project_name, resolve_ica_project_id
 
 
 def run(ica_pipeline_id: str | dict[str, str], is_mlr: bool = False) -> str:
@@ -14,13 +13,14 @@ def run(ica_pipeline_id: str | dict[str, str], is_mlr: bool = False) -> str:
         The status of the ICA pipeline run.
     """
     if is_mlr:
-        project_id: str = resolve_ica_project_id(config_retrieve(['ica', 'projects', 'dragen_mlr']))
+        project_name: str = ica_project_name('dragen_mlr')
     else:
-        project_id = resolve_ica_project_id(config_retrieve(['ica', 'projects', 'dragen_align']))
+        project_name = ica_project_name('dragen_align')
+    project_id: str = resolve_ica_project_id(project_name)
 
     pipeline_id: str = ica_pipeline_id['pipeline_id'] if isinstance(ica_pipeline_id, dict) else ica_pipeline_id
 
-    with ica_api_utils.get_ica_api_client() as api_client:
+    with ica_api_utils.get_ica_api_client(project_name) as api_client:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         path_params: dict[str, str] = {'projectId': project_id}
 

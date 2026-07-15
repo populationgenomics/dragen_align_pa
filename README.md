@@ -67,7 +67,7 @@ dragen_align_pa
 ## Configuring the pipeline
 The default [`config file`](config/dragen_align_pa_defaults.toml) should be used as a base to configure the cohort that you are running.
 
-Config files should be reviewed and merged into the `production-pipelines-configuration` repository prior to running on production data. You can also find the values for config settings such as `ica.projects.dragen_align` in the config files in this repository.
+Config files should be reviewed and merged into the `production-pipelines-configuration` repository prior to running on production data. Registered ICA project families (valid `ica.projects.project_root` values) are defined in [`constants.py`](src/dragen_align_pa/constants.py).
 Valid entries for config settings such as `dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names` can be found in [`constants.py`](src/dragen_align_pa/constants.py).
 
 ### Sections that must be edited
@@ -89,7 +89,7 @@ Your TOML configuration file must specify the following key options:
           * `reference`: Must be set to one of the defined references in [`constants.py`](src/dragen_align_pa/constants.py). Current valid options are `hg38_masked.fasta` and `hg38_unmasked.fasta` e.g. `reference = 'hg38_masked.fasta'`.
    * **If `reads_type = "fastq"`:**
       * `[manifest]`: Check that the values in the config match the values in the manifest. Even a single mismatch (e.g. `filenames` vs `Filenames`) will cause a pipeline crash.
-   * `[ica.projects]`: Set these to valid entries. Examples can be found in the `production-pipelines-configuration` repository. `fastq_source_project` is only needed if `reads_type = 'fastq'`.
+   * `[ica.projects]`: Set `project_root` to the dataset family (e.g. `ourdna`). The DRAGEN-align, DRAGEN-MLR and FASTQ-upload projects are derived from the family in [`constants.py`](src/dragen_align_pa/constants.py), so only the family is named here. Must be a registered family.
    * `[ica.management]`:
       * `monitor_previous`: Set to `false` for new runs, set to `true` if the pipeline in GCS crashes, but the pipelines in ICA are still running fine.
       * `force_resubmit`: This should almost always be set to `false`. Set to `true` if you encounter an unrecoverable desync between the state recorded in GCS and ICA. This will overwrite the state files in GCS, and force the ICA pipeline to run again, even if it had completed successfully.

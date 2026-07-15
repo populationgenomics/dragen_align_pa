@@ -17,9 +17,6 @@ from loguru import logger
 from metamist.graphql import gql, query
 
 from dragen_align_pa.constants import (
-    BUCKET_NAME,
-    DESIGN_TO_BEDS,
-    DESIGN_TO_CANONICAL,
     DRAGEN_VERSION,
 )
 
@@ -103,23 +100,6 @@ def run_subprocess_with_log(
         raise
 
 
-def _resolve_sg_canonical_design(sg: SequencingGroup) -> str:
-    """Resolve one SG's canonical exome design from its metadata."""
-
-    sequencing_library: str | None = sg.meta.get('sequencing_library')
-    if not sequencing_library:
-        raise RuntimeError(
-            f"Sequencing group {sg.id} has no meta['sequencing_library']; cannot resolve exome design.",
-        )
-    if sequencing_library not in DESIGN_TO_CANONICAL:
-        raise RuntimeError(
-            f'Sequencing group {sg.id} has sequencing_library {sequencing_library!r} that '
-            f"doesn't map to a canonical design. Add it to DESIGN_TO_CANONICAL in "
-            f'dragen_align_pa.constants.',
-        )
-    return DESIGN_TO_CANONICAL[sequencing_library]
-
-
 def get_bed_names_for_seqtype() -> dict[str, str]:
     """Read `[presets.<seqtype>.bed_names]` and return its `{key: basename}` map.
 
@@ -150,55 +130,6 @@ def get_bed_names_for_seqtype() -> dict[str, str]:
             f'registered in ICA_FILE_IDS.',
         )
     return {key: str(name) for key, name in bed_names.items()}
-
-
-def assert_cohort_design_matches_configured_bed(cohort: Cohort) -> None:
-    """Hard-fail at stage queuing if the cohort isn't a single exome design
-    or the configured bed_names aren't valid for that design.
-
-    Only runs when `workflow.sequencing_type == 'exome'`. Catches both
-    design-mixed cohorts and a config TOML pointing at the wrong design's
-    BEDs before any ICA submission.
-    """
-    if config_retrieve(['workflow', 'sequencing_type']) != 'exome':
-        return
-
-    sgs = cohort.get_sequencing_groups()
-    if not sgs:
-        raise RuntimeError(f'Cohort {cohort.id} has no sequencing groups.')
-
-    designs: dict[str, str] = {sg.id: _resolve_sg_canonical_design(sg) for sg in sgs}
-    unique_designs = set(designs.values())
-    if len(unique_designs) != 1:
-        by_design: dict[str, list[str]] = {}
-        for sg_id, d in designs.items():
-            by_design.setdefault(d, []).append(sg_id)
-        raise RuntimeError(
-            f'Cohort {cohort.id} has mixed exome designs {sorted(unique_designs)}. '
-            f'Split into one cohort per design. Breakdown: {by_design}',
-        )
-    cohort_design = unique_designs.pop()
-
-    valid_beds = DESIGN_TO_BEDS.get(cohort_design)
-    if valid_beds is None:
-        raise RuntimeError(
-            f'No DESIGN_TO_BEDS entry for design {cohort_design!r}; update dragen_align_pa.constants.',
-        )
-
-    # get_bed_names_for_seqtype raises if exome bed_names is missing or has
-    # any unset entries, so by the time we get here the dict is complete.
-    bed_names = get_bed_names_for_seqtype()
-    outside_design = sorted(set(bed_names.values()) - valid_beds)
-    if outside_design:
-        raise RuntimeError(
-            f'Cohort {cohort.id} resolves to design {cohort_design!r}, but '
-            f'[presets.exome.bed_names] uses basename(s) {outside_design} that '
-            f"aren't in DESIGN_TO_BEDS[{cohort_design!r}] = "
-            f'{sorted(valid_beds)}. Check the config against the cohort design.',
-        )
-    logger.info(
-        f'Exome design check passed: cohort {cohort.id} -> {cohort_design}, beds {sorted(set(bed_names.values()))}.',
-    )
 
 
 def initialise_python_job(
@@ -305,32 +236,6 @@ def load_per_sg_state(
             f'{", ".join(repr(k) for k in missing)}.',
         )
     return state
-
-
-def get_ica_sample_folder(
-    pipeline_id_arguid_path: cpg_utils.Path,
-    sg_name: str,
-    cohort_name: str,
-) -> str:
-    """Resolve the ICA folder for a single SG's batch output.
-
-    Returns `/{bucket}/{output_folder}/{cohort_name}/{user_reference}-{pipeline_id}/{sg_name}/`.
-
-    A schema-mismatched or missing-key state file raises here rather than
-    downstream — operators can recover by rerunning with `force_resubmit=true`
-    or deleting the offending per-SG file so the next resume reads from
-    `{cohort}_batches.json` (the authoritative source). The helper has no
-    awareness of CANCELLED batches; the orchestrator's resume-after-cancel
-    guard halts the cohort before any Download stage runs.
-    """
-    state = load_per_sg_state(
-        pipeline_id_arguid_path,
-        required_keys=('user_reference', 'pipeline_id', 'batch_index'),
-    )
-    user_reference = state['user_reference']
-    pipeline_id = state['pipeline_id']
-    output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
-    return f'/{BUCKET_NAME}/{output_folder}/{cohort_name}/{user_reference}-{pipeline_id}/{sg_name}/'
 
 
 def get_manifest_path_for_cohort(cohort: Cohort) -> cpg_utils.Path:

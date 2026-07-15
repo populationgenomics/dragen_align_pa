@@ -27,14 +27,14 @@ def patched_environment(monkeypatch):
     """Stub the secrets fetch and ICA client context manager."""
     monkeypatch.setattr(
         'dragen_align_pa.jobs.prepare_ica_for_analysis.ica_api_utils.get_ica_secrets',
-        lambda: {'projectID': 'proj', 'apiKey': 'key'},
+        lambda project_name: {'projectID': 'proj', 'apiKey': 'key'},  # noqa: ARG005
     )
     fake_client = MagicMock()
     fake_client.__enter__ = MagicMock(return_value=fake_client)
     fake_client.__exit__ = MagicMock(return_value=False)
     monkeypatch.setattr(
         'dragen_align_pa.jobs.prepare_ica_for_analysis.ica_api_utils.get_ica_api_client',
-        lambda: fake_client,
+        lambda project_name: fake_client,  # noqa: ARG005
     )
     monkeypatch.setattr(
         'dragen_align_pa.jobs.prepare_ica_for_analysis.cpg_utils.config.config_retrieve',

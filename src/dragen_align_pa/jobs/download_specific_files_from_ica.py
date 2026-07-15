@@ -13,9 +13,11 @@ from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
-from dragen_align_pa.constants import resolve_ica_project_id
+from dragen_align_pa.constants_registry import ica_project_name, resolve_ica_project_id
 from dragen_align_pa.file_types import FileTypeSpec
-from dragen_align_pa.utils import get_ica_sample_folder, initialise_python_job
+from dragen_align_pa.ica_utils import get_ica_sample_folder
+from dragen_align_pa.paths import gcs_bucket_and_key
+from dragen_align_pa.utils import initialise_python_job
 
 if TYPE_CHECKING:
     from hailtop.batch.job import PythonJob
@@ -108,7 +110,7 @@ def run(
     Coordinates helper functions to list, filter, and stream files.
 
     `ica_folder_path` is the pre-resolved ICA folder (caller resolves it via
-    `utils.get_ica_sample_folder`, which reads the per-SG state file and
+    `ica_utils.get_ica_sample_folder`, which reads the per-SG state file and
     builds `/{BUCKET}/{output_folder}/{cohort}/{user_reference}-{pipeline_id}/{sg}/`).
 
     `gcs_output_dir` is the directory the calling stage declared in `expected_outputs`
@@ -122,16 +124,15 @@ def run(
     md5_gcp_name: str = f'{sg_name}.{file_spec.data_suffix}.md5sum'  # Always save as .md5sum in GCS
 
     # --- 3. Setup GCS Client ---
-    gcs_output_bucket_name, _, gcs_output_path_prefix = str(gcs_output_dir).removeprefix('gs://').partition('/')
+    gcs_output_bucket_name, gcs_output_path_prefix = gcs_bucket_and_key(gcs_output_dir)
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(gcs_output_bucket_name)
 
-    path_parameters: dict[str, str] = {
-        'projectId': resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align']))
-    }
+    dragen_project = ica_project_name('dragen_align')
+    path_parameters: dict[str, str] = {'projectId': resolve_ica_project_id(dragen_project)}
 
     # --- 5. Run Orchestration ---
-    with ica_api_utils.get_ica_api_client() as api_client:
+    with ica_api_utils.get_ica_api_client(dragen_project) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
         _orchestrate_download(
             api_instance=api_instance,

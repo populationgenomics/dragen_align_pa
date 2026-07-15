@@ -4,10 +4,16 @@ from pathlib import Path
 import cpg_utils.config
 import pytest
 
+from dragen_align_pa.ica_utils import (
+    get_ica_sample_folder,
+    ica_cohort_path,
+    ica_md5_run_path,
+    ica_run_path,
+)
+from dragen_align_pa.paths import gcs_bucket_and_key, gcs_relative_key
 from dragen_align_pa.utils import (
     PER_SG_STATE_SCHEMA_VERSION,
     get_batch_artefacts_path,
-    get_ica_sample_folder,
     load_per_sg_state,
 )
 
@@ -24,17 +30,11 @@ def _write_state(path: Path, **fields) -> None:
     path.write_text(json.dumps(payload))
 
 
-def test_get_ica_sample_folder_renders_expected_path(tmp_path: Path, monkeypatch):
+def test_get_ica_sample_folder_renders_expected_path(tmp_path: Path):
+    # output_folder comes from conftest `_TEST_CONFIG` and BUCKET_NAME from the
+    # output_path stub, both consumed via `IcaPath.output_root()`.
     state_path = tmp_path / 'SYN00001_pipeline_id_and_arguid.json'
     _write_state(state_path)
-
-    def fake_config_retrieve(key, default=None):
-        if key == ['ica', 'data_prep', 'output_folder']:
-            return 'test-dragen-378'
-        return default
-
-    monkeypatch.setattr('dragen_align_pa.utils.config_retrieve', fake_config_retrieve)
-    monkeypatch.setattr('dragen_align_pa.utils.BUCKET_NAME', 'cpg-test-dataset-test')
 
     result = get_ica_sample_folder(state_path, sg_name='SYN00001', cohort_name='COH0001')
     expected = (
@@ -49,11 +49,15 @@ def test_get_ica_sample_folder_rejects_old_schema(tmp_path: Path):
     raise a friendly error so a resume after a deploy doesn't silently
     misresolve paths."""
     state_path = tmp_path / 'SYN00001_pipeline_id_and_arguid.json'
-    state_path.write_text(json.dumps({
-        'pipeline_id': 'abc',
-        'ar_guid': 'xyz',
-        # missing schema_version, user_reference, batch_index
-    }))
+    state_path.write_text(
+        json.dumps(
+            {
+                'pipeline_id': 'abc',
+                'ar_guid': 'xyz',
+                # missing schema_version, user_reference, batch_index
+            }
+        )
+    )
     with pytest.raises(ValueError, match='schema_version'):
         get_ica_sample_folder(state_path, sg_name='SYN00001', cohort_name='COH0001')
 
@@ -61,7 +65,9 @@ def test_get_ica_sample_folder_rejects_old_schema(tmp_path: Path):
 def test_get_ica_sample_folder_raises_on_missing_state(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         get_ica_sample_folder(
-            tmp_path / 'does-not-exist.json', sg_name='SYN00001', cohort_name='COH0001',
+            tmp_path / 'does-not-exist.json',
+            sg_name='SYN00001',
+            cohort_name='COH0001',
         )
 
 
@@ -71,13 +77,17 @@ def test_get_ica_sample_folder_raises_keyerror_on_missing_batch_index(tmp_path: 
     KeyError naming the missing field, matching the validation contract
     the docstring promises."""
     state_path = tmp_path / 'SYN00001_pipeline_id_and_arguid.json'
-    state_path.write_text(json.dumps({
-        'schema_version': PER_SG_STATE_SCHEMA_VERSION,
-        'pipeline_id': '00000000-1111-2222-3333-444444444444',
-        'ar_guid': 'test-guid',
-        'user_reference': 'COH0001-batch0000_test-guid_',
-        # missing batch_index
-    }))
+    state_path.write_text(
+        json.dumps(
+            {
+                'schema_version': PER_SG_STATE_SCHEMA_VERSION,
+                'pipeline_id': '00000000-1111-2222-3333-444444444444',
+                'ar_guid': 'test-guid',
+                'user_reference': 'COH0001-batch0000_test-guid_',
+                # missing batch_index
+            }
+        )
+    )
     with pytest.raises(KeyError, match=r'batch_index'):
         get_ica_sample_folder(state_path, sg_name='SYN00001', cohort_name='COH0001')
 
@@ -106,6 +116,49 @@ def test_conftest_output_path_stub_accepts_category_kwarg():
     blow up with TypeError instead of producing a stable path."""
     result = cpg_utils.config.output_path('foo/bar', category='analysis')
     assert isinstance(result, str)
+
+
+def test_ica_run_path_renders_expected_folder():
+    result = ica_run_path('COH0001', 'COH0001-batch0000_test-guid_', 'PID123').as_folder()
+    assert result == '/cpg-test-dataset-test/test-dragen-378/COH0001/COH0001-batch0000_test-guid_-PID123/'
+
+
+def test_ica_cohort_path_renders_expected_folder():
+    assert ica_cohort_path('COH0001').as_folder() == '/cpg-test-dataset-test/test-dragen-378/COH0001/'
+
+
+def test_ica_md5_run_path_renders_distinct_unbatched_folder():
+    # No batch segment; keyed on {cohort}_{ar_guid} rather than a batch user_reference.
+    result = ica_md5_run_path('COH0001', 'ar-guid-xyz', 'PID123').as_folder()
+    assert result == '/cpg-test-dataset-test/test-dragen-378/COH0001/COH0001_ar-guid-xyz-PID123/'
+
+
+def test_ica_run_path_composes_per_sg_folder():
+    # The run path is the shared primitive; appending an SG segment yields the sample folder.
+    folder = (ica_run_path('COH0001', 'ref_', 'PID123') / 'SYN00001').as_folder()
+    assert folder == '/cpg-test-dataset-test/test-dragen-378/COH0001/ref_-PID123/SYN00001/'
+
+
+def test_gcs_relative_key_strips_scheme_and_bucket():
+    assert gcs_relative_key('gs://cpg-dataset-main/ica/dragen/output/x.cram') == 'ica/dragen/output/x.cram'
+
+
+def test_gcs_relative_key_accepts_cloud_path():
+    assert gcs_relative_key(cpg_utils.to_path('gs://some-bucket/a/b/c')) == 'a/b/c'
+
+
+def test_gcs_relative_key_rejects_non_gcs_path():
+    with pytest.raises(ValueError, match=r'gs://'):
+        gcs_relative_key('/local/only/path')
+
+
+def test_gcs_bucket_and_key_splits_bucket_from_key():
+    assert gcs_bucket_and_key('gs://some-bucket/a/b/c') == ('some-bucket', 'a/b/c')
+
+
+def test_gcs_bucket_and_key_rejects_non_gcs_path():
+    with pytest.raises(ValueError, match=r'gs://'):
+        gcs_bucket_and_key('/local/only/path')
 
 
 def test_get_batch_artefacts_path(monkeypatch):

@@ -549,13 +549,8 @@ def test_build_fastq_data_inputs_handles_duplicate_fastq_rows(tmp_path, monkeypa
         read1=['CPG_A_R1.fastq.gz'],
         read2=['CPG_A_R2.fastq.gz'],
     )
-    monkeypatch.setattr(
-        submit_dragen_batch,
-        'config_retrieve',
-        lambda key, default=None: {('ica', 'data_prep', 'output_folder'): 'test/'}.get(tuple(key), default),
-    )
-    monkeypatch.setattr(submit_dragen_batch, 'BUCKET_NAME', 'test-bucket')
-    # Stub the upload helper — duplicate detection happens before upload.
+    # Stub the upload helper — duplicate detection happens before upload, so the ICA
+    # folder path (which reads BUCKET_NAME / output_folder) is never built here.
     monkeypatch.setattr(
         submit_dragen_batch,
         '_upload_per_batch_fastq_list',

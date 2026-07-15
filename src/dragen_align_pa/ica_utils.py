@@ -19,10 +19,106 @@ from icasdk.model.data_id_or_path_list import DataIdOrPathList
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
+from dragen_align_pa.paths import IcaPath
+from dragen_align_pa.utils import load_per_sg_state
 
 if TYPE_CHECKING:
     from google.cloud.storage.bucket import Bucket
     from icasdk.apis.tags import project_data_api
+
+
+# --- ICA folder builders --------------------------------------------------------------
+# These return a composable `IcaPath`; the caller picks the terminal form (`.as_folder()`
+# for a REST folder string, `.as_url(role)` for an `ica://` URL, or append `/ segment`
+# first). Keeping them `IcaPath`-returning — rather than str-returning wrappers — means the
+# run-folder layout is defined once and the terminal-form choice stays explicit at the call
+# site. The one exception is `get_ica_sample_folder`, which has real behaviour (reads and
+# validates the per-SG state file), so it returns the finished folder string directly.
+
+
+def ica_cohort_path(cohort_name: str) -> IcaPath:
+    """`IcaPath` for one cohort's ICA output folder: `{output_root}/{cohort}`.
+
+    Args:
+        cohort_name: Cohort whose output folder is wanted.
+
+    Returns:
+        A composable `IcaPath` at `{output_root}/{cohort_name}`.
+    """
+    return IcaPath.output_root() / cohort_name
+
+
+def ica_run_path(cohort_name: str, user_reference: str, pipeline_id: str) -> IcaPath:
+    """`IcaPath` for one batch's ICA analysis-run folder.
+
+    Layout: `{output_root}/{cohort}/{user_reference}-{pipeline_id}` — the single definition
+    of the run-folder layout, so the folder, per-SG, and `ica://` URL forms all derive from
+    it and stay in lockstep. `user_reference` ends in `_`, so the hyphen yields a
+    `…_-{pipeline_id}` folder name.
+
+    Args:
+        cohort_name: Cohort the batch belongs to.
+        user_reference: The batch's ICA user reference.
+        pipeline_id: The ICA pipeline/analysis ID for the run.
+
+    Returns:
+        A composable `IcaPath`; append `/ sg_name` for a per-SG folder, or call
+        `.as_folder()` / `.as_url(role)` for a terminal string.
+    """
+    return ica_cohort_path(cohort_name) / f'{user_reference}-{pipeline_id}'
+
+
+def ica_md5_run_path(cohort_name: str, ar_guid: str, pipeline_id: str) -> IcaPath:
+    """`IcaPath` for the (unbatched) MD5 pipeline's analysis-run folder.
+
+    Distinct from `ica_run_path`: the MD5 pipeline processes all of a cohort's SGs in a
+    single pass, so its run folder has no batch segment and keys on `{cohort}_{ar_guid}`
+    rather than a DRAGEN batch's `user_reference`.
+
+    Args:
+        cohort_name: Cohort the MD5 run belongs to.
+        ar_guid: The analysis-runner GUID identifying the run.
+        pipeline_id: The ICA pipeline/analysis ID for the run.
+
+    Returns:
+        A composable `IcaPath` at `{output_root}/{cohort}/{cohort}_{ar_guid}-{pipeline_id}`.
+    """
+    return ica_cohort_path(cohort_name) / f'{cohort_name}_{ar_guid}-{pipeline_id}'
+
+
+def get_ica_sample_folder(
+    pipeline_id_arguid_path: cpg_utils.Path,
+    sg_name: str,
+    cohort_name: str,
+) -> str:
+    """Resolve the ICA folder for a single SG's batch output.
+
+    Reads `user_reference` and `pipeline_id` from the per-SG state file, then composes the
+    per-SG run folder. A schema-mismatched or missing-key state file raises here rather than
+    downstream — operators can recover by rerunning with `force_resubmit=true` or deleting
+    the offending per-SG file so the next resume reads from `{cohort}_batches.json` (the
+    authoritative source). The helper has no awareness of CANCELLED batches; the
+    orchestrator's resume-after-cancel guard halts the cohort before any Download stage runs.
+
+    Args:
+        pipeline_id_arguid_path: Path to the SG's per-SG state file.
+        sg_name: Sequencing-group name, appended as the final folder segment.
+        cohort_name: Cohort the SG belongs to.
+
+    Returns:
+        The ICA REST folder form
+        `{output_root}/{cohort_name}/{user_reference}-{pipeline_id}/{sg_name}/`.
+
+    Raises:
+        FileNotFoundError: If the per-SG state file does not exist.
+        KeyError: If the state file is missing a required key.
+        ValueError: If the state file predates the current per-SG state schema.
+    """
+    state = load_per_sg_state(
+        pipeline_id_arguid_path,
+        required_keys=('user_reference', 'pipeline_id', 'batch_index'),
+    )
+    return (ica_run_path(cohort_name, state['user_reference'], state['pipeline_id']) / sg_name).as_folder()
 
 
 def create_upload_object_id(
@@ -51,10 +147,10 @@ def create_upload_object_id(
         tuple[str, str]: (object_ID, status)
         Status will be from ICA, e.g. 'AVAILABLE', 'PARTIAL'.
     """
-    # Normalise to a single leading slash and no trailing slash; the existence
-    # check and CreateData below both append their own '/', so a caller passing
-    # a trailing slash would otherwise produce a double slash in the ICA path.
-    folder_path = '/' + folder_path.strip('/') + '/'
+    # Normalise to a single leading + trailing slash so the existence check and
+    # CreateData below don't produce a double slash when a caller passes a
+    # trailing slash of their own.
+    folder_path = IcaPath.from_relpath(folder_path).as_folder()
 
     existing_object_details: tuple[str, str] | None = ica_api_utils.check_object_already_exists(
         api_instance=api_instance,
@@ -282,7 +378,7 @@ def list_ica_files(
     have been collected, those collected entries are discarded and the
     ``icasdk.ApiException`` propagates. Callers should re-run on failure.
     """
-    base = '/' + base_ica_folder_path.strip('/') + '/'
+    base = IcaPath.from_relpath(base_ica_folder_path).as_folder()
 
     def _list_children(parent: str, type_: str) -> list[dict]:
         items: list[dict] = []

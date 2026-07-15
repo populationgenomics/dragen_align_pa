@@ -106,7 +106,6 @@ def fetch_passfail_from_ica(
         return response.json()
     except json.JSONDecodeError as e:
         logger.warning(
-            f'passfail.json at {ica_folder_path} returned non-JSON body '
-            f'(status={response.status_code}): {e}',
+            f'passfail.json at {ica_folder_path} returned non-JSON body (status={response.status_code}): {e}',
         )
         raise

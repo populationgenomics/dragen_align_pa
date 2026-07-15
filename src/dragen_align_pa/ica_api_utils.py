@@ -8,7 +8,7 @@ import contextlib
 import functools
 import json
 from collections.abc import Callable, Iterator
-from typing import TYPE_CHECKING, Any, Final, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Final, TypeVar
 
 import icasdk
 from cpg_utils.config import config_retrieve
@@ -30,6 +30,9 @@ from tenacity import (
     wait_fixed,
     wait_random_exponential,
 )
+
+from dragen_align_pa.constants_registry import resolve_ica_api_key_field
+from dragen_align_pa.paths import IcaPath
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -74,8 +77,8 @@ def _secret_client() -> secretmanager.SecretManagerServiceClient:
     wait=wait_exponential(multiplier=1, min=1, max=10),
     reraise=True,
 )
-def get_ica_secrets() -> dict[Literal['projectID', 'apiKey'], str]:
-    """Gets the project ID and API key used to interact with ICA.
+def _fetch_ica_secrets() -> dict[str, str]:
+    """Fetch and parse the `illumina_cpg_workbench_api` secret payload (raw, unvalidated).
 
     Cached for the lifetime of the process (the secret payload doesn't
     change during a run). The previous behaviour fetched fresh on every
@@ -90,7 +93,8 @@ def get_ica_secrets() -> dict[Literal['projectID', 'apiKey'], str]:
     — they indicate IAM / config problems that retrying won't fix.
 
     Returns:
-        dict[str, str]: A dictionary with the keys projectID and apiKey
+        The secret payload: `projectID` plus one API-key field per dataset (e.g. `apiKey`,
+        `tenk10k_apiKey`). Prefer `get_ica_secrets`, which validates the field a project needs.
     """
     client = _secret_client()
     secret_path: str = client.secret_version_path(
@@ -104,14 +108,52 @@ def get_ica_secrets() -> dict[Literal['projectID', 'apiKey'], str]:
     return json.loads(response.payload.data.decode('UTF-8'))
 
 
+def get_ica_secrets(project_name: str) -> dict[str, str]:
+    """Return the ICA secret payload, validating the API key `project_name` needs is present.
+
+    Fetches the process-cached payload (`_fetch_ica_secrets`) and checks that the field this
+    project's dataset authenticates with (`resolve_ica_api_key_field`) exists and is non-empty.
+    A missing or blank key fails here — once, with the field and project named — instead of as
+    a bare `KeyError` at the client call site (or an `x-api-key: null` written by the CLI).
+
+    Args:
+        project_name: The ICA project the secret will be used to authenticate against.
+
+    Returns:
+        The full secret payload (project ID plus the per-dataset API-key fields).
+
+    Raises:
+        KeyError: If `project_name`'s dataset family has no registered key field, or the secret
+            carries no non-empty value for that field.
+    """
+    secrets = _fetch_ica_secrets()
+    api_key_field = resolve_ica_api_key_field(project_name)
+    if not secrets.get(api_key_field):
+        raise KeyError(
+            f'ICA secret {SECRET_NAME!r} has no non-empty {api_key_field!r} field, required to '
+            f'authenticate against project {project_name!r}. Add the field to the secret in '
+            f'project {SECRET_PROJECT!r}.',
+        )
+    return secrets
+
+
 @contextlib.contextmanager
-def get_ica_api_client() -> Iterator[ApiClient]:
+def get_ica_api_client(project_name: str) -> Iterator[ApiClient]:
+    """Provide a context-managed icasdk.ApiClient authenticated for `project_name`.
+
+    Handles fetching secrets, configuring, and closing the client. The API key is chosen for
+    the project's dataset (via `resolve_ica_api_key_field`), so a client is never
+    authenticated with another dataset's key.
+
+    Args:
+        project_name: The ICA project name the client will operate against (an
+            `[ica.projects]` value); selects which dataset's API key to use.
+
+    Yields:
+        A configured `ApiClient`.
     """
-    Provides a context-managed icasdk.ApiClient.
-    Handles fetching secrets, configuring, and closing the client.
-    """
-    secrets: dict[Literal['projectID', 'apiKey'], str] = get_ica_secrets()
-    api_key: str = secrets['apiKey']
+    secrets = get_ica_secrets(project_name)
+    api_key: str = secrets[resolve_ica_api_key_field(project_name)]
 
     configuration = Configuration(host=ICA_REST_ENDPOINT)
     configuration.api_key['ApiKeyAuth'] = api_key
@@ -261,7 +303,7 @@ def check_object_already_exists(
         tuple[str, str] | None: (object_ID, object_status) if it exists, or else None
     """
     query_params: dict[str, Sequence[str] | list[str] | str] = {
-        'filePath': [f'/{folder_path.strip("/")}/{file_name}'],
+        'filePath': [IcaPath.from_relpath(folder_path).as_file(file_name)],
         'filePathMatchMode': 'STARTS_WITH_CASE_INSENSITIVE',
         'type': object_type,
     }
@@ -310,7 +352,7 @@ def find_file_id_by_name(
     Finds a specific file ID in an ICA folder by its exact name.
     (Used by download_specific_files_from_ica.py)
     """
-    ica_normalised_folder_path: str = '/' + parent_folder_path.strip('/') + '/'
+    ica_normalised_folder_path: str = IcaPath.from_relpath(parent_folder_path).as_folder()
     try:
         api_response = ica_retry(
             api_instance.get_project_data_list,  # pyright: ignore[reportUnknownVariableType]
@@ -359,7 +401,7 @@ def get_file_details_from_ica(
     """
     try:
         query_params: dict[str, Any] = {
-            'parentFolderPath': '/' + ica_folder_path.strip('/') + '/',
+            'parentFolderPath': IcaPath.from_relpath(ica_folder_path).as_folder(),
             'filename': [file_name],
             'filenameMatchMode': 'EXACT',
             'pageSize': '2',

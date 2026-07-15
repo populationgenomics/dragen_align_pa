@@ -224,7 +224,7 @@ def patched_environment(tmp_path: Path, monkeypatch):
     """Stub the secret fetch, ICA client, GCS client, and config calls."""
     monkeypatch.setattr(
         'dragen_align_pa.jobs.download_batch_artefacts.ica_api_utils.get_ica_secrets',
-        lambda: {'projectID': 'proj', 'apiKey': 'key'},
+        lambda project_name: {'projectID': 'proj', 'apiKey': 'key'},  # noqa: ARG005
     )
 
     # `get_ica_api_client()` is used as a context manager.
@@ -233,7 +233,7 @@ def patched_environment(tmp_path: Path, monkeypatch):
     fake_client.__exit__ = MagicMock(return_value=False)
     monkeypatch.setattr(
         'dragen_align_pa.jobs.download_batch_artefacts.ica_api_utils.get_ica_api_client',
-        lambda: fake_client,
+        lambda project_name: fake_client,  # noqa: ARG005
     )
 
     fake_storage = MagicMock()

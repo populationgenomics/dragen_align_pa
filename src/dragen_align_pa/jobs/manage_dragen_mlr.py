@@ -10,7 +10,17 @@ from cpg_flow.targets import Cohort
 from loguru import logger
 
 from dragen_align_pa import ica_cli_utils, utils
-from dragen_align_pa.constants import ANALYSIS_INSTANCE_TIER, BUCKET_NAME, resolve_ica_project_id
+from dragen_align_pa.constants import (
+    ANALYSIS_INSTANCE_TIER,
+    MLR_HASH_TABLE_RELPATH,
+)
+from dragen_align_pa.constants_registry import (
+    ica_project_name,
+    resolve_ica_project_id,
+    resolve_mlr_config_file_id,
+)
+from dragen_align_pa.paths import IcaPath
+from dragen_align_pa.ica_utils import ica_run_path
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
 from dragen_align_pa.utils import load_per_sg_state
 
@@ -35,14 +45,9 @@ def _mlr_find_input_urls(ica_base_folder: str, sg_name: str) -> tuple[str, str]:
         f'{sg_name}.hard-filtered.gvcf.gz',
     )
 
-    # Assumes the CRAMs are in the 'OurDNA-DRAGEN-378' project.
-    # This could be parameterized if needed.
-    cram_url: str = (
-        f'ica://{cpg_utils.config.config_retrieve(["ica", "projects", "dragen_align"])}/{cram_path.lstrip("/")}'
-    )
-    gvcf_url: str = (
-        f'ica://{cpg_utils.config.config_retrieve(["ica", "projects", "dragen_align"])}/{gvcf_path.lstrip("/")}'
-    )
+    # The CRAM and gVCF live in the dragen_align project, resolved via [ica.projects].
+    cram_url: str = IcaPath.from_relpath(cram_path).as_url('dragen_align')
+    gvcf_url: str = IcaPath.from_relpath(gvcf_path).as_url('dragen_align')
 
     return cram_url, gvcf_url
 
@@ -125,13 +130,11 @@ def _mlr_parse_submission_output(output_json_folder: str, run_id: str) -> str:
 
 def _submit_mlr_run(
     pipeline_id_arguid_path: cpg_utils.Path,
-    ica_analysis_output_folder: str,
     sg_name: str,
     cohort_name: str,
     mlr_project: str,
     mlr_config_json: str,
     mlr_hash_table: str,
-    output_prefix: str,
 ) -> str:
     """
     Submits the DRAGEN MLR pipeline by running individual CLI commands
@@ -142,13 +145,16 @@ def _submit_mlr_run(
     user_reference = data['user_reference']
 
     batch_tmpdir = os.environ.get('BATCH_TMPDIR', '/io')
-    ica_base_folder = (
-        f'/{BUCKET_NAME}/{ica_analysis_output_folder}/{cohort_name}/{user_reference}-{pipeline_id}/{sg_name}/'
-    )
+    # One IcaPath for this SG's folder feeds both the REST folder form (input lookup) and the
+    # ica:// URL form (pipeline output) — the layout is composed once, not spelled twice.
+    sample_path = ica_run_path(cohort_name, user_reference, pipeline_id) / sg_name
+    ica_base_folder = sample_path.as_folder()
 
     try:
-        # --- 0. Authenticate ---
-        ica_cli_utils.authenticate_ica_cli()
+        # --- 0. Authenticate against the DRAGEN project, where the CRAM/gVCF inputs live and
+        # are listed below; step 2 switches to the MLR project (same dataset family) to submit.
+        dragen_project = ica_project_name('dragen_align')
+        ica_cli_utils.authenticate_ica_cli(dragen_project)
 
         # --- 1. Find input file paths ---
         cram_url, gvcf_url = _mlr_find_input_urls(ica_base_folder, sg_name)
@@ -159,7 +165,7 @@ def _submit_mlr_run(
         local_config_path = _mlr_download_config(mlr_config_json, batch_tmpdir)
 
         # --- 4. Build and run the popgen-cli command ---
-        output_folder_url = f'{output_prefix}/{cohort_name}/{user_reference}-{pipeline_id}/{sg_name}'
+        output_folder_url = sample_path.as_url('dragen_align')
         mlr_run_id = f'{sg_name}-mlr'
         submit_command = _mlr_build_popgen_cli_command(
             local_config_path=local_config_path,
@@ -192,27 +198,23 @@ def run(
     """
     Calls the generic pipeline manager with settings for the MLR pipeline.
     """
-    ica_analysis_output_folder: str = cpg_utils.config.config_retrieve(
-        ['ica', 'data_prep', 'output_folder'],
-    )
-    mlr_project: str = resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_mlr']))
-    dragen_align_project: str = cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align'])
-    mlr_config_json: str = cpg_utils.config.config_retrieve(['dragen_align_pa', 'manage_dragen_mlr', 'config_json'])
-    mlr_hash_table: str = cpg_utils.config.config_retrieve(['dragen_align_pa', 'manage_dragen_mlr', 'mlr_hash_table'])
-    output_prefix: str = f'ica://{dragen_align_project}/{BUCKET_NAME}/{ica_analysis_output_folder}'
+    # The MLR project name selects both the ICA project to run in and, from ICA_FILE_IDS,
+    # the config JSON that lives in that project.
+    mlr_project_name: str = ica_project_name('dragen_mlr')
+    mlr_project: str = resolve_ica_project_id(mlr_project_name)
+    mlr_config_json: str = resolve_mlr_config_file_id(mlr_project_name)
+    mlr_hash_table: str = IcaPath.from_relpath(MLR_HASH_TABLE_RELPATH).as_url('dragen_mlr')
 
     def _create_submit_callable(sg_name: str) -> Callable[[], str]:
         """Creates a zero-argument callable for pipeline submission."""
         return partial(
             _submit_mlr_run,
             pipeline_id_arguid_path=pipeline_id_arguid_path_dict[f'{sg_name}_pipeline_id_and_arguid'],
-            ica_analysis_output_folder=ica_analysis_output_folder,
             sg_name=sg_name,
             cohort_name=cohort.name,
             mlr_project=mlr_project,
             mlr_config_json=mlr_config_json,
             mlr_hash_table=mlr_hash_table,
-            output_prefix=output_prefix,
         )
 
     manage_ica_pipeline_loop(

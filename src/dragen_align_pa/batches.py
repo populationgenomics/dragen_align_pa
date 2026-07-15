@@ -28,8 +28,7 @@ ALLOWED_BATCH_STATUSES = frozenset({'PENDING', 'INPROGRESS', 'SUCCEEDED', 'FAILE
 def validate_error_strategy(value: str, *, context: str) -> None:
     if value not in ALLOWED_ERROR_STRATEGIES:
         raise ValueError(
-            f"{context}: error_strategy must be one of {sorted(ALLOWED_ERROR_STRATEGIES)}, "
-            f"got {value!r}.",
+            f'{context}: error_strategy must be one of {sorted(ALLOWED_ERROR_STRATEGIES)}, got {value!r}.',
         )
 
 
@@ -203,23 +202,25 @@ class BatchesFile:
     # on read, so a truncated / hand-edited file fails fast at load with a
     # clear message naming the missing field rather than as a bare KeyError
     # much later from `failed_sg_names()` / `find_batch_for_sg()` etc.
-    _REQUIRED_BATCH_KEYS = frozenset({
-        'batch_index',
-        'retry_generation',
-        'sg_names',
-        'retried_sgs',
-        'user_reference',
-        'pipeline_id',
-        'ar_guid',
-        'analysis_output_folder_fid',
-        'fastq_list_fid',
-        'cram_fids',
-        'status',
-        'passfail',
-        'passfail_seen',
-        'has_been_retried',
-        'error_strategy',
-    })
+    _REQUIRED_BATCH_KEYS = frozenset(
+        {
+            'batch_index',
+            'retry_generation',
+            'sg_names',
+            'retried_sgs',
+            'user_reference',
+            'pipeline_id',
+            'ar_guid',
+            'analysis_output_folder_fid',
+            'fastq_list_fid',
+            'cram_fids',
+            'status',
+            'passfail',
+            'passfail_seen',
+            'has_been_retried',
+            'error_strategy',
+        }
+    )
 
     def read(self) -> None:
         with self.path.open('r') as fh:
@@ -392,12 +393,7 @@ class BatchesFile:
         failures, and cancel only fires on PENDING/INPROGRESS batches).
         Callers that need unique SGs should wrap in `set(...)`.
         """
-        return [
-            sg
-            for b in self.batches
-            if b['status'] == 'CANCELLED'
-            for sg in b['sg_names']
-        ]
+        return [sg for b in self.batches if b['status'] == 'CANCELLED' for sg in b['sg_names']]
 
     def successful_sg_names(self) -> list[str]:
         """SGs explicitly marked Success in any non-CANCELLED batch's passfail.

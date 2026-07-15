@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Any
 
 import cpg_utils.config
 from icasdk.apis.tags import project_analysis_api
@@ -9,7 +9,7 @@ from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
 
 from dragen_align_pa import ica_api_utils
-from dragen_align_pa.constants import resolve_ica_project_id
+from dragen_align_pa.constants_registry import ica_project_name, resolve_ica_api_key_field, resolve_ica_project_id
 
 
 def run_md5_pipeline(
@@ -21,9 +21,10 @@ def run_md5_pipeline(
 ) -> str:
     header_params: dict[Any, Any] = {}
     chunk_size = str(cpg_utils.config.config_retrieve(['ica', 'pipelines', 'md5', 'chunk_size'], default='100'))
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    project_id: str = resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align']))
-    api_key: str = secrets['apiKey']
+    dragen_project = ica_project_name('dragen_align')
+    secrets = ica_api_utils.get_ica_secrets(dragen_project)
+    project_id: str = resolve_ica_project_id(dragen_project)
+    api_key: str = secrets[resolve_ica_api_key_field(dragen_project)]
 
     body = CreateNextflowAnalysis(
         userReference=f'{cohort_name}_{ar_guid}',

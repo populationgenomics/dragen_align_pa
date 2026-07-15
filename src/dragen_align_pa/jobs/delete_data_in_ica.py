@@ -19,13 +19,18 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-import cpg_utils.config
+import cpg_utils
 from icasdk.apis.tags import project_data_api
 from icasdk.exceptions import ApiException, ApiValueError
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
-from dragen_align_pa.constants import resolve_ica_project_id
+from dragen_align_pa.constants import FASTQ_DELETABLE_PROJECTS
+from dragen_align_pa.constants_registry import (
+    ica_project_id_or_none,
+    ica_project_name,
+    resolve_ica_project_id,
+)
 from dragen_align_pa.utils import get_pipeline_path
 
 _DELETING_STATUS = 'DELETING'
@@ -160,7 +165,7 @@ def run(
     cohort_analysis_output_fid_path: cpg_utils.Path,
     cram_fid_paths_dict: dict[str, cpg_utils.Path] | None,
     fastq_ids_list_path: cpg_utils.Path | None,
-    settle_seconds: int = 5,
+    settle_seconds: int = 60,
 ) -> None:
     """Entry point — called from the `DeleteDataInIca` stage's PythonJob.
 
@@ -175,24 +180,47 @@ def run(
     if not cram_fid_paths_dict and not fastq_ids_list_path:
         raise ValueError('Either cram_fid_paths_dict or fastq_ids_list_path must be provided')
 
-    with ica_api_utils.get_ica_api_client() as api_client:
+    dragen_project = ica_project_name('dragen_align')
+    with ica_api_utils.get_ica_api_client(dragen_project) as api_client:
         api_instance = project_data_api.ProjectDataApi(api_client)
-        project_id: str = resolve_ica_project_id(cpg_utils.config.config_retrieve(['ica', 'projects', 'dragen_align']))
         failures += _delete_and_verify(
             api_instance=api_instance,
-            project_id=project_id,
+            project_id=resolve_ica_project_id(dragen_project),
             fids=[cohort_folder_fid, *cram_fids],
             settle_seconds=settle_seconds,
         )
-        if fastq_ids_list_path:
-            project_id = resolve_ica_project_id(
-                cpg_utils.config.config_retrieve(['ica', 'projects', 'fastq_source_project'])
+
+    if fastq_ids_list_path:
+        fastq_source_project = ica_project_name('fastq_source_project')
+        # Guard which projects we may delete uploaded FASTQ data from. Only the sanctioned
+        # projects are deleted; a project deliberately registered with a None ID is
+        # collaborator-managed and skipped; any other (non-None, non-sanctioned) project is a
+        # misconfiguration and rejected rather than silently deleted from.
+        fastq_project_id = ica_project_id_or_none(fastq_source_project)
+        if fastq_source_project in FASTQ_DELETABLE_PROJECTS:
+            # The source FASTQs live in a separate ICA project that may belong to a different
+            # dataset (and thus a different API key), so authenticate a client for that project
+            # rather than reusing the DRAGEN one.
+            with ica_api_utils.get_ica_api_client(fastq_source_project) as fastq_client:
+                fastq_api_instance = project_data_api.ProjectDataApi(fastq_client)
+                failures += _delete_and_verify(
+                    api_instance=fastq_api_instance,
+                    project_id=resolve_ica_project_id(fastq_source_project),
+                    fids=fastq_fids,
+                    settle_seconds=settle_seconds,
+                )
+        elif fastq_project_id is None:
+            # Explicit None marks a collaborator-managed upload area we're not permitted to
+            # delete from (they delete on request); skip rather than fail the stage.
+            logger.info(
+                f'FASTQ source project {fastq_source_project!r} is collaborator-managed '
+                f'(no ICA project ID registered); skipping FASTQ deletion.',
             )
-            failures += _delete_and_verify(
-                api_instance=api_instance,
-                project_id=project_id,
-                fids=fastq_fids,
-                settle_seconds=settle_seconds,
+        else:
+            raise ValueError(
+                f'FASTQ source project {fastq_source_project!r} is not authorised for FASTQ '
+                f'deletion. Only {sorted(FASTQ_DELETABLE_PROJECTS)} may have FASTQ data deleted; '
+                f'other FASTQ-upload projects must be registered with a None ID in ICA_PROJECT_IDS.',
             )
 
     if failures:
