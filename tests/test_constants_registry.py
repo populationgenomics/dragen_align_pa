@@ -43,82 +43,96 @@ def test_resolve_ica_file_id_rejects_placeholder_id(monkeypatch):
 
 
 def test_resolve_mlr_config_file_id_returns_registered_id():
-    """The MLR config JSON is keyed by MLR project name in its own map, separate from the
+    """The MLR config JSON is registered per family in ICA_PROJECT_SETUP, separate from the
     reference-asset basenames in ICA_FILE_IDS."""
-    resolved = constants_registry.resolve_mlr_config_file_id('ourdna-dragen-mlr-jobs')
-    assert resolved == 'fil.91c3e63114fc43dc31ed08dde927d6b4'
+    assert constants_registry.resolve_mlr_config_file_id('ourdna') == 'fil.91c3e63114fc43dc31ed08dde927d6b4'
 
 
-def test_resolve_mlr_config_file_id_raises_on_unknown_project():
-    """Unknown MLR project → error naming the project (not 'not a registered BED basename')."""
-    with pytest.raises(KeyError, match=r'no-such-mlr-project'):
-        constants_registry.resolve_mlr_config_file_id('no-such-mlr-project')
+def test_resolve_mlr_config_file_id_raises_on_unknown_family():
+    """Unknown family → error naming the family (not 'not a registered BED basename')."""
+    with pytest.raises(KeyError, match=r'no-such-family'):
+        constants_registry.resolve_mlr_config_file_id('no-such-family')
 
 
 def test_resolve_mlr_config_file_id_rejects_placeholder():
     """tenk10k's MLR config JSON is the _TODO_FID sentinel until minted — fail loud."""
-    with pytest.raises(ValueError, match=r'Tenk10K_Dragen_MLR_Jobs'):
-        constants_registry.resolve_mlr_config_file_id('Tenk10K_Dragen_MLR_Jobs')
+    with pytest.raises(ValueError, match=r'tenk10k'):
+        constants_registry.resolve_mlr_config_file_id('tenk10k')
 
 
-def test_project_family_looks_up_registered_family():
-    """Family is the explicit ICA_PROJECT_IDS grouping, not a name prefix — every project
-    of a dataset (DRAGEN, MLR, upload) resolves to the same family regardless of casing."""
-    assert constants_registry.project_family('OurDNA-DRAGEN-378') == 'ourdna'
-    assert constants_registry.project_family('ourdna-dragen-mlr-jobs') == 'ourdna'
-    assert constants_registry.project_family('Tenk10k_Dragen_378') == 'tenk10k'
-    assert constants_registry.project_family('Tenk10K_Dragen_MLR_Jobs') == 'tenk10k'
+def test_resolve_ica_project_name_by_role():
+    """A role resolves to its registered project name by direct (family, role) indexing."""
+    assert (
+        constants_registry.resolve_ica_project_name('ourdna', constants_registry.ROLE_DRAGEN_ALIGN)
+        == 'OurDNA-DRAGEN-378'
+    )
+    assert (
+        constants_registry.resolve_ica_project_name('tenk10k', constants_registry.ROLE_DRAGEN_MLR)
+        == 'Tenk10K_Dragen_MLR_Jobs'
+    )
+    assert (
+        constants_registry.resolve_ica_project_name('tenk10k', constants_registry.ROLE_FASTQ_UPLOAD)
+        == 'tenk10k_fastq_upload'
+    )
 
 
-def test_project_family_raises_on_unregistered_project():
-    """An unregistered project name fails loud rather than being silently classified by
-    prefix into some dataset's family (and thus its API key)."""
-    with pytest.raises(KeyError, match=r'not-a-real-project'):
-        constants_registry.project_family('not-a-real-project')
+def test_resolve_ica_project_name_unknown_family_raises():
+    with pytest.raises(KeyError, match=r'no-such-family'):
+        constants_registry.resolve_ica_project_name('no-such-family', constants_registry.ROLE_DRAGEN_ALIGN)
 
 
-def test_resolve_ica_project_id_resolves_across_families():
-    """Names are registered under a family; the resolver searches all families."""
-    assert constants_registry.resolve_ica_project_id('OurDNA-DRAGEN-378') == '5c3a60b0-1458-4e37-8877-ec6b25dc4003'
-    mlr_id = constants_registry.resolve_ica_project_id('Tenk10K_Dragen_MLR_Jobs')
-    assert mlr_id == '16bb091c-5866-4e39-929f-2b678457b772'
+def test_resolve_ica_project_name_unknown_role_raises():
+    """A role the family doesn't register fails loud (no name inference from project strings)."""
+    with pytest.raises(KeyError, match=r'no-such-role'):
+        constants_registry.resolve_ica_project_name('ourdna', 'no-such-role')
 
 
-def test_resolve_ica_project_id_raises_on_unknown_name():
-    with pytest.raises(KeyError, match=r'nope-not-registered'):
-        constants_registry.resolve_ica_project_id('nope-not-registered')
+def test_resolve_ica_project_id_by_role():
+    assert (
+        constants_registry.resolve_ica_project_id('ourdna', constants_registry.ROLE_DRAGEN_ALIGN)
+        == '5c3a60b0-1458-4e37-8877-ec6b25dc4003'
+    )
+    assert (
+        constants_registry.resolve_ica_project_id('tenk10k', constants_registry.ROLE_DRAGEN_MLR)
+        == '16bb091c-5866-4e39-929f-2b678457b772'
+    )
 
 
 def test_resolve_ica_project_id_raises_on_none_id():
-    """A project registered with an explicit None ID (collaborator-managed data, e.g.
-    tenk10k_fastq_upload) can't be addressed by ID here — resolve fails loud rather than
-    returning None into its `str` contract."""
-    with pytest.raises(KeyError, match=r'tenk10k_fastq_upload'):
-        constants_registry.resolve_ica_project_id('tenk10k_fastq_upload')
+    """tenk10k's fastq-upload is registered with an explicit None id (collaborator-managed data);
+    resolve_ica_project_id fails loud rather than returning None into its `str` contract."""
+    with pytest.raises(KeyError, match=r'fastq-upload'):
+        constants_registry.resolve_ica_project_id('tenk10k', constants_registry.ROLE_FASTQ_UPLOAD)
 
 
-def test_ica_project_id_or_none_returns_none_for_collaborator_project():
+def test_resolve_ica_project_id_or_none_returns_none_for_collaborator_project():
     """The tolerant accessor returns the explicit None (the delete path relies on this to
-    distinguish 'skip, collaborator-managed' from 'unregistered typo')."""
-    assert constants_registry.ica_project_id_or_none('tenk10k_fastq_upload') is None
-    assert constants_registry.ica_project_id_or_none('OurDNA-DRAGEN-378') == '5c3a60b0-1458-4e37-8877-ec6b25dc4003'
-
-
-def test_ica_project_id_or_none_raises_on_unregistered():
-    with pytest.raises(KeyError, match=r'nope-not-registered'):
-        constants_registry.ica_project_id_or_none('nope-not-registered')
+    distinguish 'skip, collaborator-managed' from a misconfiguration)."""
+    assert constants_registry.resolve_ica_project_id_or_none('tenk10k', constants_registry.ROLE_FASTQ_UPLOAD) is None
+    assert (
+        constants_registry.resolve_ica_project_id_or_none('ourdna', constants_registry.ROLE_DRAGEN_ALIGN)
+        == '5c3a60b0-1458-4e37-8877-ec6b25dc4003'
+    )
 
 
 def test_resolve_ica_api_key_field_selects_by_family():
-    """OurDNA uses the base `apiKey`; tenk10k its own field. Selection is by the project's
-    dataset family, so DRAGEN and MLR projects of the same dataset resolve to the same field."""
-    assert constants_registry.resolve_ica_api_key_field('OurDNA-DRAGEN-378') == 'apiKey'
-    assert constants_registry.resolve_ica_api_key_field('ourdna-dragen-mlr-jobs') == 'apiKey'
-    assert constants_registry.resolve_ica_api_key_field('Tenk10k_Dragen_378') == 'tenk10k_apiKey'
-    assert constants_registry.resolve_ica_api_key_field('Tenk10K_Dragen_MLR_Jobs') == 'tenk10k_apiKey'
+    """OurDNA uses the base `apiKey`; tenk10k its own field. Selection is by dataset family."""
+    assert constants_registry.resolve_ica_api_key_field('ourdna') == 'apiKey'
+    assert constants_registry.resolve_ica_api_key_field('tenk10k') == 'tenk10k_apiKey'
 
 
-def test_resolve_ica_api_key_field_raises_on_unregistered_project():
-    """An unregistered project fails loud rather than silently reusing another dataset's key."""
+def test_resolve_ica_api_key_field_raises_on_unregistered_family():
+    """An unregistered family fails loud rather than silently reusing another dataset's key."""
     with pytest.raises(KeyError, match=r'newdataset'):
-        constants_registry.resolve_ica_api_key_field('newdataset-dragen-378')
+        constants_registry.resolve_ica_api_key_field('newdataset')
+
+
+def test_config_reading_entry_points_use_configured_family():
+    """The bare `ica_*` entry points read `[ica.projects].project_root` (conftest: 'ourdna')."""
+    assert constants_registry.ica_project_name(constants_registry.ROLE_DRAGEN_ALIGN) == 'OurDNA-DRAGEN-378'
+    mlr_id = constants_registry.ica_project_id(constants_registry.ROLE_DRAGEN_MLR)
+    assert mlr_id == 'f2f55709-f8d4-4364-bb04-c41975d4c0ed'
+    align_id = constants_registry.ica_project_id_or_none(constants_registry.ROLE_DRAGEN_ALIGN)
+    assert align_id == '5c3a60b0-1458-4e37-8877-ec6b25dc4003'
+    assert constants_registry.ica_api_key_field() == 'apiKey'
+    assert constants_registry.ica_mlr_config_file_id() == 'fil.91c3e63114fc43dc31ed08dde927d6b4'

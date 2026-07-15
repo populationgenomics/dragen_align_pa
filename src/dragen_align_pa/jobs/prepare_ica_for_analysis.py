@@ -6,7 +6,7 @@ from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
-from dragen_align_pa.constants_registry import ica_project_name, resolve_ica_project_id
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
 from dragen_align_pa.paths import IcaPath
 
 # Fail-fast here so a doomed submission surfaces with context instead of
@@ -20,11 +20,9 @@ def run(cohort: Cohort, output: cpg_utils.Path) -> None:
     This pipeline writes per-batch (not per-SG) analysis folders directly under
     this parent folder.
     """
-    dragen_project = ica_project_name('dragen_align')
-    path_parameters: dict[str, str] = {'projectId': resolve_ica_project_id(dragen_project)}
     folder_path: str = IcaPath.output_root().as_folder()
 
-    with ica_api_utils.get_ica_api_client(dragen_project) as api_client:
+    with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_parameters):
         api_instance = project_data_api.ProjectDataApi(api_client)
         folder_id, status = ica_utils.create_upload_object_id(
             api_instance=api_instance,

@@ -11,7 +11,7 @@ from icasdk.apis.tags import project_analysis_api, project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
-from dragen_align_pa.constants_registry import ica_project_name, resolve_ica_project_id
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
 from dragen_align_pa.paths import IcaPath
 from dragen_align_pa.jobs import run_intake_qc_pipeline
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
@@ -90,8 +90,7 @@ def _submit_md5_run(
     (This is the original submit function from this file)
     """
     logger.info(f'Submitting new MD5 ICA pipeline for {cohort_name}')
-    dragen_project = ica_project_name('dragen_align')
-    with ica_api_utils.get_ica_api_client(dragen_project) as api_client:
+    with ica_api_utils.get_ica_api_client() as api_client:
         api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         md5_pipeline_id: str = run_intake_qc_pipeline.run_md5_pipeline(
             cohort_name=cohort_name,
@@ -134,13 +133,11 @@ def run(
             )
             raise
 
-    dragen_project = ica_project_name('dragen_align')
-    path_parameters: dict[str, str] = {'projectId': resolve_ica_project_id(dragen_project)}
     ar_guid: str = try_get_ar_guid()
     fastq_list_file_id: str
     md5_outputs_folder_id: str
 
-    with ica_api_utils.get_ica_api_client(dragen_project) as api_client:
+    with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_parameters):
         api_instance = project_data_api.ProjectDataApi(api_client)
 
         # Get all ica file ids for the fastq files
@@ -167,7 +164,7 @@ def run(
         with open(fastq_list_filename_path, 'w') as fq_outpath:
             fq_outpath.write('\n'.join(ica_fastq_info.keys()))
 
-        ica_cli_utils.authenticate_ica_cli(dragen_project)
+        ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_ALIGN)
         ica_cli_utils.upload_local_file(
             local_file_path=fastq_list_filename_path,
             ica_folder_path=fastq_list_folder,

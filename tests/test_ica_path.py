@@ -3,13 +3,12 @@
 import pytest
 from cpg_utils.config import ConfigError
 
-from dragen_align_pa import constants, paths
+from dragen_align_pa import constants, constants_registry, paths
 
 _SENTINEL = object()
 
 _CONFIG: dict[tuple[str, ...], str] = {
     ('ica', 'data_prep', 'output_folder'): 'test-dragen-378',
-    ('ica', 'projects', 'dragen_mlr'): 'ourdna-dragen-mlr-jobs',
 }
 
 
@@ -53,7 +52,7 @@ def test_as_file_has_leading_no_trailing_slash(monkeypatch):
 
 def test_as_url_uses_project_name_and_no_trailing_slash(monkeypatch):
     _patch_config(monkeypatch)
-    url = paths.IcaPath.from_relpath('data/ref/hashtable/hg38/DRAGEN/9').as_url('dragen_mlr')
+    url = paths.IcaPath.from_relpath('data/ref/hashtable/hg38/DRAGEN/9').as_url(constants_registry.ROLE_DRAGEN_MLR)
     assert url == 'ica://ourdna-dragen-mlr-jobs/data/ref/hashtable/hg38/DRAGEN/9'
 
 
@@ -65,8 +64,8 @@ def test_segments_collapse_stray_slashes(monkeypatch):
 
 def test_as_url_missing_role_raises(monkeypatch):
     _patch_config(monkeypatch)
-    # `does_not_exist` matches no project in the configured family → resolution fails loud.
-    with pytest.raises(ValueError, match=r'does_not_exist'):
+    # `does_not_exist` is not a registered role in the configured family → resolution fails loud.
+    with pytest.raises(KeyError, match=r'does_not_exist'):
         paths.IcaPath.from_relpath('data/ref').as_url('does_not_exist')
 
 
@@ -89,7 +88,7 @@ def test_empty_path_folder_is_root_slash(monkeypatch):
 
 def test_mlr_hash_table_relpath_composes_expected_url(monkeypatch):
     _patch_config(monkeypatch)
-    url = paths.IcaPath.from_relpath(constants.MLR_HASH_TABLE_RELPATH).as_url('dragen_mlr')
+    url = paths.IcaPath.from_relpath(constants.MLR_HASH_TABLE_RELPATH).as_url(constants_registry.ROLE_DRAGEN_MLR)
     assert url == 'ica://ourdna-dragen-mlr-jobs/data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9'
 
 

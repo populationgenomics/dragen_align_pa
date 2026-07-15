@@ -15,9 +15,10 @@ from dragen_align_pa.constants import (
     MLR_HASH_TABLE_RELPATH,
 )
 from dragen_align_pa.constants_registry import (
-    ica_project_name,
-    resolve_ica_project_id,
-    resolve_mlr_config_file_id,
+    ROLE_DRAGEN_ALIGN,
+    ROLE_DRAGEN_MLR,
+    ica_mlr_config_file_id,
+    ica_project_id,
 )
 from dragen_align_pa.paths import IcaPath
 from dragen_align_pa.ica_utils import ica_run_path
@@ -46,8 +47,8 @@ def _mlr_find_input_urls(ica_base_folder: str, sg_name: str) -> tuple[str, str]:
     )
 
     # The CRAM and gVCF live in the dragen_align project, resolved via [ica.projects].
-    cram_url: str = IcaPath.from_relpath(cram_path).as_url('dragen_align')
-    gvcf_url: str = IcaPath.from_relpath(gvcf_path).as_url('dragen_align')
+    cram_url: str = IcaPath.from_relpath(cram_path).as_url(ROLE_DRAGEN_ALIGN)
+    gvcf_url: str = IcaPath.from_relpath(gvcf_path).as_url(ROLE_DRAGEN_ALIGN)
 
     return cram_url, gvcf_url
 
@@ -153,8 +154,7 @@ def _submit_mlr_run(
     try:
         # --- 0. Authenticate against the DRAGEN project, where the CRAM/gVCF inputs live and
         # are listed below; step 2 switches to the MLR project (same dataset family) to submit.
-        dragen_project = ica_project_name('dragen_align')
-        ica_cli_utils.authenticate_ica_cli(dragen_project)
+        ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_ALIGN)
 
         # --- 1. Find input file paths ---
         cram_url, gvcf_url = _mlr_find_input_urls(ica_base_folder, sg_name)
@@ -165,7 +165,7 @@ def _submit_mlr_run(
         local_config_path = _mlr_download_config(mlr_config_json, batch_tmpdir)
 
         # --- 4. Build and run the popgen-cli command ---
-        output_folder_url = sample_path.as_url('dragen_align')
+        output_folder_url = sample_path.as_url(ROLE_DRAGEN_ALIGN)
         mlr_run_id = f'{sg_name}-mlr'
         submit_command = _mlr_build_popgen_cli_command(
             local_config_path=local_config_path,
@@ -198,12 +198,11 @@ def run(
     """
     Calls the generic pipeline manager with settings for the MLR pipeline.
     """
-    # The MLR project name selects both the ICA project to run in and, from ICA_FILE_IDS,
-    # the config JSON that lives in that project.
-    mlr_project_name: str = ica_project_name('dragen_mlr')
-    mlr_project: str = resolve_ica_project_id(mlr_project_name)
-    mlr_config_json: str = resolve_mlr_config_file_id(mlr_project_name)
-    mlr_hash_table: str = IcaPath.from_relpath(MLR_HASH_TABLE_RELPATH).as_url('dragen_mlr')
+    # The configured family's MLR project to run in, plus the config JSON registered for that
+    # family (both from ICA_PROJECT_SETUP).
+    mlr_project: str = ica_project_id(ROLE_DRAGEN_MLR)
+    mlr_config_json: str = ica_mlr_config_file_id()
+    mlr_hash_table: str = IcaPath.from_relpath(MLR_HASH_TABLE_RELPATH).as_url(ROLE_DRAGEN_MLR)
 
     def _create_submit_callable(sg_name: str) -> Callable[[], str]:
         """Creates a zero-argument callable for pipeline submission."""

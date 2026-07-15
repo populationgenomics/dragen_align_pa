@@ -13,14 +13,13 @@ from cpg_utils.config import config_retrieve
 from loguru import logger
 
 from dragen_align_pa.constants import DESIGN_TO_BEDS, DESIGN_TO_CANONICAL
-from dragen_align_pa.constants_registry import resolve_ica_project_name
+from dragen_align_pa.constants_registry import (
+    REQUIRED_ICA_ROLES,
+    resolve_ica_api_key_field,
+    resolve_ica_project_name,
+    resolve_mlr_config_file_id,
+)
 from dragen_align_pa.utils import get_bed_names_for_seqtype
-
-# Roles that must resolve from the configured project family for any run. DRAGEN-align and
-# DRAGEN-MLR come from one `project_root`, so they can't disagree on dataset (the old
-# cross-dataset mismatch is now structurally impossible); this instead confirms the family is
-# registered and complete.
-_REQUIRED_ICA_ROLES = ('dragen_align', 'dragen_mlr', 'fastq_source_project')
 
 
 def validate_configuration() -> None:
@@ -40,19 +39,29 @@ def validate_configuration() -> None:
 
 
 def assert_ica_project_root_resolves() -> None:
-    """Fail loud at submit if `[ica.projects].project_root` doesn't resolve the required roles.
+    """Fail loud at submit if `[ica.projects].project_root` is misconfigured.
 
-    Config names only the dataset family; this confirms it's a registered family whose projects
-    cover DRAGEN-align, DRAGEN-MLR and FASTQ-upload, so a typo'd or malformed `project_root`
-    aborts the submission on the submitter rather than surfacing at the first ICA call in a job.
+    Config names only the dataset family; this confirms, purely from the registry tables (no
+    ICA calls), that the family is registered and complete — so a family mistake aborts on the
+    submitter rather than surfacing at the first ICA call deep in a job. It checks that:
+
+    - every required role (DRAGEN-align, DRAGEN-MLR, FASTQ-upload) resolves to a project;
+    - the family has a registered `illumina_cpg_workbench_api` API-key field (else every ICA
+      client build would fail at job runtime with a bare `KeyError`);
+    - the family's MLR project has a minted MLR config JSON (not the `fil.TODO_` placeholder),
+      which the MLR submission job would otherwise only discover mid-run.
 
     Raises:
-        KeyError: If `project_root` is not a registered family.
-        ValueError: If the family's names don't yield exactly one project for a required role.
+        KeyError: If `project_root` isn't a registered family, a required role is missing, or
+            the family has no registered API-key field.
+        ValueError: If a role entry is missing its project name, or the MLR config JSON is still
+            the not-yet-minted placeholder.
     """
     project_root = config_retrieve(['ica', 'projects', 'project_root'])
-    for role in _REQUIRED_ICA_ROLES:
+    for role in REQUIRED_ICA_ROLES:
         resolve_ica_project_name(project_root, role)
+    resolve_ica_api_key_field(project_root)
+    resolve_mlr_config_file_id(project_root)
 
 
 def _resolve_sg_canonical_design(sg: SequencingGroup) -> str:

@@ -31,7 +31,7 @@ from tenacity import (
     wait_random_exponential,
 )
 
-from dragen_align_pa.constants_registry import resolve_ica_api_key_field
+from dragen_align_pa.constants_registry import ica_api_key_field, ica_project_id
 from dragen_align_pa.paths import IcaPath
 
 if TYPE_CHECKING:
@@ -94,7 +94,7 @@ def _fetch_ica_secrets() -> dict[str, str]:
 
     Returns:
         The secret payload: `projectID` plus one API-key field per dataset (e.g. `apiKey`,
-        `tenk10k_apiKey`). Prefer `get_ica_secrets`, which validates the field a project needs.
+        `tenk10k_apiKey`). Prefer `get_ica_api_key`, which validates the configured family's field.
     """
     client = _secret_client()
     secret_path: str = client.secret_version_path(
@@ -108,55 +108,47 @@ def _fetch_ica_secrets() -> dict[str, str]:
     return json.loads(response.payload.data.decode('UTF-8'))
 
 
-def get_ica_secrets(project_name: str) -> dict[str, str]:
-    """Return the ICA secret payload, validating the API key `project_name` needs is present.
+def get_ica_api_key() -> str:
+    """Return the ICA API key for the configured dataset family, validated non-empty.
 
-    Fetches the process-cached payload (`_fetch_ica_secrets`) and checks that the field this
-    project's dataset authenticates with (`resolve_ica_api_key_field`) exists and is non-empty.
-    A missing or blank key fails here — once, with the field and project named — instead of as
-    a bare `KeyError` at the client call site (or an `x-api-key: null` written by the CLI).
-
-    Args:
-        project_name: The ICA project the secret will be used to authenticate against.
+    Fetches the process-cached payload (`_fetch_ica_secrets`), selects the family's key field
+    once (`ica_api_key_field`), and checks it is present and non-empty. A missing or blank key
+    fails here — with the field named — instead of as a bare `KeyError` at a client call site
+    (or an `x-api-key: null` written by the CLI).
 
     Returns:
-        The full secret payload (project ID plus the per-dataset API-key fields).
+        The API key.
 
     Raises:
-        KeyError: If `project_name`'s dataset family has no registered key field, or the secret
-            carries no non-empty value for that field.
+        KeyError: If the configured family has no registered key field, or the secret carries no
+            non-empty value for it.
     """
     secrets = _fetch_ica_secrets()
-    api_key_field = resolve_ica_api_key_field(project_name)
-    if not secrets.get(api_key_field):
+    api_key_field = ica_api_key_field()
+    api_key = secrets.get(api_key_field)
+    if not api_key:
         raise KeyError(
             f'ICA secret {SECRET_NAME!r} has no non-empty {api_key_field!r} field, required to '
-            f'authenticate against project {project_name!r}. Add the field to the secret in '
-            f'project {SECRET_PROJECT!r}.',
+            f'authenticate the configured dataset family. Add the field to the secret in project '
+            f'{SECRET_PROJECT!r}.',
         )
-    return secrets
+    return api_key
 
 
 @contextlib.contextmanager
-def get_ica_api_client(project_name: str) -> Iterator[ApiClient]:
-    """Provide a context-managed icasdk.ApiClient authenticated for `project_name`.
+def get_ica_api_client() -> Iterator[ApiClient]:
+    """Provide a context-managed icasdk.ApiClient for the configured dataset family.
 
-    Handles fetching secrets, configuring, and closing the client. The API key is chosen for
-    the project's dataset (via `resolve_ica_api_key_field`), so a client is never
-    authenticated with another dataset's key.
-
-    Args:
-        project_name: The ICA project name the client will operate against (an
-            `[ica.projects]` value); selects which dataset's API key to use.
+    Handles fetching the key, configuring, and closing the client. The API key is the
+    configured family's (`get_ica_api_key`), so a client is never authenticated with another
+    dataset's key. The client is not scoped to one ICA project — the project is named per
+    request via `path_params['projectId']` (see `ica_project_session`).
 
     Yields:
         A configured `ApiClient`.
     """
-    secrets = get_ica_secrets(project_name)
-    api_key: str = secrets[resolve_ica_api_key_field(project_name)]
-
     configuration = Configuration(host=ICA_REST_ENDPOINT)
-    configuration.api_key['ApiKeyAuth'] = api_key
+    configuration.api_key['ApiKeyAuth'] = get_ica_api_key()
 
     with ApiClient(configuration=configuration) as api_client:
         try:
@@ -167,6 +159,30 @@ def get_ica_api_client(project_name: str) -> Iterator[ApiClient]:
         except Exception as e:
             logger.error(f'Non-API Exception caught by context manager: {e}')
             raise
+
+
+@contextlib.contextmanager
+def ica_project_session(role: str) -> Iterator[tuple[ApiClient, dict[str, str]]]:
+    """Open an ICA client for the configured family and yield it with `role`'s REST path params.
+
+    Collapses the repeated "resolve project name → project id → open client" sequence at job
+    call sites into one step, and keeps the client paired with the right project: the yielded
+    `path_params` carries the `projectId` for `role`, resolved from the same configured family
+    the client authenticates against. Wrap the yielded client with whichever `…Api` class the
+    caller needs (data vs analysis).
+
+    Args:
+        role: One of `constants_registry.REQUIRED_ICA_ROLES`.
+
+    Yields:
+        `(api_client, {'projectId': <id for role>})`.
+
+    Raises:
+        KeyError: If the configured family or `role` isn't registered, or the role has no id.
+    """
+    project_id = ica_project_id(role)
+    with get_ica_api_client() as api_client:
+        yield api_client, {'projectId': project_id}
 
 
 # --- API Wrappers ---

@@ -31,8 +31,8 @@ class IcaPath:
 
     - `as_folder()`   → `/a/b/`             leading + trailing slash (ICA REST folder form)
     - `as_file(name)` → `/a/b/name`         leading slash, no trailing (ICA REST file form)
-    - `as_url(role)`  → `ica://<name>/a/b`  scheme + project *name* resolved from
-      `[ica.projects][role]`, no trailing slash
+    - `as_url(role)`  → `ica://<name>/a/b`  scheme + project *name* resolved for `role` from
+      the configured `[ica.projects].project_root` family, no trailing slash
 
     Build with `IcaPath.output_root()` or `IcaPath.from_relpath(...)` and join segments
     with `/`. Segments may themselves contain `/`; empty parts are dropped so slashes
@@ -142,8 +142,8 @@ class IcaPath:
         `ica://None/...` URL that fails opaquely inside ICA.
 
         Args:
-            project_role: The `[ica.projects]` role (e.g. `dragen_mlr`) to resolve to an ICA
-                project name.
+            project_role: The ICA role (a `constants_registry.REQUIRED_ICA_ROLES` value, e.g.
+                `ROLE_DRAGEN_MLR`) to resolve to an ICA project name.
 
         Returns:
             The path as `ica://<project-name>/a/b`, with no trailing slash.

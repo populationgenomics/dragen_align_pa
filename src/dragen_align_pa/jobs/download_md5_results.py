@@ -11,7 +11,7 @@ from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
-from dragen_align_pa.constants_registry import ica_project_name, resolve_ica_project_id
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
 
 
 def run(
@@ -22,10 +22,7 @@ def run(
     """
     Main function for the job.
     """
-    dragen_project = ica_project_name('dragen_align')
-    path_parameters: dict[str, str] = {'projectId': resolve_ica_project_id(dragen_project)}
-
-    with ica_api_utils.get_ica_api_client(dragen_project) as api_client:
+    with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_parameters):
         api_instance = project_data_api.ProjectDataApi(api_client)
 
         # Get the ID

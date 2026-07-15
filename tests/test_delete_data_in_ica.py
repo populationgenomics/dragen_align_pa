@@ -15,9 +15,9 @@ import pytest
 
 from dragen_align_pa.jobs import delete_data_in_ica
 
-RUNS_PROJECT_NAME = 'OurDNA-DRAGEN-378'
+# Real ourdna project ids (conftest sets project_root='ourdna', so the job resolves these from
+# the ICA_PROJECT_SETUP table via the DRAGEN-align / FASTQ-upload roles).
 RUNS_PROJECT_ID = '5c3a60b0-1458-4e37-8877-ec6b25dc4003'
-FASTQ_PROJECT_NAME = 'ourdna-data-upload-agrf'
 FASTQ_PROJECT_ID = 'e7a1d085-f12e-4cff-acda-2334338585a8'
 
 
@@ -85,31 +85,18 @@ def _make_api_instance(
 
 @pytest.fixture
 def patched_env(monkeypatch):
-    """Stub get_ica_secrets + get_ica_api_client + config_retrieve for the
-    fastq source project lookup. The api_instance MagicMock is returned via
-    a closure so each test can swap it per scenario."""
+    """Stub the ICA client + ProjectDataApi constructor. Project ids/names resolve from the real
+    ICA_PROJECT_SETUP table via the configured family (conftest sets `project_root='ourdna'`), so
+    `ica_project_session` yields the real ourdna project ids the assertions expect. The
+    api_instance MagicMock is returned via a closure so each test can swap it per scenario."""
     state: dict[str, MagicMock] = {'api_instance': MagicMock()}
 
-    monkeypatch.setattr(
-        'dragen_align_pa.jobs.delete_data_in_ica.ica_api_utils.get_ica_secrets',
-        lambda project_name: {'projectID': RUNS_PROJECT_ID, 'apiKey': 'stub'},  # noqa: ARG005
-    )
     fake_client = MagicMock()
     fake_client.__enter__ = MagicMock(return_value=fake_client)
     fake_client.__exit__ = MagicMock(return_value=False)
     monkeypatch.setattr(
         'dragen_align_pa.jobs.delete_data_in_ica.ica_api_utils.get_ica_api_client',
-        lambda project_name: fake_client,  # noqa: ARG005
-    )
-
-    def fake_config_retrieve(key, default=None):  # noqa: ARG001  (default: signature parity with config_retrieve)
-        if tuple(key) == ('ica', 'projects', 'fastq_source_project'):
-            return FASTQ_PROJECT_NAME
-        return RUNS_PROJECT_NAME
-
-    monkeypatch.setattr(
-        'dragen_align_pa.jobs.delete_data_in_ica.cpg_utils.config.config_retrieve',
-        fake_config_retrieve,
+        lambda: fake_client,
     )
 
     # Patch the ProjectDataApi constructor so it returns our mock api_instance.

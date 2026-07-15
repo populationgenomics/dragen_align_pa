@@ -22,7 +22,7 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils
 from dragen_align_pa.batches import BatchesFile, IcaBatch, chunk_sgs_into_batches
-from dragen_align_pa.constants_registry import ica_project_name, resolve_ica_project_id
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, submit_dragen_batch
 from dragen_align_pa.jobs.ica_pipeline_manager import (
     MonitoredTarget,
@@ -223,13 +223,10 @@ def _on_succeeded_factory(
             batch.cohort_name, batch_entry['user_reference'], batch_entry['pipeline_id']
         ).as_folder()
 
-        dragen_project = ica_project_name('dragen_align')
-        path_parameters: dict[str, str] = {'projectId': resolve_ica_project_id(dragen_project)}
-
         passfail = None
         folder_fid: str | None = None
         try:
-            with ica_api_utils.get_ica_api_client(dragen_project) as api_client:
+            with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_parameters):
                 api_instance = project_data_api.ProjectDataApi(api_client)
                 passfail = fetch_passfail_from_ica(
                     api_instance=api_instance,

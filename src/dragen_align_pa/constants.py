@@ -1,4 +1,4 @@
-from typing import Final
+from typing import Final, TypedDict
 
 import cpg_utils
 from cpg_utils.config import config_retrieve, output_path
@@ -12,43 +12,6 @@ BUCKET: Final = cpg_utils.to_path(output_path(suffix=''))
 BUCKET_NAME: Final = str(BUCKET).removeprefix('gs://').removesuffix('/')
 DRAGEN_VERSION: Final = config_retrieve(['ica', 'pipelines', 'dragen_version'])
 
-
-# ICA projects
-ICA_PROJECT_IDS: Final[dict[str, dict[str, str | None]]] = {
-    'ourdna': {
-        'OurDNA-DRAGEN-378': '5c3a60b0-1458-4e37-8877-ec6b25dc4003',
-        'ourdna-dragen-mlr-jobs': 'f2f55709-f8d4-4364-bb04-c41975d4c0ed',
-        'ourdna-data-upload-agrf': 'e7a1d085-f12e-4cff-acda-2334338585a8',
-    },
-    'tenk10k': {
-        'Tenk10k_Dragen_378': 'b9e2edbd-6ff8-4e76-b839-bb029e59fb73',
-        'Tenk10K_Dragen_MLR_Jobs': '16bb091c-5866-4e39-929f-2b678457b772',
-        'tenk10k_fastq_upload': None,  # Explicit `None`, as we have to ask collaborators to delete this data.
-    },
-}
-
-# Per dataset family (see `project_family`): the field in the `illumina_cpg_workbench_api`
-# secret that holds that dataset's ICA API key. OurDNA uses the base `apiKey`; each other
-# dataset has its own. Add an entry when onboarding a dataset with a distinct API key.
-ICA_API_KEY_FIELD_BY_FAMILY: Final[dict[str, str]] = {
-    'ourdna': 'apiKey',
-    'tenk10k': 'tenk10k_apiKey',
-}
-
-# ICA projects we are permitted to delete uploaded FASTQ data from. Every other FASTQ-upload
-# project is collaborator-owned and must be registered with a `None` ID in ICA_PROJECT_IDS so
-# `DeleteDataInIca` skips it (we ask collaborators to delete) rather than attempting a delete
-# we're not authorised to make. A registered, non-None FASTQ project that is NOT listed here is
-# treated as a misconfiguration and rejected at delete time.
-FASTQ_DELETABLE_PROJECTS: Final[frozenset[str]] = frozenset({'ourdna-data-upload-agrf'})
-
-# MLR setup information.
-# Project-relative MLR hash table path; the ICA project comes from `[ica.projects].dragen_mlr`
-# at use time via `IcaPath.from_relpath(MLR_HASH_TABLE_RELPATH).as_url('dragen_mlr')`.
-# The hashtable is provided as a part of the popgen cli package in every ICA project and always exists at this path.
-MLR_HASH_TABLE_RELPATH: Final = 'data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9'
-ANALYSIS_INSTANCE_TIER: Final[str] = 'economy'
-
 # Placeholder marker for ICA file IDs that haven't been minted yet (i.e. the
 # files exist in GCS but haven't been uploaded to ICA). Replace per-entry with
 # the real `fil.…` ID once the corresponding upload lands. Any value starting
@@ -57,6 +20,69 @@ ANALYSIS_INSTANCE_TIER: Final[str] = 'economy'
 # the literal sentinel to ICA and failing opaquely there.
 TODO_FID_PREFIX: Final = 'fil.TODO_'
 _TODO_FID: Final = f'{TODO_FID_PREFIX}REPLACE_AFTER_ICA_UPLOAD'
+
+# ICA project setup
+# Contains the following:
+# A project block informing the user of the project names and IDs for running pipelines in ICA
+# An api key dict recording the name of the apikey secret in secretsmanager
+# An ICA file ID for the MLR config JSON
+IcaProject = TypedDict('IcaProject', {'project-name': str, 'project-id': str | None})
+IcaCohortSetup = TypedDict(
+    'IcaCohortSetup', {'projects': dict[str, IcaProject], 'api-key': dict[str, str], 'mlr-config-json': dict[str, str]}
+)
+ICA_PROJECT_SETUP: Final[dict[str, IcaCohortSetup]] = {
+    'ourdna': {
+        'projects': {
+            'dragen-align': {
+                'project-name': 'OurDNA-DRAGEN-378',
+                'project-id': '5c3a60b0-1458-4e37-8877-ec6b25dc4003',
+            },
+            'dragen-mlr': {
+                'project-name': 'ourdna-dragen-mlr-jobs',
+                'project-id': 'f2f55709-f8d4-4364-bb04-c41975d4c0ed',
+            },
+            'fastq-upload': {
+                'project-name': 'ourdna-data-upload-agrf',
+                'project-id': 'e7a1d085-f12e-4cff-acda-2334338585a8',
+            },
+        },
+        'api-key': {'name': 'apiKey'},
+        'mlr-config-json': {'ica-file-id': 'fil.91c3e63114fc43dc31ed08dde927d6b4'},
+    },
+    'tenk10k': {
+        'projects': {
+            'dragen-align': {
+                'project-name': 'Tenk10k_Dragen_378',
+                'project-id': 'b9e2edbd-6ff8-4e76-b839-bb029e59fb73',
+            },
+            'dragen-mlr': {
+                'project-name': 'Tenk10K_Dragen_MLR_Jobs',
+                'project-id': '16bb091c-5866-4e39-929f-2b678457b772',
+            },
+            'fastq-upload': {
+                'project-name': 'tenk10k_fastq_upload',
+                'project-id': None,  # Explicit `None`, as we have to ask collaborators to delete this data.
+            },
+        },
+        'api-key': {'name': 'tenk10k_apiKey'},
+        'mlr-config-json': {'ica-file-id': _TODO_FID},
+    },
+}
+
+# ICA projects we are permitted to delete uploaded FASTQ data from. Every other FASTQ-upload
+# project is collaborator-owned and must be registered with a `None` id in ICA_PROJECT_SETUP so
+# `DeleteDataInIca` skips it (we ask collaborators to delete) rather than attempting a delete
+# we're not authorised to make. A registered, non-None FASTQ project that is NOT listed here is
+# treated as a misconfiguration and rejected at delete time.
+FASTQ_DELETABLE_PROJECTS: Final[frozenset[str]] = frozenset({'ourdna-data-upload-agrf'})
+
+# MLR setup information.
+# Project-relative MLR hash table path; the ICA project is the configured family's `dragen-mlr`
+# project, resolved at use time via `IcaPath.from_relpath(MLR_HASH_TABLE_RELPATH).as_url(ROLE_DRAGEN_MLR)`.
+# The hashtable is provided as a part of the popgen cli package in every ICA project and always exists at this path.
+MLR_HASH_TABLE_RELPATH: Final = 'data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9'
+ANALYSIS_INSTANCE_TIER: Final[str] = 'economy'
+
 
 # Registry of reference files/folders in ICA (BEDs, QC assets, reference genomes). Referenced
 # by basename from config or directly in code. Resolve via `resolve_ica_file_id`.
@@ -73,14 +99,6 @@ ICA_FILE_IDS: Final[dict[str, str]] = {
     # When realigning existing non-Dragen CRAMs
     'hg38_masked.fasta': 'fol.df2129db2c88419cbe0408dd600dce1f',
     'hg38_unmasked.fasta': 'fol.d45ec3a17cf241f5b61b08dd7c524fb7',
-}
-
-# The MLR pipeline's config JSON lives in the ICA project MLR runs in, so this is keyed by the
-# `[ica.projects].dragen_mlr` project name (distinct from ICA_FILE_IDS' reference-asset basenames).
-# Resolve via `resolve_mlr_config_file_id`.
-MLR_CONFIG_FILE_ID_BY_PROJECT: Final[dict[str, str]] = {
-    'ourdna-dragen-mlr-jobs': 'fil.91c3e63114fc43dc31ed08dde927d6b4',
-    'Tenk10K_Dragen_MLR_Jobs': _TODO_FID,
 }
 
 

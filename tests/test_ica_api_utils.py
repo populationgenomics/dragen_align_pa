@@ -170,40 +170,41 @@ def test__fetch_ica_secrets_cache_skips_retry_layer_on_subsequent_calls(monkeypa
     angry_client.access_secret_version.assert_not_called()
 
 
-def test_get_ica_secrets_returns_payload_when_projects_key_present(monkeypatch):
-    """get_ica_secrets(project) returns the payload when the project's dataset key field is
-    present — OurDNA authenticates with the base `apiKey`, which the payload carries."""
+def test_get_ica_api_key_returns_key_when_present(monkeypatch):
+    """get_ica_api_key() returns the configured family's key — the default family (conftest:
+    `project_root='ourdna'`) authenticates with the base `apiKey`, which the payload carries."""
     payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}
     mock_client = MagicMock()
     mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
     monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
 
-    assert ica_api_utils.get_ica_secrets('OurDNA-DRAGEN-378') == payload
+    assert ica_api_utils.get_ica_api_key() == 'key-xyz'
 
 
-def test_get_ica_secrets_raises_when_projects_key_field_missing(monkeypatch):
-    """A project whose dataset key field is absent from the secret fails loud once here,
-    naming the field — instead of a bare KeyError at the client call site or an
-    `x-api-key: null` written by the CLI. tenk10k needs `tenk10k_apiKey`, absent below."""
+def test_get_ica_api_key_raises_when_family_field_missing(monkeypatch):
+    """A family whose key field is absent from the secret fails loud once here, naming the
+    field — instead of a bare KeyError at the client call site or an `x-api-key: null` written
+    by the CLI. Configuring the tenk10k family needs `tenk10k_apiKey`, absent below."""
     payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}  # no tenk10k_apiKey
     mock_client = MagicMock()
     mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
     monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
+    monkeypatch.setattr('dragen_align_pa.constants_registry.config_retrieve', lambda key, default=None: 'tenk10k')  # noqa: ARG005
 
     with pytest.raises(KeyError, match=r'tenk10k_apiKey'):
-        ica_api_utils.get_ica_secrets('Tenk10k_Dragen_378')
+        ica_api_utils.get_ica_api_key()
 
 
-def test_get_ica_secrets_raises_when_projects_key_field_blank(monkeypatch):
-    """An empty-string key value is treated the same as missing (jq would emit it as a blank
-    x-api-key), so it must fail here rather than producing a silently-broken client."""
+def test_get_ica_api_key_raises_when_field_blank(monkeypatch):
+    """An empty-string key value is treated the same as missing, so it must fail here rather
+    than producing a silently-broken client. Default family `ourdna` uses `apiKey`."""
     payload = {'projectID': 'proj-abc', 'apiKey': ''}
     mock_client = MagicMock()
     mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
     monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
 
     with pytest.raises(KeyError, match=r'apiKey'):
-        ica_api_utils.get_ica_secrets('OurDNA-DRAGEN-378')
+        ica_api_utils.get_ica_api_key()
 
 
 def _mock_api_with_status(status: int) -> object:

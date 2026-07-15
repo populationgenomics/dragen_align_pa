@@ -24,24 +24,18 @@ def _fake_cohort(name: str = 'COH0001') -> MagicMock:
 
 @pytest.fixture
 def patched_environment(monkeypatch):
-    """Stub the secrets fetch and ICA client context manager."""
-    monkeypatch.setattr(
-        'dragen_align_pa.jobs.prepare_ica_for_analysis.ica_api_utils.get_ica_secrets',
-        lambda project_name: {'projectID': 'proj', 'apiKey': 'key'},  # noqa: ARG005
-    )
+    """Stub the ICA client context manager.
+
+    Project id/name resolution goes through the real `ICA_PROJECT_SETUP` table for the configured
+    family (conftest sets `project_root='ourdna'`); only the client (and thus the Secret Manager
+    fetch) needs stubbing.
+    """
     fake_client = MagicMock()
     fake_client.__enter__ = MagicMock(return_value=fake_client)
     fake_client.__exit__ = MagicMock(return_value=False)
     monkeypatch.setattr(
         'dragen_align_pa.jobs.prepare_ica_for_analysis.ica_api_utils.get_ica_api_client',
-        lambda project_name: fake_client,  # noqa: ARG005
-    )
-    monkeypatch.setattr(
-        'dragen_align_pa.jobs.prepare_ica_for_analysis.cpg_utils.config.config_retrieve',
-        lambda key, default=None: {  # noqa: ARG005
-            ('ica', 'data_prep', 'output_folder'): 'test-dragen-378',
-            ('ica', 'projects', 'dragen_align'): 'OurDNA-DRAGEN-378',
-        }.get(tuple(key)),
+        lambda: fake_client,
     )
 
 

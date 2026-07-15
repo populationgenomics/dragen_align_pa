@@ -34,7 +34,7 @@ _TEST_CONFIG: dict[tuple, object] = {
     # Matches the production TOML.
     ('ica', 'data_prep', 'output_folder'): 'test-dragen-378',
     # Dataset family. `constants_registry.ica_project_name(role)` reads this and derives the per-role
-    # project from ICA_PROJECT_IDS['ourdna'], so anything resolving an ICA project (as_url,
+    # project from ICA_PROJECT_SETUP['ourdna'], so anything resolving an ICA project (as_url,
     # the jobs' project_id / API-key selection) works by default against real ourdna names.
     ('ica', 'projects', 'project_root'): 'ourdna',
 }

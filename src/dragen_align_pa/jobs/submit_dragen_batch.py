@@ -23,7 +23,7 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.batches import IcaBatch, validate_error_strategy
-from dragen_align_pa.constants_registry import ica_project_name, resolve_ica_file_id, resolve_ica_project_id
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN, resolve_ica_file_id
 from dragen_align_pa.utils import get_bed_names_for_seqtype
 
 # DRAGEN flags that don't depend on input type (CRAM vs FASTQ) or sequencing type (WGS vs WES).
@@ -513,9 +513,6 @@ def run(
             f'fastq_ids_path and per_sg_fastq_list_paths.',
         )
 
-    dragen_project = ica_project_name('dragen_align')
-    project_id: str = resolve_ica_project_id(dragen_project)
-
     with analysis_output_fid_path.open('r') as fh:
         analysis_output_fid: str = json.load(fh)['analysis_output_fid']
 
@@ -532,7 +529,8 @@ def run(
     technical_tags: list[str] = config_retrieve(['ica', 'tags', 'technical_tags'])
     reference_tags: list[str] = config_retrieve(['ica', 'tags', 'reference_tags'])
 
-    with ica_api_utils.get_ica_api_client(dragen_project) as api_client:
+    with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_parameters):
+        project_id = path_parameters['projectId']
         analysis_api = project_analysis_api.ProjectAnalysisApi(api_client)
         data_api = project_data_api.ProjectDataApi(api_client)
 

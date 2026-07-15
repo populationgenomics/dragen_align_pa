@@ -27,9 +27,10 @@ from loguru import logger
 from dragen_align_pa import ica_api_utils
 from dragen_align_pa.constants import FASTQ_DELETABLE_PROJECTS
 from dragen_align_pa.constants_registry import (
+    ROLE_DRAGEN_ALIGN,
+    ROLE_FASTQ_UPLOAD,
     ica_project_id_or_none,
     ica_project_name,
-    resolve_ica_project_id,
 )
 from dragen_align_pa.utils import get_pipeline_path
 
@@ -180,32 +181,31 @@ def run(
     if not cram_fid_paths_dict and not fastq_ids_list_path:
         raise ValueError('Either cram_fid_paths_dict or fastq_ids_list_path must be provided')
 
-    dragen_project = ica_project_name('dragen_align')
-    with ica_api_utils.get_ica_api_client(dragen_project) as api_client:
+    with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_params):
         api_instance = project_data_api.ProjectDataApi(api_client)
         failures += _delete_and_verify(
             api_instance=api_instance,
-            project_id=resolve_ica_project_id(dragen_project),
+            project_id=path_params['projectId'],
             fids=[cohort_folder_fid, *cram_fids],
             settle_seconds=settle_seconds,
         )
 
     if fastq_ids_list_path:
-        fastq_source_project = ica_project_name('fastq_source_project')
+        fastq_source_project = ica_project_name(ROLE_FASTQ_UPLOAD)
         # Guard which projects we may delete uploaded FASTQ data from. Only the sanctioned
         # projects are deleted; a project deliberately registered with a None ID is
         # collaborator-managed and skipped; any other (non-None, non-sanctioned) project is a
         # misconfiguration and rejected rather than silently deleted from.
-        fastq_project_id = ica_project_id_or_none(fastq_source_project)
+        fastq_project_id = ica_project_id_or_none(ROLE_FASTQ_UPLOAD)
         if fastq_source_project in FASTQ_DELETABLE_PROJECTS:
-            # The source FASTQs live in a separate ICA project that may belong to a different
-            # dataset (and thus a different API key), so authenticate a client for that project
-            # rather than reusing the DRAGEN one.
-            with ica_api_utils.get_ica_api_client(fastq_source_project) as fastq_client:
+            # The FASTQ-upload project sits in the same dataset family as the DRAGEN project, so
+            # its client authenticates with the same family API key; a fresh session just swaps
+            # in the FASTQ project's id for the delete path_params.
+            with ica_api_utils.ica_project_session(ROLE_FASTQ_UPLOAD) as (fastq_client, fastq_path_params):
                 fastq_api_instance = project_data_api.ProjectDataApi(fastq_client)
                 failures += _delete_and_verify(
                     api_instance=fastq_api_instance,
-                    project_id=resolve_ica_project_id(fastq_source_project),
+                    project_id=fastq_path_params['projectId'],
                     fids=fastq_fids,
                     settle_seconds=settle_seconds,
                 )
@@ -220,7 +220,7 @@ def run(
             raise ValueError(
                 f'FASTQ source project {fastq_source_project!r} is not authorised for FASTQ '
                 f'deletion. Only {sorted(FASTQ_DELETABLE_PROJECTS)} may have FASTQ data deleted; '
-                f'other FASTQ-upload projects must be registered with a None ID in ICA_PROJECT_IDS.',
+                f'other FASTQ-upload projects must be registered with a None id in ICA_PROJECT_SETUP.',
             )
 
     if failures:

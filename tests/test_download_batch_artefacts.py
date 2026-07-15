@@ -221,19 +221,18 @@ def _batch_entry(
 
 @pytest.fixture
 def patched_environment(tmp_path: Path, monkeypatch):
-    """Stub the secret fetch, ICA client, GCS client, and config calls."""
-    monkeypatch.setattr(
-        'dragen_align_pa.jobs.download_batch_artefacts.ica_api_utils.get_ica_secrets',
-        lambda project_name: {'projectID': 'proj', 'apiKey': 'key'},  # noqa: ARG005
-    )
+    """Stub the ICA client, GCS client, and config calls.
 
+    Project id/name resolution goes through the real `ICA_PROJECT_SETUP` table for the configured
+    family (conftest sets `project_root='ourdna'`); only the client needs stubbing.
+    """
     # `get_ica_api_client()` is used as a context manager.
     fake_client = MagicMock()
     fake_client.__enter__ = MagicMock(return_value=fake_client)
     fake_client.__exit__ = MagicMock(return_value=False)
     monkeypatch.setattr(
         'dragen_align_pa.jobs.download_batch_artefacts.ica_api_utils.get_ica_api_client',
-        lambda project_name: fake_client,  # noqa: ARG005
+        lambda: fake_client,
     )
 
     fake_storage = MagicMock()

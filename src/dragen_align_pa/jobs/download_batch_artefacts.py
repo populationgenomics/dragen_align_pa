@@ -20,7 +20,7 @@ from loguru import logger
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.batches import BatchesFile
 from dragen_align_pa.constants import BUCKET_NAME
-from dragen_align_pa.constants_registry import ica_project_name, resolve_ica_project_id
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
 
 
 @dataclass
@@ -189,13 +189,10 @@ def run(
         raise ValueError(
             f'Duplicate batch_index values in {batches_file_path}: {duplicates}; refusing to overwrite GCS artefacts.',
         )
-    dragen_project = ica_project_name('dragen_align')
-    path_parameters = {'projectId': resolve_ica_project_id(dragen_project)}
-
     stats = _StreamStats()
     batches_processed = 0
 
-    with ica_api_utils.get_ica_api_client(dragen_project) as api_client:
+    with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_parameters):
         api_instance = project_data_api.ProjectDataApi(api_client)
         for batch_entry in batches_file.batches:
             if not batch_entry.get('pipeline_id'):

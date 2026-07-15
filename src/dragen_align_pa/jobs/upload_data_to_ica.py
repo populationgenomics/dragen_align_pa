@@ -17,7 +17,7 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
 from dragen_align_pa.constants import DRAGEN_VERSION
-from dragen_align_pa.constants_registry import ica_project_name, resolve_ica_project_id
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
 from dragen_align_pa.paths import IcaPath
 from dragen_align_pa.utils import validate_cli_path_input
 
@@ -97,13 +97,9 @@ def run(
     validate_cli_path_input(paths['gcs_cram_path'], 'gcs_cram_path')
     validate_cli_path_input(paths['ica_folder_path'], 'ica_folder_path')
 
-    # 2. --- Authenticate Python SDK ---
-    dragen_project = ica_project_name('dragen_align')
-    path_parameters: dict[str, str] = {'projectId': resolve_ica_project_id(dragen_project)}
-
-    # 3. --- Check File Existence ---
+    # 2. --- Check File Existence ---
     cram_status: str | None = None
-    with ica_api_utils.get_ica_api_client(dragen_project) as api_client:
+    with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_parameters):
         api_instance = project_data_api.ProjectDataApi(api_client)
         cram_status = ica_utils.check_file_existence(
             api_instance=api_instance,
@@ -112,8 +108,8 @@ def run(
             file_name=paths['cram_name'],
         )
 
-        # 4. --- Perform Upload (if needed) ---
-        ica_cli_utils.perform_upload_if_needed(cram_status, paths, dragen_project)
+        # 3. --- Perform Upload (if needed) ---
+        ica_cli_utils.perform_upload_if_needed(cram_status, paths, ROLE_DRAGEN_ALIGN)
 
         # 5. --- Get Final File ID and Write Output ---
         ica_utils.finalise_upload(

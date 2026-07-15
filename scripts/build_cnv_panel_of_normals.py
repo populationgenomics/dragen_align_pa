@@ -63,7 +63,7 @@ from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils, utils
-from dragen_align_pa.constants_registry import ica_project_name, resolve_ica_project_id
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
 
 # WES tool (WGS self-normalises and never builds a PON). DRAGEN's gc-corrected
 # counts <SG>.target.counts.gc-corrected.gz are the right PON input when GC
@@ -268,20 +268,19 @@ def build_panel(
     """
     ica_folder_path = ica_reference_folder.rstrip('/') + '/'
     # The PON is built in the DRAGEN-align project: the counts come from its runs and the
-    # renamed panel files are uploaded to its reference storage. Its name is derived from the
-    # configured dataset family ([ica.projects].project_root), and drives the project ID,
-    # CLI auth, and API client below.
-    dragen_project = ica_project_name('dragen_align')
-    path_params = {'projectId': resolve_ica_project_id(dragen_project)}
-
+    # renamed panel files are uploaded to its reference storage. The role resolves against the
+    # configured [ica.projects].project_root family for CLI auth, the API client, and path params.
     metrics_prefix = str(utils.get_output_path('dragen_metrics'))
 
     file_ids: dict[str, str] = {}
 
     # The icav2 CLI (used for uploads) needs to be authenticated once up front.
-    ica_cli_utils.authenticate_ica_cli(dragen_project)
+    ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_ALIGN)
 
-    with ica_api_utils.get_ica_api_client(dragen_project) as api_client, tempfile.TemporaryDirectory() as ica_local_dir:
+    with (
+        ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_params),
+        tempfile.TemporaryDirectory() as ica_local_dir,
+    ):
         api_instance = project_data_api.ProjectDataApi(api_client)
 
         for sg in sequencing_groups:
