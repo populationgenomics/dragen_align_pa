@@ -127,6 +127,12 @@ def test_resolve_ica_api_key_field_raises_on_unregistered_family():
         constants_registry.resolve_ica_api_key_field('newdataset')
 
 
+def test_resolve_ica_can_delete_fastq_by_family():
+    """ourdna owns its upload area (True); tenk10k is collaborator-managed (False)."""
+    assert constants_registry.resolve_ica_can_delete_fastq('ourdna') is True
+    assert constants_registry.resolve_ica_can_delete_fastq('tenk10k') is False
+
+
 def test_config_reading_entry_points_use_configured_family():
     """The bare `ica_*` entry points read `[ica.projects].project_root` (conftest: 'ourdna')."""
     assert constants_registry.ica_project_name(constants_registry.ROLE_DRAGEN_ALIGN) == 'OurDNA-DRAGEN-378'
@@ -136,3 +142,4 @@ def test_config_reading_entry_points_use_configured_family():
     assert align_id == '5c3a60b0-1458-4e37-8877-ec6b25dc4003'
     assert constants_registry.ica_api_key_field() == 'apiKey'
     assert constants_registry.ica_mlr_config_file_id() == 'fil.91c3e63114fc43dc31ed08dde927d6b4'
+    assert constants_registry.ica_can_delete_fastq() is True

@@ -28,7 +28,13 @@ _TODO_FID: Final = f'{TODO_FID_PREFIX}REPLACE_AFTER_ICA_UPLOAD'
 # An ICA file ID for the MLR config JSON
 IcaProject = TypedDict('IcaProject', {'project-name': str, 'project-id': str | None})
 IcaCohortSetup = TypedDict(
-    'IcaCohortSetup', {'projects': dict[str, IcaProject], 'api-key': dict[str, str], 'mlr-config-json': dict[str, str]}
+    'IcaCohortSetup',
+    {
+        'projects': dict[str, IcaProject],
+        'api-key': dict[str, str],
+        'mlr-config-json': dict[str, str],
+        'can-delete-fastq': bool,
+    },
 )
 ICA_PROJECT_SETUP: Final[dict[str, IcaCohortSetup]] = {
     'ourdna': {
@@ -48,6 +54,7 @@ ICA_PROJECT_SETUP: Final[dict[str, IcaCohortSetup]] = {
         },
         'api-key': {'name': 'apiKey'},
         'mlr-config-json': {'ica-file-id': 'fil.91c3e63114fc43dc31ed08dde927d6b4'},
+        'can-delete-fastq': True,
     },
     'tenk10k': {
         'projects': {
@@ -66,15 +73,9 @@ ICA_PROJECT_SETUP: Final[dict[str, IcaCohortSetup]] = {
         },
         'api-key': {'name': 'tenk10k_apiKey'},
         'mlr-config-json': {'ica-file-id': _TODO_FID},
+        'can-delete-fastq': False,  # Controlled by collaborators
     },
 }
-
-# ICA projects we are permitted to delete uploaded FASTQ data from. Every other FASTQ-upload
-# project is collaborator-owned and must be registered with a `None` id in ICA_PROJECT_SETUP so
-# `DeleteDataInIca` skips it (we ask collaborators to delete) rather than attempting a delete
-# we're not authorised to make. A registered, non-None FASTQ project that is NOT listed here is
-# treated as a misconfiguration and rejected at delete time.
-FASTQ_DELETABLE_PROJECTS: Final[frozenset[str]] = frozenset({'ourdna-data-upload-agrf'})
 
 # MLR setup information.
 # Project-relative MLR hash table path; the ICA project is the configured family's `dragen-mlr`

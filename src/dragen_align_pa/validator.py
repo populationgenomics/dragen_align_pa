@@ -15,7 +15,10 @@ from loguru import logger
 from dragen_align_pa.constants import DESIGN_TO_BEDS, DESIGN_TO_CANONICAL
 from dragen_align_pa.constants_registry import (
     REQUIRED_ICA_ROLES,
+    ROLE_DRAGEN_ALIGN,
+    ROLE_DRAGEN_MLR,
     resolve_ica_api_key_field,
+    resolve_ica_project_id,
     resolve_ica_project_name,
     resolve_mlr_config_file_id,
 )
@@ -45,21 +48,26 @@ def assert_ica_project_root_resolves() -> None:
     ICA calls), that the family is registered and complete — so a family mistake aborts on the
     submitter rather than surfacing at the first ICA call deep in a job. It checks that:
 
-    - every required role (DRAGEN-align, DRAGEN-MLR, FASTQ-upload) resolves to a project;
+    - every required role (DRAGEN-align, DRAGEN-MLR, FASTQ-upload) resolves to a project name;
+    - the DRAGEN-align and DRAGEN-MLR projects have a project id (they're addressed by id at
+      runtime via `ica_project_session`; FASTQ-upload's id is legitimately absent for a
+      collaborator-managed family, so it's left on the name-only check);
     - the family has a registered `illumina_cpg_workbench_api` API-key field (else every ICA
       client build would fail at job runtime with a bare `KeyError`);
     - the family's MLR project has a minted MLR config JSON (not the `fil.TODO_` placeholder),
       which the MLR submission job would otherwise only discover mid-run.
 
     Raises:
-        KeyError: If `project_root` isn't a registered family, a required role is missing, or
-            the family has no registered API-key field.
-        ValueError: If a role entry is missing its project name, or the MLR config JSON is still
-            the not-yet-minted placeholder.
+        KeyError: If `project_root` isn't a registered family, a required role or its project
+            name is missing, the DRAGEN-align / DRAGEN-MLR project id is absent, or the family
+            has no registered API-key field.
+        ValueError: If the MLR config JSON is still the not-yet-minted placeholder.
     """
     project_root = config_retrieve(['ica', 'projects', 'project_root'])
     for role in REQUIRED_ICA_ROLES:
         resolve_ica_project_name(project_root, role)
+    resolve_ica_project_id(project_root, ROLE_DRAGEN_ALIGN)
+    resolve_ica_project_id(project_root, ROLE_DRAGEN_MLR)
     resolve_ica_api_key_field(project_root)
     resolve_mlr_config_file_id(project_root)
 

@@ -186,15 +186,15 @@ def test_fastq_mode_uses_supplier_project_and_writes_marker(tmp_path: Path, patc
 
 
 def test_fastq_mode_skips_collaborator_managed_project(tmp_path: Path, patched_env, monkeypatch):
-    """A FASTQ source project registered with a None ID (collaborator-managed, e.g.
-    tenk10k_fastq_upload) is skipped: no FASTQ deletes attempted, no error, marker still
-    written. We ask collaborators to delete that data rather than doing it ourselves."""
+    """A family with `can-delete-fastq=false` (collaborator-managed, e.g. tenk10k) is skipped: no
+    FASTQ deletes attempted, no error, marker still written with `skipped=true`. We ask
+    collaborators to delete that data rather than doing it ourselves."""
     cohort_fid = 'fol.cohort_003'
     fastq_fids = {'fil.fastq_001': 'fil.fastq_001'}
     api = _make_api_instance(verify_deleting_fids={cohort_fid})
     patched_env['api_instance'] = api
-    # project_root=tenk10k → the derived FASTQ upload project is tenk10k_fastq_upload (None id).
-    # `ica_project_name` reads config in the constants_registry binding, so patch it there.
+    # project_root=tenk10k → can-delete-fastq is False. `ica_can_delete_fastq` reads config in the
+    # constants_registry binding, so patch it there.
     monkeypatch.setattr(
         'dragen_align_pa.constants_registry.config_retrieve',
         lambda key, default=None: 'tenk10k',  # noqa: ARG005
@@ -218,29 +218,9 @@ def test_fastq_mode_skips_collaborator_managed_project(tmp_path: Path, patched_e
         c for c in api.delete_data.call_args_list if c.kwargs['path_params']['projectId'] == FASTQ_PROJECT_ID
     ]
     assert not fastq_calls, 'collaborator-managed project must not be deleted from'
-
-
-def test_fastq_mode_rejects_unauthorised_project(tmp_path: Path, patched_env, monkeypatch):
-    """A registered, non-None FASTQ source project that is NOT on the deletable allowlist is a
-    misconfiguration — refuse loud rather than delete from an unsanctioned project."""
-    fastq_fids = {'fil.fastq_001': 'fil.fastq_001'}
-    patched_env['api_instance'] = _make_api_instance(verify_deleting_fids={'fol.cohort_004'})
-    # project_root=ourdna (default) derives FASTQ upload ourdna-data-upload-agrf (real id); empty
-    # the allowlist so that non-None project is treated as unsanctioned and rejected.
-    monkeypatch.setattr('dragen_align_pa.jobs.delete_data_in_ica.FASTQ_DELETABLE_PROJECTS', frozenset())
-
-    cohort_path = _write_cohort_fid(tmp_path, fid='fol.cohort_004')
-    fastq_path = _write_fastq_fid_list(tmp_path, fastq_fids)
-
-    with pytest.raises(ValueError, match='not authorised for FASTQ deletion'):
-        delete_data_in_ica.run(
-            cohort_name='COH0004',
-            output_path=tmp_path / 'COH0004_delete_complete.json',
-            cohort_analysis_output_fid_path=cohort_path,
-            cram_fid_paths_dict=None,
-            fastq_ids_list_path=fastq_path,
-            settle_seconds=0,
-        )
+    # The marker records the skip so a downstream reader doesn't mistake the count for deletions.
+    payload = json.loads(marker_path.read_text())
+    assert payload['fastq_source_project'] == {'fastq_count': 1, 'skipped': True}
 
 
 def test_spurious_apivalueerror_with_404_verify_is_success(tmp_path: Path, patched_env):

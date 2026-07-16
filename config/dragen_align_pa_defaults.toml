@@ -29,8 +29,9 @@ sample_id = 'sample_id'
 control_manifest = false
 
 # Dataset family for this run's ICA projects. The DRAGEN-align, DRAGEN-MLR and FASTQ-upload
-# projects are derived from this family in `constants.ICA_PROJECT_IDS` (see `ica_project_name`),
-# so a run only needs to name the family here. Must be a registered family (e.g. "ourdna").
+# projects (plus the API-key field and MLR config id) are derived from this family in
+# `constants.ICA_PROJECT_SETUP` (resolved by `constants_registry.ica_project_name` et al.), so a
+# run only needs to name the family here. Must be a registered family (e.g. "ourdna").
 [ica.projects]
 project_root = "REPLACE_WITH_DATASET_FAMILY"
 

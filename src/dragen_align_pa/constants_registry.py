@@ -170,6 +170,26 @@ def resolve_mlr_config_file_id(project_root: str) -> str:
     return _reject_placeholder_file_id(f'{project_root} MLR config JSON', file_id)
 
 
+def resolve_ica_can_delete_fastq(project_root: str) -> bool:
+    """Return whether we may delete uploaded FASTQ data for family `project_root`.
+
+    This is the authoritative in-repo call on FASTQ-deletion authority (ICA enforces the same
+    permission independently, so a `True` here still can't delete from a collaborator project).
+    A family we don't control the upload area for registers `can-delete-fastq = False`, and
+    `DeleteDataInIca` skips its FASTQ deletion.
+
+    Args:
+        project_root: The dataset family.
+
+    Returns:
+        `True` if the pipeline may attempt FASTQ deletion for this family, else `False`.
+
+    Raises:
+        KeyError: If `project_root` is not a registered family.
+    """
+    return _family_setup(project_root)['can-delete-fastq']
+
+
 def ica_project_name(role: str) -> str:
     """Resolve the ICA project name for `role` from the configured dataset family."""
     return resolve_ica_project_name(_configured_family(), role)
@@ -193,6 +213,11 @@ def ica_api_key_field() -> str:
 def ica_mlr_config_file_id() -> str:
     """Return the MLR config JSON file id for the configured dataset family."""
     return resolve_mlr_config_file_id(_configured_family())
+
+
+def ica_can_delete_fastq() -> bool:
+    """Return whether the configured dataset family permits FASTQ deletion."""
+    return resolve_ica_can_delete_fastq(_configured_family())
 
 
 def _reject_placeholder_file_id(name: str, file_id: str) -> str:

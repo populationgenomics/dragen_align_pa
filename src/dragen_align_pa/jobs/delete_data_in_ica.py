@@ -25,11 +25,10 @@ from icasdk.exceptions import ApiException, ApiValueError
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
-from dragen_align_pa.constants import FASTQ_DELETABLE_PROJECTS
 from dragen_align_pa.constants_registry import (
     ROLE_DRAGEN_ALIGN,
     ROLE_FASTQ_UPLOAD,
-    ica_project_id_or_none,
+    ica_can_delete_fastq,
     ica_project_name,
 )
 from dragen_align_pa.utils import get_pipeline_path
@@ -146,7 +145,20 @@ def _write_success_marker(
     cohort_folder_fid: str,
     cram_count: int,
     fastq_count: int | None,
+    fastq_skipped: bool,
 ) -> None:
+    """Write the audit marker recording what this run deleted.
+
+    Args:
+        output_path: Where to write the marker JSON.
+        cohort_name: The cohort processed.
+        cohort_folder_fid: The deleted cohort-level analysis output folder id.
+        cram_count: Number of per-SG CRAM file ids deleted from the DRAGEN project.
+        fastq_count: Number of FASTQ file ids in scope, or `None` in CRAM-only mode. When the
+            FASTQ pass was skipped, these were not deleted (see `fastq_skipped`).
+        fastq_skipped: `True` if the FASTQ pass was skipped (collaborator-managed family), so
+            `fastq_count` reflects files left for the collaborator to delete, not files deleted.
+    """
     payload: dict[str, Any] = {
         'cohort_name': cohort_name,
         'runs_project': {
@@ -155,7 +167,7 @@ def _write_success_marker(
         },
     }
     if fastq_count is not None:
-        payload['fastq_source_project'] = {'fastq_count': fastq_count}
+        payload['fastq_source_project'] = {'fastq_count': fastq_count, 'skipped': fastq_skipped}
     with output_path.open('w') as fh:
         json.dump(payload, fh)
 
@@ -190,14 +202,12 @@ def run(
             settle_seconds=settle_seconds,
         )
 
+    fastq_skipped = False
     if fastq_ids_list_path:
-        fastq_source_project = ica_project_name(ROLE_FASTQ_UPLOAD)
-        # Guard which projects we may delete uploaded FASTQ data from. Only the sanctioned
-        # projects are deleted; a project deliberately registered with a None ID is
-        # collaborator-managed and skipped; any other (non-None, non-sanctioned) project is a
-        # misconfiguration and rejected rather than silently deleted from.
-        fastq_project_id = ica_project_id_or_none(ROLE_FASTQ_UPLOAD)
-        if fastq_source_project in FASTQ_DELETABLE_PROJECTS:
+        # Whether we may delete uploaded FASTQ data is the family's `can-delete-fastq` flag. ICA
+        # enforces the same permission independently, so this is a pre-check that skips a family
+        # we don't control the upload area for (rather than attempting a delete ICA would refuse).
+        if ica_can_delete_fastq():
             # The FASTQ-upload project sits in the same dataset family as the DRAGEN project, so
             # its client authenticates with the same family API key; a fresh session just swaps
             # in the FASTQ project's id for the delete path_params.
@@ -209,18 +219,11 @@ def run(
                     fids=fastq_fids,
                     settle_seconds=settle_seconds,
                 )
-        elif fastq_project_id is None:
-            # Explicit None marks a collaborator-managed upload area we're not permitted to
-            # delete from (they delete on request); skip rather than fail the stage.
-            logger.info(
-                f'FASTQ source project {fastq_source_project!r} is collaborator-managed '
-                f'(no ICA project ID registered); skipping FASTQ deletion.',
-            )
         else:
-            raise ValueError(
-                f'FASTQ source project {fastq_source_project!r} is not authorised for FASTQ '
-                f'deletion. Only {sorted(FASTQ_DELETABLE_PROJECTS)} may have FASTQ data deleted; '
-                f'other FASTQ-upload projects must be registered with a None id in ICA_PROJECT_SETUP.',
+            fastq_skipped = True
+            logger.info(
+                f'FASTQ source project {ica_project_name(ROLE_FASTQ_UPLOAD)!r} is collaborator-managed '
+                f'(can-delete-fastq=false); skipping FASTQ deletion (collaborators delete on request).',
             )
 
     if failures:
@@ -236,4 +239,5 @@ def run(
         cohort_folder_fid=cohort_folder_fid,
         cram_count=len(cram_fids),
         fastq_count=len(fastq_fids) if fastq_ids_list_path is not None else None,
+        fastq_skipped=fastq_skipped,
     )
