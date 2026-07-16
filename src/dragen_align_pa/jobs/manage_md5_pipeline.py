@@ -7,7 +7,7 @@ import cpg_utils.config
 import pandas as pd
 from cpg_flow.targets import Cohort
 from cpg_utils.config import try_get_ar_guid
-from icasdk.apis.tags import project_analysis_api, project_data_api
+from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
@@ -90,12 +90,12 @@ def _submit_md5_run(
     (This is the original submit function from this file)
     """
     logger.info(f'Submitting new MD5 ICA pipeline for {cohort_name}')
-    with ica_api_utils.get_ica_api_client() as api_client:
-        api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
+    with ica_api_utils.ica_project_analysis_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         md5_pipeline_id: str = run_intake_qc_pipeline.run_md5_pipeline(
             cohort_name=cohort_name,
             fastq_list_file_id=fastq_list_file_id,
             api_instance=api_instance,
+            path_parameters=path_parameters,
             ar_guid=ar_guid,
             md5_outputs_folder_id=md5_outputs_folder_id,
         )
@@ -137,9 +137,7 @@ def run(
     fastq_list_file_id: str
     md5_outputs_folder_id: str
 
-    with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_parameters):
-        api_instance = project_data_api.ProjectDataApi(api_client)
-
+    with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         # Get all ica file ids for the fastq files
         ica_fastq_info: dict[str, str] = _get_fastq_ica_id_list(
             fastq_filenames=fastq_filenames,

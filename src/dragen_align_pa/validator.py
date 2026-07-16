@@ -17,6 +17,7 @@ from dragen_align_pa.constants_registry import (
     REQUIRED_ICA_ROLES,
     ROLE_DRAGEN_ALIGN,
     ROLE_DRAGEN_MLR,
+    configured_family,
     resolve_ica_api_key_field,
     resolve_ica_project_id,
     resolve_ica_project_name,
@@ -63,7 +64,7 @@ def assert_ica_project_root_resolves() -> None:
             has no registered API-key field.
         ValueError: If the MLR config JSON is still the not-yet-minted placeholder.
     """
-    project_root = config_retrieve(['ica', 'projects', 'project_root'])
+    project_root = configured_family()
     for role in REQUIRED_ICA_ROLES:
         resolve_ica_project_name(project_root, role)
     resolve_ica_project_id(project_root, ROLE_DRAGEN_ALIGN)

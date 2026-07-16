@@ -59,7 +59,7 @@ import json
 import os
 import tempfile
 
-from icasdk.apis.tags import project_data_api
+from icasdk.apis.tags import project_data_api  # noqa: TC002  (used only in annotations; keep as a runtime import)
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils, utils
@@ -278,11 +278,9 @@ def build_panel(
     ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_ALIGN)
 
     with (
-        ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_params),
+        ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_params),
         tempfile.TemporaryDirectory() as ica_local_dir,
     ):
-        api_instance = project_data_api.ProjectDataApi(api_client)
-
         for sg in sequencing_groups:
             original_basename = _counts_basename(sg, counts_suffix)
             pon_basename = _pon_basename(sg, counts_suffix, rename_suffix)

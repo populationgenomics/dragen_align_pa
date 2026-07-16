@@ -1,5 +1,4 @@
 import icasdk
-from icasdk.apis.tags import project_analysis_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
@@ -19,9 +18,8 @@ def run(ica_pipeline_id: str, is_mlr: bool = False) -> dict[str, str]:
 
     role = ROLE_DRAGEN_MLR if is_mlr else ROLE_DRAGEN_ALIGN
 
-    with ica_api_utils.ica_project_session(role) as (api_client, path_parameters):
+    with ica_api_utils.ica_project_analysis_api(role) as (api_instance, path_parameters):
         abort_path_params = path_parameters | {'analysisId': ica_pipeline_id}
-        api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
         try:
             api_instance.abort_analysis(
                 path_params=abort_path_params,  # type: ignore[ReportUnknownVariableType]

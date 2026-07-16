@@ -17,7 +17,6 @@ from collections.abc import Callable
 import cpg_utils.config
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve
-from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
@@ -226,8 +225,7 @@ def _on_succeeded_factory(
         passfail = None
         folder_fid: str | None = None
         try:
-            with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_parameters):
-                api_instance = project_data_api.ProjectDataApi(api_client)
+            with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
                 passfail = fetch_passfail_from_ica(
                     api_instance=api_instance,
                     path_parameters=path_parameters,

@@ -6,7 +6,6 @@ import cpg_utils.config
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.config import config_retrieve
 from google.cloud import storage
-from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils, paths, utils
@@ -45,9 +44,7 @@ def run(
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
-    with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_parameters):
-        api_instance = project_data_api.ProjectDataApi(api_client)
-
+    with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         # --- List + inline filter for CRAM/gVCF (handled by sibling stages) ---
         files = ica_utils.list_ica_files(
             api_instance=api_instance,

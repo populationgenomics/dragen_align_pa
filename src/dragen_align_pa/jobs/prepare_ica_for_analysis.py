@@ -2,7 +2,6 @@ import json
 
 import cpg_utils.config
 from cpg_flow.targets import Cohort
-from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
@@ -22,8 +21,7 @@ def run(cohort: Cohort, output: cpg_utils.Path) -> None:
     """
     folder_path: str = IcaPath.output_root().as_folder()
 
-    with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_parameters):
-        api_instance = project_data_api.ProjectDataApi(api_client)
+    with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         folder_id, status = ica_utils.create_upload_object_id(
             api_instance=api_instance,
             path_params=path_parameters,

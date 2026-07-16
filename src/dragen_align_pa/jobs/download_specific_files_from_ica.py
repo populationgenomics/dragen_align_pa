@@ -129,8 +129,7 @@ def run(
     gcs_bucket = storage_client.bucket(gcs_output_bucket_name)
 
     # --- 5. Run Orchestration ---
-    with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_parameters):
-        api_instance = project_data_api.ProjectDataApi(api_client)
+    with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         _orchestrate_download(
             api_instance=api_instance,
             path_parameters=path_parameters,

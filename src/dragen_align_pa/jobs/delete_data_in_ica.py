@@ -1,17 +1,17 @@
 """Delete cohort outputs + source CRAMs/FASTQs from ICA to release storage.
 
-Two project-scoped passes:
-- DRAGEN runs project: the cohort-level analysis output folder (cascades
-  to per-batch analyses, per-SG outputs, per-batch FASTQ list CSVs) + the
-  per-SG uploaded CRAM file IDs.
-- Supplier project (FASTQ mode only): the linked FASTQ file IDs from
-  `FastqIntakeQc`'s outpath.
+Two deletion passes share one ICA client — both projects are in the same dataset family, so the
+family API key authenticates both and only the `projectId` differs:
+- DRAGEN-align project: the cohort-level analysis output folder (cascades to per-batch analyses,
+  per-SG outputs, per-batch FASTQ list CSVs) + the per-SG uploaded CRAM file IDs.
+- FASTQ-upload project (FASTQ mode only): the linked FASTQ file IDs from `FastqIntakeQc`'s
+  outpath. Skipped when the family's `can-delete-fastq` is false (collaborator-managed).
 
-Each pass fires all deletes, sleeps `settle_seconds` (default 60) for ICA's
-async delete state machine, then verifies via `get_project_data` (404 or
-`status='DELETING'` is success). Failures across both passes are aggregated
-into a TSV log at `get_pipeline_path('{cohort}_delete_errors.log')`; on any
-failure the job raises so the cpg-flow stage shows red.
+Each pass fires all deletes, sleeps `settle_seconds` (default 60) for ICA's async delete state
+machine, then verifies via `get_project_data` (404 or `status='DELETING'` is success). Failures
+across both passes are aggregated into a TSV log at
+`get_pipeline_path('{cohort}_delete_errors.log')`; on any failure the job raises so the cpg-flow
+stage shows red.
 """
 
 import json
@@ -198,8 +198,7 @@ def run(
     # client (authenticated with the family API key) serves both — only the `projectId` in
     # path_params differs. Open it once via the DRAGEN-align session and reuse it for both passes.
     fastq_skipped = False
-    with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_params):
-        api_instance = project_data_api.ProjectDataApi(api_client)
+    with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_params):
         # DRAGEN runs project: cohort output folder (cascades) + per-SG CRAMs.
         failures += _delete_and_verify(
             api_instance=api_instance,

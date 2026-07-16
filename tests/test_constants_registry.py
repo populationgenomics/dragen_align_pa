@@ -138,8 +138,6 @@ def test_config_reading_entry_points_use_configured_family():
     assert constants_registry.ica_project_name(constants_registry.ROLE_DRAGEN_ALIGN) == 'OurDNA-DRAGEN-378'
     mlr_id = constants_registry.ica_project_id(constants_registry.ROLE_DRAGEN_MLR)
     assert mlr_id == 'f2f55709-f8d4-4364-bb04-c41975d4c0ed'
-    align_id = constants_registry.ica_project_id_or_none(constants_registry.ROLE_DRAGEN_ALIGN)
-    assert align_id == '5c3a60b0-1458-4e37-8877-ec6b25dc4003'
     assert constants_registry.ica_api_key_field() == 'apiKey'
     assert constants_registry.ica_mlr_config_file_id() == 'fil.91c3e63114fc43dc31ed08dde927d6b4'
     assert constants_registry.ica_can_delete_fastq() is True

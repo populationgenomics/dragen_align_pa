@@ -2,6 +2,13 @@
 This module centralizes all direct interactions with the Illumina Connected
 Analytics (ICA) Python SDK. It handles authentication and provides thin
 wrappers around specific API endpoints.
+
+Adding an ICA job? Open the client with `ica_project_data_api(role)` (or
+`ica_project_analysis_api(role)`), passing a `ROLE_*` constant from `constants_registry` — never
+a project name or a raw `config_retrieve(['ica', 'projects', ...])` — and use the yielded
+`(api_instance, path_params)`. Drop to the lower-level `ica_project_session` only when one client
+must back more than one `…Api` class (see `submit_dragen_batch`). Use the icav2 CLI
+(`ica_cli_utils.authenticate_ica_cli(role)`) only where the SDK can't reach — uploads / popgen-cli.
 """
 
 import contextlib
@@ -183,6 +190,37 @@ def ica_project_session(role: str) -> Iterator[tuple[ApiClient, dict[str, str]]]
     project_id = ica_project_id(role)
     with get_ica_api_client() as api_client:
         yield api_client, {'projectId': project_id}
+
+
+@contextlib.contextmanager
+def ica_project_data_api(role: str) -> Iterator[tuple[project_data_api.ProjectDataApi, dict[str, str]]]:
+    """`ica_project_session` for the data API: yield `(ProjectDataApi, path_params)` for `role`.
+
+    The common case — a job needs the project-data endpoints plus the role's `path_params`. Use
+    `ica_project_session` directly only when a single client must back more than one `…Api` class.
+
+    Args:
+        role: One of `constants_registry.REQUIRED_ICA_ROLES`.
+
+    Yields:
+        `(ProjectDataApi(client), {'projectId': <id for role>})`.
+    """
+    with ica_project_session(role) as (api_client, path_params):
+        yield project_data_api.ProjectDataApi(api_client), path_params
+
+
+@contextlib.contextmanager
+def ica_project_analysis_api(role: str) -> Iterator[tuple[project_analysis_api.ProjectAnalysisApi, dict[str, str]]]:
+    """`ica_project_session` for the analysis API: yield `(ProjectAnalysisApi, path_params)`.
+
+    Args:
+        role: One of `constants_registry.REQUIRED_ICA_ROLES`.
+
+    Yields:
+        `(ProjectAnalysisApi(client), {'projectId': <id for role>})`.
+    """
+    with ica_project_session(role) as (api_client, path_params):
+        yield project_analysis_api.ProjectAnalysisApi(api_client), path_params
 
 
 # --- API Wrappers ---

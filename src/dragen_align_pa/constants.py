@@ -27,8 +27,8 @@ _TODO_FID: Final = f'{TODO_FID_PREFIX}REPLACE_AFTER_ICA_UPLOAD'
 # An api key dict recording the name of the apikey secret in secretsmanager
 # An ICA file ID for the MLR config JSON
 IcaProject = TypedDict('IcaProject', {'project-name': str, 'project-id': str | None})
-IcaCohortSetup = TypedDict(
-    'IcaCohortSetup',
+IcaFamilySetup = TypedDict(
+    'IcaFamilySetup',
     {
         'projects': dict[str, IcaProject],
         'api-key': dict[str, str],
@@ -36,7 +36,7 @@ IcaCohortSetup = TypedDict(
         'can-delete-fastq': bool,
     },
 )
-ICA_PROJECT_SETUP: Final[dict[str, IcaCohortSetup]] = {
+ICA_PROJECT_SETUP: Final[dict[str, IcaFamilySetup]] = {
     'ourdna': {
         'projects': {
             'dragen-align': {
@@ -86,7 +86,7 @@ ANALYSIS_INSTANCE_TIER: Final[str] = 'economy'
 
 
 # Registry of reference files/folders in ICA (BEDs, QC assets, reference genomes). Referenced
-# by basename from config or directly in code. Resolve via `resolve_ica_file_id`.
+# by basename from config or directly in code. Resolve via `constants_registry.resolve_ica_file_id`.
 ICA_FILE_IDS: Final[dict[str, str]] = {
     'Twist_VCGS_Exome_Covered_Targets_hg38.bed': 'fil.60130ada16264ed28a7008deb1d54636',
     'S30409818_Regions.bed': 'fil.5d4da6b9c2c74abcb00608deb2229b88',

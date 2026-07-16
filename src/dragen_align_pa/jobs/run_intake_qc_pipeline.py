@@ -9,19 +9,21 @@ from icasdk.model.create_nextflow_analysis import CreateNextflowAnalysis
 from icasdk.model.nextflow_analysis_input import NextflowAnalysisInput
 
 from dragen_align_pa import ica_api_utils
-from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN, ica_project_id
 
 
 def run_md5_pipeline(
     cohort_name: str,
     fastq_list_file_id: str,
     api_instance: project_analysis_api.ProjectAnalysisApi,
+    path_parameters: dict[str, str],
     ar_guid: str,
     md5_outputs_folder_id: str,
 ) -> str:
     header_params: dict[Any, Any] = {}
     chunk_size = str(cpg_utils.config.config_retrieve(['ica', 'pipelines', 'md5', 'chunk_size'], default='100'))
-    project_id: str = ica_project_id(ROLE_DRAGEN_ALIGN)
+    # The projectId comes from the caller's session (one resolution per submission); the DRAGEN
+    # project id is also passed to the pipeline itself as the `ica_project_id` parameter value.
+    project_id: str = path_parameters['projectId']
     api_key: str = ica_api_utils.get_ica_api_key()
 
     body = CreateNextflowAnalysis(
@@ -45,10 +47,9 @@ def run_md5_pipeline(
         ),
     )
 
-    path_params: dict[str, str] = {'projectId': project_id}
     return ica_api_utils.submit_nextflow_analysis(
         api_instance=api_instance,
-        path_params=path_params,
+        path_params=path_parameters,
         body=body,
         header_params=header_params,
     )

@@ -12,7 +12,6 @@ import os
 
 import cpg_utils.config
 from cpg_flow.targets import SequencingGroup
-from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
@@ -99,8 +98,7 @@ def run(
 
     # 2. --- Check File Existence ---
     cram_status: str | None = None
-    with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_parameters):
-        api_instance = project_data_api.ProjectDataApi(api_client)
+    with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         cram_status = ica_utils.check_file_existence(
             api_instance=api_instance,
             path_params=path_parameters,

@@ -27,7 +27,7 @@ ROLE_FASTQ_UPLOAD: Final = 'fastq-upload'
 REQUIRED_ICA_ROLES: Final = (ROLE_DRAGEN_ALIGN, ROLE_DRAGEN_MLR, ROLE_FASTQ_UPLOAD)
 
 
-def _configured_family() -> str:
+def configured_family() -> str:
     """Return the dataset family named by `[ica.projects].project_root`.
 
     Raises:
@@ -36,7 +36,7 @@ def _configured_family() -> str:
     return config_retrieve(['ica', 'projects', 'project_root'])
 
 
-def _family_setup(project_root: str) -> constants.IcaCohortSetup:
+def _family_setup(project_root: str) -> constants.IcaFamilySetup:
     """Return the full `ICA_PROJECT_SETUP` block for family `project_root`.
 
     Args:
@@ -192,32 +192,27 @@ def resolve_ica_can_delete_fastq(project_root: str) -> bool:
 
 def ica_project_name(role: str) -> str:
     """Resolve the ICA project name for `role` from the configured dataset family."""
-    return resolve_ica_project_name(_configured_family(), role)
+    return resolve_ica_project_name(configured_family(), role)
 
 
 def ica_project_id(role: str) -> str:
     """Resolve the ICA project ID for `role` from the configured dataset family (requires one)."""
-    return resolve_ica_project_id(_configured_family(), role)
-
-
-def ica_project_id_or_none(role: str) -> str | None:
-    """Resolve the ICA project ID for `role` from the configured family, or `None` if unset."""
-    return resolve_ica_project_id_or_none(_configured_family(), role)
+    return resolve_ica_project_id(configured_family(), role)
 
 
 def ica_api_key_field() -> str:
     """Return the secret API-key field for the configured dataset family."""
-    return resolve_ica_api_key_field(_configured_family())
+    return resolve_ica_api_key_field(configured_family())
 
 
 def ica_mlr_config_file_id() -> str:
     """Return the MLR config JSON file id for the configured dataset family."""
-    return resolve_mlr_config_file_id(_configured_family())
+    return resolve_mlr_config_file_id(configured_family())
 
 
 def ica_can_delete_fastq() -> bool:
     """Return whether the configured dataset family permits FASTQ deletion."""
-    return resolve_ica_can_delete_fastq(_configured_family())
+    return resolve_ica_can_delete_fastq(configured_family())
 
 
 def _reject_placeholder_file_id(name: str, file_id: str) -> str:
