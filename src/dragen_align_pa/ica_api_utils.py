@@ -14,7 +14,7 @@ must back more than one `…Api` class (see `submit_dragen_batch`). Use the icav
 import contextlib
 import functools
 import json
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, Any, Final, TypeVar
 
 import icasdk
@@ -143,7 +143,7 @@ def get_ica_api_key() -> str:
 
 
 @contextlib.contextmanager
-def get_ica_api_client() -> Iterator[ApiClient]:
+def get_ica_api_client() -> Generator[ApiClient]:
     """Provide a context-managed icasdk.ApiClient for the configured dataset family.
 
     Handles fetching the key, configuring, and closing the client. The API key is the
@@ -169,7 +169,7 @@ def get_ica_api_client() -> Iterator[ApiClient]:
 
 
 @contextlib.contextmanager
-def ica_project_session(role: str) -> Iterator[tuple[ApiClient, dict[str, str]]]:
+def ica_project_session(role: str) -> Generator[tuple[ApiClient, dict[str, str]]]:
     """Open an ICA client for the configured family and yield it with `role`'s REST path params.
 
     Collapses the repeated "resolve project name → project id → open client" sequence at job
@@ -193,7 +193,7 @@ def ica_project_session(role: str) -> Iterator[tuple[ApiClient, dict[str, str]]]
 
 
 @contextlib.contextmanager
-def ica_project_data_api(role: str) -> Iterator[tuple[project_data_api.ProjectDataApi, dict[str, str]]]:
+def ica_project_data_api(role: str) -> Generator[tuple[project_data_api.ProjectDataApi, dict[str, str]]]:
     """`ica_project_session` for the data API: yield `(ProjectDataApi, path_params)` for `role`.
 
     The common case — a job needs the project-data endpoints plus the role's `path_params`. Use
@@ -210,7 +210,7 @@ def ica_project_data_api(role: str) -> Iterator[tuple[project_data_api.ProjectDa
 
 
 @contextlib.contextmanager
-def ica_project_analysis_api(role: str) -> Iterator[tuple[project_analysis_api.ProjectAnalysisApi, dict[str, str]]]:
+def ica_project_analysis_api(role: str) -> Generator[tuple[project_analysis_api.ProjectAnalysisApi, dict[str, str]]]:
     """`ica_project_session` for the analysis API: yield `(ProjectAnalysisApi, path_params)`.
 
     Args:
