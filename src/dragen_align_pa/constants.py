@@ -56,7 +56,7 @@ ICA_PROJECT_SETUP: Final[dict[str, IcaFamilySetup]] = {
             },
         },
         'api_key': {'name': 'apiKey'},
-        'mlr_config_json': {'ica_file_id': 'fil.91c3e63114fc43dc31ed08dde927d6b4'},
+        'mlr_config_json': {'ica_file_id': 'fil.a1007afeae3741bb815108dedba2c6eb'},
         'can_delete_fastq': True,
     },
     'tenk10k': {

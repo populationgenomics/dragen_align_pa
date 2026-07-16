@@ -1,5 +1,5 @@
 """
-This module centralizes all direct interactions with the Illumina Connected
+This module centralises all direct interactions with the Illumina Connected
 Analytics (ICA) Python SDK. It handles authentication and provides thin
 wrappers around specific API endpoints.
 
