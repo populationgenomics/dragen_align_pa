@@ -1,14 +1,12 @@
 import json
-from typing import Literal
 
-import cpg_utils
+import cpg_utils.config
 from cpg_flow.targets import Cohort
-from cpg_utils.config import config_retrieve
-from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
-from dragen_align_pa.constants import BUCKET_NAME
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
+from dragen_align_pa.paths import IcaPath
 
 # Fail-fast here so a doomed submission surfaces with context instead of
 # crashing opaquely later at pipeline launch.
@@ -21,16 +19,12 @@ def run(cohort: Cohort, output: cpg_utils.Path) -> None:
     This pipeline writes per-batch (not per-SG) analysis folders directly under
     this parent folder.
     """
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    project_id: str = secrets['projectID']
-    output_folder: str = config_retrieve(['ica', 'data_prep', 'output_folder'])
-    folder_path: str = f'/{BUCKET_NAME}/{output_folder}'
+    folder_path: str = IcaPath.output_root().as_folder()
 
-    with ica_api_utils.get_ica_api_client() as api_client:
-        api_instance = project_data_api.ProjectDataApi(api_client)
+    with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         folder_id, status = ica_utils.create_upload_object_id(
             api_instance=api_instance,
-            path_params={'projectId': project_id},
+            path_params=path_parameters,
             folder_name=cohort.name,
             file_name=cohort.name,
             folder_path=folder_path,
@@ -43,7 +37,7 @@ def run(cohort: Cohort, output: cpg_utils.Path) -> None:
             f'Cohort output folder for {cohort.name} is in terminal-bad status '
             f'{status!r} (folder_id={folder_id}). DRAGEN pipeline submissions '
             f'against this folder will fail. Manually unarchive or recreate the '
-            f"folder in ICA, then re-run the cohort.",
+            f'folder in ICA, then re-run the cohort.',
         )
     if status != 'AVAILABLE':
         logger.warning(

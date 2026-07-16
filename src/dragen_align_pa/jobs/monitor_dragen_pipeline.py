@@ -1,9 +1,5 @@
-from typing import Literal
-
-from cpg_utils.config import config_retrieve
-from icasdk.apis.tags import project_analysis_api
-
 from dragen_align_pa import ica_api_utils
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN, ROLE_DRAGEN_MLR
 
 
 def run(ica_pipeline_id: str | dict[str, str], is_mlr: bool = False) -> str:
@@ -14,22 +10,10 @@ def run(ica_pipeline_id: str | dict[str, str], is_mlr: bool = False) -> str:
     Returns:
         The status of the ICA pipeline run.
     """
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    project_id: str = secrets['projectID']
-
+    role = ROLE_DRAGEN_MLR if is_mlr else ROLE_DRAGEN_ALIGN
     pipeline_id: str = ica_pipeline_id['pipeline_id'] if isinstance(ica_pipeline_id, dict) else ica_pipeline_id
 
-    with ica_api_utils.get_ica_api_client() as api_client:
-        api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
-        if not is_mlr:
-            path_params: dict[str, str] = {'projectId': project_id}
-        else:
-            path_params = {
-                'projectId': config_retrieve(
-                    ['ica', 'projects', 'dragen_mlr_project_id'],
-                ),
-            }
-
+    with ica_api_utils.ica_project_analysis_api(role) as (api_instance, path_params):
         return ica_api_utils.check_ica_pipeline_status(
             api_instance=api_instance,
             path_params=path_params | {'analysisId': pipeline_id},

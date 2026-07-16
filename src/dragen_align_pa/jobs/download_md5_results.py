@@ -4,16 +4,13 @@ MD5 Checksum pipeline in ICA.
 """
 
 import json
-from typing import Literal
 
-import cpg_utils
+import cpg_utils.config
 import requests
-from cpg_utils.config import config_retrieve
-from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils
-from dragen_align_pa.constants import BUCKET_NAME
+from dragen_align_pa import ica_api_utils, ica_utils
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
 
 
 def run(
@@ -24,16 +21,7 @@ def run(
     """
     Main function for the job.
     """
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    project_id: str = secrets['projectID']
-
-    path_parameters: dict[str, str] = {'projectId': project_id}
-
-    folder_path: str = f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}'
-
-    with ica_api_utils.get_ica_api_client() as api_client:
-        api_instance = project_data_api.ProjectDataApi(api_client)
-
+    with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         # Get the ID
         with md5_pipeline_file.open('r') as pipeline_fh:
             pipeline_data: dict[str, str] = json.load(pipeline_fh)
@@ -44,7 +32,7 @@ def run(
 
         # Routes through find_file_id_by_name so the parentFolderPath slash
         # normalisation lives in one place (raises FileNotFoundError if absent).
-        parent_folder_path = f'{folder_path}/{cohort_name}/{cohort_name}_{ar_guid}-{pipeline_id}/'
+        parent_folder_path = ica_utils.ica_md5_run_path(cohort_name, ar_guid, pipeline_id).as_folder()
         md5sum_results_id: str = ica_api_utils.find_file_id_by_name(
             api_instance=api_instance,
             path_parameters=path_parameters,

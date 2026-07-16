@@ -53,7 +53,9 @@ def test_list_ica_files_non_recursive_returns_leaf_names():
     api = _make_api(children)
 
     result = list_ica_files(
-        api_instance=api, path_parameters={'projectId': 'p'}, base_ica_folder_path='/base/',
+        api_instance=api,
+        path_parameters={'projectId': 'p'},
+        base_ica_folder_path='/base/',
     )
     assert sorted(result) == [('a.txt', 'fid_a'), ('b.txt', 'fid_b')]
 
@@ -69,7 +71,9 @@ def test_list_ica_files_non_recursive_does_not_traverse_subfolders():
     api = _make_api(children)
 
     result = list_ica_files(
-        api_instance=api, path_parameters={'projectId': 'p'}, base_ica_folder_path='/base/',
+        api_instance=api,
+        path_parameters={'projectId': 'p'},
+        base_ica_folder_path='/base/',
     )
 
     assert result == [('top.html', 'fid_top')]
@@ -102,12 +106,14 @@ def test_list_ica_files_recursive_returns_relative_paths():
         recursive=True,
     )
 
-    assert sorted(result) == sorted([
-        ('top.html', 'fid_top'),
-        ('report_files/mid.csv', 'fid_mid'),
-        ('report_files/samples/a.csv', 'fid_a'),
-        ('report_files/samples/b.csv', 'fid_b'),
-    ])
+    assert sorted(result) == sorted(
+        [
+            ('top.html', 'fid_top'),
+            ('report_files/mid.csv', 'fid_mid'),
+            ('report_files/samples/a.csv', 'fid_a'),
+            ('report_files/samples/b.csv', 'fid_b'),
+        ]
+    )
 
 
 def test_list_ica_files_empty_base_folder_returns_empty_list():
@@ -128,7 +134,9 @@ def test_list_ica_files_normalises_trailing_slash():
     api = _make_api(children)
 
     result = list_ica_files(
-        api_instance=api, path_parameters={'projectId': 'p'}, base_ica_folder_path='/base',
+        api_instance=api,
+        path_parameters={'projectId': 'p'},
+        base_ica_folder_path='/base',
     )
     assert result == [('a.txt', 'fid_a')]
 
@@ -147,7 +155,9 @@ def test_list_ica_files_skips_items_with_missing_name_or_id():
     api = _make_api(children)
 
     result = list_ica_files(
-        api_instance=api, path_parameters={'projectId': 'p'}, base_ica_folder_path='/base/',
+        api_instance=api,
+        path_parameters={'projectId': 'p'},
+        base_ica_folder_path='/base/',
     )
     assert result == [('ok.txt', 'fid_ok')]
 
@@ -170,14 +180,18 @@ def test_list_ica_files_propagates_api_exception_mid_walk():
 
 def test_list_ica_files_handles_pagination_for_files():
     """Multi-page FILE listings are concatenated correctly across pages."""
-    page_a = MagicMock(body={
-        'items': [_file_item('a.txt', 'fid_a')],
-        'nextPageToken': 'token-1',
-    })
-    page_b = MagicMock(body={
-        'items': [_file_item('b.txt', 'fid_b')],
-        'nextPageToken': None,
-    })
+    page_a = MagicMock(
+        body={
+            'items': [_file_item('a.txt', 'fid_a')],
+            'nextPageToken': 'token-1',
+        }
+    )
+    page_b = MagicMock(
+        body={
+            'items': [_file_item('b.txt', 'fid_b')],
+            'nextPageToken': None,
+        }
+    )
     page_folders = MagicMock(body={'items': [], 'nextPageToken': None})
 
     api = MagicMock()
@@ -204,23 +218,31 @@ def test_list_ica_files_handles_pagination_for_folders():
     """Multi-page FOLDER listings are concatenated correctly across pages,
     and the walker recurses into every folder from every page."""
     base_files = MagicMock(body={'items': [], 'nextPageToken': None})
-    folders_page_a = MagicMock(body={
-        'items': [_folder_item('alpha')],
-        'nextPageToken': 'fld-token-1',
-    })
-    folders_page_b = MagicMock(body={
-        'items': [_folder_item('beta')],
-        'nextPageToken': None,
-    })
+    folders_page_a = MagicMock(
+        body={
+            'items': [_folder_item('alpha')],
+            'nextPageToken': 'fld-token-1',
+        }
+    )
+    folders_page_b = MagicMock(
+        body={
+            'items': [_folder_item('beta')],
+            'nextPageToken': None,
+        }
+    )
     # Each subfolder has one file and no sub-subfolders.
-    alpha_files = MagicMock(body={
-        'items': [_file_item('a.csv', 'fid_a')],
-        'nextPageToken': None,
-    })
-    beta_files = MagicMock(body={
-        'items': [_file_item('b.csv', 'fid_b')],
-        'nextPageToken': None,
-    })
+    alpha_files = MagicMock(
+        body={
+            'items': [_file_item('a.csv', 'fid_a')],
+            'nextPageToken': None,
+        }
+    )
+    beta_files = MagicMock(
+        body={
+            'items': [_file_item('b.csv', 'fid_b')],
+            'nextPageToken': None,
+        }
+    )
     empty_folders = MagicMock(body={'items': [], 'nextPageToken': None})
 
     api = MagicMock()

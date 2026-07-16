@@ -84,10 +84,13 @@ def test_retry_batches_single_sample_uses_continue_strategy(tmp_path: Path):
 
 
 def test_retry_batches_multi_sample_keeps_auto(tmp_path: Path):
-    bf = _make_file(tmp_path, [
-        IcaBatch('COH0001', 0, ['SYN_A', 'SYN_B']),
-        IcaBatch('COH0001', 1, ['SYN_C', 'SYN_D']),
-    ])
+    bf = _make_file(
+        tmp_path,
+        [
+            IcaBatch('COH0001', 0, ['SYN_A', 'SYN_B']),
+            IcaBatch('COH0001', 1, ['SYN_C', 'SYN_D']),
+        ],
+    )
     bf.record_passfail(0, {'SYN_A': 'Fail', 'SYN_B': 'Fail'})
     bf.record_passfail(1, {'SYN_C': 'Fail', 'SYN_D': 'Success'})
     _build_retry_batches(cohort_name='COH0001', batches_file=bf, batch_size=5)
@@ -193,8 +196,10 @@ def test_force_resubmit_no_prior_state_raises(tmp_path: Path, monkeypatch):
 
     with pytest.raises(RuntimeError, match='no prior state'):
         _handle_management_flags(
-            cohort_name='COH0001', batches_file_path=batches_path,
-            outputs={}, sg_names=['SYN_A'],
+            cohort_name='COH0001',
+            batches_file_path=batches_path,
+            outputs={},
+            sg_names=['SYN_A'],
         )
 
 
@@ -208,8 +213,10 @@ def test_force_resubmit_and_monitor_previous_raises(tmp_path: Path, monkeypatch)
 
     with pytest.raises(ValueError, match='mutually exclusive'):
         _handle_management_flags(
-            cohort_name='COH0001', batches_file_path=batches_path,
-            outputs={}, sg_names=[],
+            cohort_name='COH0001',
+            batches_file_path=batches_path,
+            outputs={},
+            sg_names=[],
         )
 
 
@@ -228,7 +235,10 @@ def test_force_resubmit_deletes_completion_marker(tmp_path: Path, monkeypatch):
         'COH0001_pipeline_complete': complete_marker,
     }
     _handle_management_flags(
-        cohort_name='COH0001', batches_file_path=batches_path, outputs=outputs, sg_names=[],
+        cohort_name='COH0001',
+        batches_file_path=batches_path,
+        outputs=outputs,
+        sg_names=[],
     )
     assert not complete_marker.exists()
 

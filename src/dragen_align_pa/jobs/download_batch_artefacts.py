@@ -8,12 +8,10 @@ batches file. Files are streamed directly from ICA to GCS via the existing
 import json
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Literal
 
-import cpg_utils
+import cpg_utils.config
 import icasdk
 import requests
-from cpg_utils.config import config_retrieve
 from google.cloud import exceptions as gcs_exceptions
 from google.cloud import storage
 from icasdk.apis.tags import project_data_api
@@ -22,6 +20,7 @@ from loguru import logger
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.batches import BatchesFile
 from dragen_align_pa.constants import BUCKET_NAME
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
 
 
 @dataclass
@@ -91,11 +90,13 @@ def _stream_silently(
         )
     except (icasdk.ApiException, requests.RequestException, gcs_exceptions.GoogleCloudError) as e:
         logger.warning(f'{context}: streaming {file_name} failed ({e}); skipping.')
-        stats.stream_failures.append({
-            'context': context,
-            'file_name': file_name,
-            'error': str(e),
-        })
+        stats.stream_failures.append(
+            {
+                'context': context,
+                'file_name': file_name,
+                'error': str(e),
+            }
+        )
         return
     stats.success += 1
 
@@ -130,11 +131,13 @@ def _stream_named_file(
         logger.warning(
             f'ICA API error while looking up {file_name} in {parent_folder}: {e}; skipping.',
         )
-        stats.lookup_failures.append({
-            'parent_folder': parent_folder,
-            'file_name': file_name,
-            'error': str(e),
-        })
+        stats.lookup_failures.append(
+            {
+                'parent_folder': parent_folder,
+                'file_name': file_name,
+                'error': str(e),
+            }
+        )
         return
 
     _stream_silently(
@@ -165,8 +168,6 @@ def run(
     batches_file = BatchesFile(path=batches_file_path)
     batches_file.read()
 
-    output_folder = config_retrieve(['ica', 'data_prep', 'output_folder'])
-
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
     # Assert (don't silently removeprefix) so a future `output_path` override
@@ -186,18 +187,12 @@ def run(
     counts = Counter(b['batch_index'] for b in batches_file.batches)
     if duplicates := sorted(idx for idx, n in counts.items() if n > 1):
         raise ValueError(
-            f'Duplicate batch_index values in {batches_file_path}: {duplicates}; '
-            f'refusing to overwrite GCS artefacts.',
+            f'Duplicate batch_index values in {batches_file_path}: {duplicates}; refusing to overwrite GCS artefacts.',
         )
-
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    path_parameters = {'projectId': secrets['projectID']}
-
     stats = _StreamStats()
     batches_processed = 0
 
-    with ica_api_utils.get_ica_api_client() as api_client:
-        api_instance = project_data_api.ProjectDataApi(api_client)
+    with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         for batch_entry in batches_file.batches:
             if not batch_entry.get('pipeline_id'):
                 logger.info(
@@ -210,11 +205,12 @@ def run(
             batch_index = batch_entry['batch_index']
             batches_processed += 1
 
-            # Mirrors `get_ica_sample_folder` minus the per-SG suffix (batch root).
-            ica_folder = (
-                f'/{BUCKET_NAME}/{output_folder}/{cohort_name}/'
-                f'{batch_entry["user_reference"]}-{batch_entry["pipeline_id"]}/'
-            )
+            # Batch analysis-run root (the per-SG folders sit one level below this).
+            ica_folder = ica_utils.ica_run_path(
+                cohort_name,
+                batch_entry['user_reference'],
+                batch_entry['pipeline_id'],
+            ).as_folder()
             batch_name = f'{cohort_name}_batch{batch_index:04d}'
             gcs_prefix = f'{base_prefix}/{batch_name}'
 
@@ -242,14 +238,15 @@ def run(
                 )
             except icasdk.ApiException as e:
                 logger.warning(
-                    f'Batch {batch_name}: reports/ folder not enumerable at '
-                    f'{reports_folder} ({e}); skipping.',
+                    f'Batch {batch_name}: reports/ folder not enumerable at {reports_folder} ({e}); skipping.',
                 )
-                stats.lookup_failures.append({
-                    'parent_folder': reports_folder,
-                    'file_name': '<reports/ enumeration>',
-                    'error': str(e),
-                })
+                stats.lookup_failures.append(
+                    {
+                        'parent_folder': reports_folder,
+                        'file_name': '<reports/ enumeration>',
+                        'error': str(e),
+                    }
+                )
                 report_files = []
 
             for report_relative_path, report_id in report_files:

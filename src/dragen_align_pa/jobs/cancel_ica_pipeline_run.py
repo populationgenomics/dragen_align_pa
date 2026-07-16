@@ -1,11 +1,8 @@
-from typing import Literal
-
 import icasdk
-from cpg_utils.config import config_retrieve
-from icasdk.apis.tags import project_analysis_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN, ROLE_DRAGEN_MLR
 
 
 def run(ica_pipeline_id: str, is_mlr: bool = False) -> dict[str, str]:
@@ -18,22 +15,14 @@ def run(ica_pipeline_id: str, is_mlr: bool = False) -> dict[str, str]:
     Returns:
         A dict indicating the cancelled pipeline ID.
     """
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    project_id: str = secrets['projectID']
 
-    if not is_mlr:
-        path_parameters: dict[str, str] = {'projectId': project_id}
-    else:
-        path_parameters = {
-            'projectId': config_retrieve(['ica', 'projects', 'dragen_mlr_project_id']),
-        }
-    path_parameters = path_parameters | {'analysisId': ica_pipeline_id}
+    role = ROLE_DRAGEN_MLR if is_mlr else ROLE_DRAGEN_ALIGN
 
-    with ica_api_utils.get_ica_api_client() as api_client:
-        api_instance = project_analysis_api.ProjectAnalysisApi(api_client)
+    with ica_api_utils.ica_project_analysis_api(role) as (api_instance, path_parameters):
+        abort_path_params = path_parameters | {'analysisId': ica_pipeline_id}
         try:
             api_instance.abort_analysis(
-                path_params=path_parameters,  # type: ignore[ReportUnknownVariableType]
+                path_params=abort_path_params,  # type: ignore[ReportUnknownVariableType]
                 skip_deserialization=True,
             )  # type: ignore[ReportUnknownVariableType]
             logger.info(

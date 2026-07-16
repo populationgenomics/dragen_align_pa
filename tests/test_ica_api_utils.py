@@ -1,7 +1,7 @@
-"""Tests for ica_api_utils.get_ica_secrets — Secret Manager resilience.
+"""Tests for ica_api_utils._fetch_ica_secrets — Secret Manager resilience.
 
 Production hit `google.api_core.exceptions.DeadlineExceeded` (gRPC 504) from
-`SECRET_CLIENT.access_secret_version` inside `get_ica_secrets()`, tearing
+`SECRET_CLIENT.access_secret_version` inside `_fetch_ica_secrets()`, tearing
 down monitor jobs mid-run. The secret payload doesn't change during a run,
 so the fix is two-fold: cache the result for the process lifetime, and
 retry on transient Secret Manager failures.
@@ -22,13 +22,13 @@ from icasdk.exceptions import ApiException
 
 @pytest.fixture(autouse=True)
 def _clear_ica_secrets_cache():
-    """`get_ica_secrets` is `@lru_cache(maxsize=1)` and `_secret_client` is
+    """`_fetch_ica_secrets` is `@lru_cache(maxsize=1)` and `_secret_client` is
     `@cache`d — clear both between tests so caching from one test doesn't
     bleed into the next."""
-    ica_api_utils.get_ica_secrets.cache_clear()
+    ica_api_utils._fetch_ica_secrets.cache_clear()
     ica_api_utils._secret_client.cache_clear()
     yield
-    ica_api_utils.get_ica_secrets.cache_clear()
+    ica_api_utils._fetch_ica_secrets.cache_clear()
     ica_api_utils._secret_client.cache_clear()
 
 
@@ -48,20 +48,20 @@ def _fake_access_secret_version_response(payload: dict) -> MagicMock:
     return response
 
 
-def test_get_ica_secrets_returns_parsed_payload(monkeypatch):
+def test__fetch_ica_secrets_returns_parsed_payload(monkeypatch):
     """Happy-path regression: secret JSON → parsed dict."""
     payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}
     mock_client = MagicMock()
     mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
     monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
 
-    result = ica_api_utils.get_ica_secrets()
+    result = ica_api_utils._fetch_ica_secrets()
 
     assert result == payload
 
 
-def test_get_ica_secrets_caches_across_calls(monkeypatch):
-    """The secret doesn't change during a run; calling get_ica_secrets()
+def test__fetch_ica_secrets_caches_across_calls(monkeypatch):
+    """The secret doesn't change during a run; calling _fetch_ica_secrets()
     repeatedly (e.g. once per monitor poll, once per batch submission) must
     hit Secret Manager exactly once — otherwise a single transient 504 takes
     down the whole monitor job."""
@@ -70,9 +70,9 @@ def test_get_ica_secrets_caches_across_calls(monkeypatch):
     mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
     monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
 
-    first = ica_api_utils.get_ica_secrets()
-    second = ica_api_utils.get_ica_secrets()
-    third = ica_api_utils.get_ica_secrets()
+    first = ica_api_utils._fetch_ica_secrets()
+    second = ica_api_utils._fetch_ica_secrets()
+    third = ica_api_utils._fetch_ica_secrets()
 
     assert first == second == third == payload
     assert mock_client.access_secret_version.call_count == 1, (
@@ -80,7 +80,7 @@ def test_get_ica_secrets_caches_across_calls(monkeypatch):
     )
 
 
-def test_get_ica_secrets_retries_on_deadline_exceeded(monkeypatch):
+def test__fetch_ica_secrets_retries_on_deadline_exceeded(monkeypatch):
     """The originating production failure: SecretManagerServiceClient raises
     DeadlineExceeded on a transient blip. The retry layer must absorb it and
     return the value on the second attempt."""
@@ -92,13 +92,13 @@ def test_get_ica_secrets_retries_on_deadline_exceeded(monkeypatch):
     ]
     monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
 
-    result = ica_api_utils.get_ica_secrets()
+    result = ica_api_utils._fetch_ica_secrets()
 
     assert result == payload
     assert mock_client.access_secret_version.call_count == 2
 
 
-def test_get_ica_secrets_retries_on_service_unavailable(monkeypatch):
+def test__fetch_ica_secrets_retries_on_service_unavailable(monkeypatch):
     """ServiceUnavailable (gRPC UNAVAILABLE / HTTP 503) is the other
     transient class — must also be retried."""
     payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}
@@ -109,13 +109,13 @@ def test_get_ica_secrets_retries_on_service_unavailable(monkeypatch):
     ]
     monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
 
-    result = ica_api_utils.get_ica_secrets()
+    result = ica_api_utils._fetch_ica_secrets()
 
     assert result == payload
     assert mock_client.access_secret_version.call_count == 2
 
 
-def test_get_ica_secrets_gives_up_after_persistent_failures(monkeypatch):
+def test__fetch_ica_secrets_gives_up_after_persistent_failures(monkeypatch):
     """Persistent (non-transient) Secret Manager unavailability eventually
     propagates after the retry budget is exhausted. The caller (cpg-flow
     job) sees a real failure rather than silent infinite retry."""
@@ -124,7 +124,7 @@ def test_get_ica_secrets_gives_up_after_persistent_failures(monkeypatch):
     monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
 
     with pytest.raises(gax_exceptions.DeadlineExceeded):
-        ica_api_utils.get_ica_secrets()
+        ica_api_utils._fetch_ica_secrets()
 
     # At least some retries happened — confirms the retry layer is active.
     # The exact retry budget is configured in the production module; we just
@@ -132,7 +132,7 @@ def test_get_ica_secrets_gives_up_after_persistent_failures(monkeypatch):
     assert mock_client.access_secret_version.call_count > 1
 
 
-def test_get_ica_secrets_does_not_retry_non_transient_errors(monkeypatch):
+def test__fetch_ica_secrets_does_not_retry_non_transient_errors(monkeypatch):
     """A non-Secret-Manager-transient failure (e.g. PermissionDenied,
     NotFound — IAM or config errors) must propagate immediately, not be
     retried. Retrying a permanent error would just hammer Secret Manager
@@ -142,12 +142,12 @@ def test_get_ica_secrets_does_not_retry_non_transient_errors(monkeypatch):
     monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
 
     with pytest.raises(gax_exceptions.PermissionDenied):
-        ica_api_utils.get_ica_secrets()
+        ica_api_utils._fetch_ica_secrets()
 
     assert mock_client.access_secret_version.call_count == 1
 
 
-def test_get_ica_secrets_cache_skips_retry_layer_on_subsequent_calls(monkeypatch):
+def test__fetch_ica_secrets_cache_skips_retry_layer_on_subsequent_calls(monkeypatch):
     """After a successful first call populates the cache, a subsequent call
     must NOT go anywhere near Secret Manager — even if the SECRET_CLIENT is
     swapped for one that would raise. Belt-and-braces against the regression
@@ -156,7 +156,7 @@ def test_get_ica_secrets_cache_skips_retry_layer_on_subsequent_calls(monkeypatch
     happy_client = MagicMock()
     happy_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
     monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: happy_client)
-    first = ica_api_utils.get_ica_secrets()
+    first = ica_api_utils._fetch_ica_secrets()
     assert first == payload
 
     angry_client = MagicMock()
@@ -164,10 +164,47 @@ def test_get_ica_secrets_cache_skips_retry_layer_on_subsequent_calls(monkeypatch
         'cache must short-circuit; _secret_client must not be called on cache hit',
     )
     monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: angry_client)
-    second = ica_api_utils.get_ica_secrets()
+    second = ica_api_utils._fetch_ica_secrets()
 
     assert second == payload
     angry_client.access_secret_version.assert_not_called()
+
+
+def test_get_ica_api_key_returns_key_when_present(monkeypatch):
+    """get_ica_api_key() returns the configured family's key — the default family (conftest:
+    `project_root='ourdna'`) authenticates with the base `apiKey`, which the payload carries."""
+    payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}
+    mock_client = MagicMock()
+    mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
+    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
+
+    assert ica_api_utils.get_ica_api_key() == 'key-xyz'
+
+
+def test_get_ica_api_key_raises_when_family_field_missing(monkeypatch):
+    """A family whose key field is absent from the secret fails loud once here, naming the
+    field — instead of a bare KeyError at the client call site or an `x-api-key: null` written
+    by the CLI. Configuring the tenk10k family needs `tenk10k_apiKey`, absent below."""
+    payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}  # no tenk10k_apiKey
+    mock_client = MagicMock()
+    mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
+    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
+    monkeypatch.setattr('dragen_align_pa.constants_registry.config_retrieve', lambda key, default=None: 'tenk10k')  # noqa: ARG005
+
+    with pytest.raises(KeyError, match=r'tenk10k_apiKey'):
+        ica_api_utils.get_ica_api_key()
+
+
+def test_get_ica_api_key_raises_when_field_blank(monkeypatch):
+    """An empty-string key value is treated the same as missing, so it must fail here rather
+    than producing a silently-broken client. Default family `ourdna` uses `apiKey`."""
+    payload = {'projectID': 'proj-abc', 'apiKey': ''}
+    mock_client = MagicMock()
+    mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
+    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
+
+    with pytest.raises(KeyError, match=r'apiKey'):
+        ica_api_utils.get_ica_api_key()
 
 
 def _mock_api_with_status(status: int) -> object:

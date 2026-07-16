@@ -29,7 +29,23 @@ _TEST_CONFIG: dict[tuple, object] = {
     # Match the production TOML value verbatim so any future test that doesn't
     # explicitly monkeypatch DRAGEN_VERSION still gets a path-shape match.
     ('ica', 'pipelines', 'dragen_version'): 'dragen_3_7_8',
+    # `IcaPath.output_root()` (and the ica_* path builders that delegate to it) reads this
+    # at call time, so it must resolve by default or those builders raise on the None split.
+    # Matches the production TOML.
+    ('ica', 'data_prep', 'output_folder'): 'test-dragen-378',
+    # Dataset family. `constants_registry.ica_project_name(role)` reads this and derives the per-role
+    # project from ICA_PROJECT_SETUP['ourdna'], so anything resolving an ICA project (as_url,
+    # the jobs' project_id / API-key selection) works by default against real ourdna names.
+    ('ica', 'projects', 'project_root'): 'ourdna',
 }
+
+# Monkeypatch target for path builders: `IcaPath` binds `config_retrieve` and `BUCKET_NAME`
+# in `dragen_align_pa.paths` (where the class lives), NOT in the `ica_utils` module that
+# exposes the `ica_run_path` / `get_ica_sample_folder` builders. A test that needs a specific
+# project/bucket must patch `dragen_align_pa.paths.config_retrieve` /
+# `dragen_align_pa.paths.BUCKET_NAME` — patching the consumer module silently has no
+# effect. `BUCKET_NAME` is an import-time `Final`, so it can only be overridden by patching,
+# not by config. See `tests/test_ica_path.py` for the pattern.
 
 
 def _test_config_retrieve(key, default=None):

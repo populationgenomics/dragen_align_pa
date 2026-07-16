@@ -1,14 +1,21 @@
 """
-This module centralizes all direct interactions with the Illumina Connected
+This module centralises all direct interactions with the Illumina Connected
 Analytics (ICA) Python SDK. It handles authentication and provides thin
 wrappers around specific API endpoints.
+
+Adding an ICA job? Open the client with `ica_project_data_api(role)` (or
+`ica_project_analysis_api(role)`), passing a `ROLE_*` constant from `constants_registry` — never
+a project name or a raw `config_retrieve(['ica', 'projects', ...])` — and use the yielded
+`(api_instance, path_params)`. Drop to the lower-level `ica_project_session` only when one client
+must back more than one `…Api` class (see `submit_dragen_batch`). Use the icav2 CLI
+(`ica_cli_utils.authenticate_ica_cli(role)`) only where the SDK can't reach — uploads / popgen-cli.
 """
 
 import contextlib
 import functools
 import json
-from collections.abc import Callable, Iterator
-from typing import TYPE_CHECKING, Any, Final, Literal, TypeVar
+from collections.abc import Callable, Generator
+from typing import TYPE_CHECKING, Any, Final, TypeVar
 
 import icasdk
 from cpg_utils.config import config_retrieve
@@ -30,6 +37,9 @@ from tenacity import (
     wait_fixed,
     wait_random_exponential,
 )
+
+from dragen_align_pa.constants_registry import ica_api_key_field, ica_project_id
+from dragen_align_pa.paths import IcaPath
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -74,8 +84,8 @@ def _secret_client() -> secretmanager.SecretManagerServiceClient:
     wait=wait_exponential(multiplier=1, min=1, max=10),
     reraise=True,
 )
-def get_ica_secrets() -> dict[Literal['projectID', 'apiKey'], str]:
-    """Gets the project ID and API key used to interact with ICA.
+def _fetch_ica_secrets() -> dict[str, str]:
+    """Fetch and parse the `illumina_cpg_workbench_api` secret payload (raw, unvalidated).
 
     Cached for the lifetime of the process (the secret payload doesn't
     change during a run). The previous behaviour fetched fresh on every
@@ -90,7 +100,8 @@ def get_ica_secrets() -> dict[Literal['projectID', 'apiKey'], str]:
     — they indicate IAM / config problems that retrying won't fix.
 
     Returns:
-        dict[str, str]: A dictionary with the keys projectID and apiKey
+        The secret payload: `projectID` plus one API-key field per dataset (e.g. `apiKey`,
+        `tenk10k_apiKey`). Prefer `get_ica_api_key`, which validates the configured family's field.
     """
     client = _secret_client()
     secret_path: str = client.secret_version_path(
@@ -104,17 +115,47 @@ def get_ica_secrets() -> dict[Literal['projectID', 'apiKey'], str]:
     return json.loads(response.payload.data.decode('UTF-8'))
 
 
-@contextlib.contextmanager
-def get_ica_api_client() -> Iterator[ApiClient]:
-    """
-    Provides a context-managed icasdk.ApiClient.
-    Handles fetching secrets, configuring, and closing the client.
-    """
-    secrets: dict[Literal['projectID', 'apiKey'], str] = get_ica_secrets()
-    api_key: str = secrets['apiKey']
+def get_ica_api_key() -> str:
+    """Return the ICA API key for the configured dataset family, validated non-empty.
 
+    Fetches the process-cached payload (`_fetch_ica_secrets`), selects the family's key field
+    once (`ica_api_key_field`), and checks it is present and non-empty. A missing or blank key
+    fails here — with the field named — instead of as a bare `KeyError` at a client call site
+    (or an `x-api-key: null` written by the CLI).
+
+    Returns:
+        The API key.
+
+    Raises:
+        KeyError: If the configured family has no registered key field, or the secret carries no
+            non-empty value for it.
+    """
+    secrets = _fetch_ica_secrets()
+    api_key_field = ica_api_key_field()
+    api_key = secrets.get(api_key_field)
+    if not api_key:
+        raise KeyError(
+            f'ICA secret {SECRET_NAME!r} has no non-empty {api_key_field!r} field, required to '
+            f'authenticate the configured dataset family. Add the field to the secret in project '
+            f'{SECRET_PROJECT!r}.',
+        )
+    return api_key
+
+
+@contextlib.contextmanager
+def get_ica_api_client() -> Generator[ApiClient]:
+    """Provide a context-managed icasdk.ApiClient for the configured dataset family.
+
+    Handles fetching the key, configuring, and closing the client. The API key is the
+    configured family's (`get_ica_api_key`), so a client is never authenticated with another
+    dataset's key. The client is not scoped to one ICA project — the project is named per
+    request via `path_params['projectId']` (see `ica_project_session`).
+
+    Yields:
+        A configured `ApiClient`.
+    """
     configuration = Configuration(host=ICA_REST_ENDPOINT)
-    configuration.api_key['ApiKeyAuth'] = api_key
+    configuration.api_key['ApiKeyAuth'] = get_ica_api_key()
 
     with ApiClient(configuration=configuration) as api_client:
         try:
@@ -125,6 +166,61 @@ def get_ica_api_client() -> Iterator[ApiClient]:
         except Exception as e:
             logger.error(f'Non-API Exception caught by context manager: {e}')
             raise
+
+
+@contextlib.contextmanager
+def ica_project_session(role: str) -> Generator[tuple[ApiClient, dict[str, str]]]:
+    """Open an ICA client for the configured family and yield it with `role`'s REST path params.
+
+    Collapses the repeated "resolve project name → project id → open client" sequence at job
+    call sites into one step, and keeps the client paired with the right project: the yielded
+    `path_params` carries the `projectId` for `role`, resolved from the same configured family
+    the client authenticates against. Wrap the yielded client with whichever `…Api` class the
+    caller needs (data vs analysis).
+
+    Args:
+        role: One of `constants_registry.REQUIRED_ICA_ROLES`.
+
+    Yields:
+        `(api_client, {'projectId': <id for role>})`.
+
+    Raises:
+        ValueError: If the configured family or `role` isn't registered, or the role has no id.
+    """
+    project_id = ica_project_id(role)
+    with get_ica_api_client() as api_client:
+        yield api_client, {'projectId': project_id}
+
+
+@contextlib.contextmanager
+def ica_project_data_api(role: str) -> Generator[tuple[project_data_api.ProjectDataApi, dict[str, str]]]:
+    """`ica_project_session` for the data API: yield `(ProjectDataApi, path_params)` for `role`.
+
+    The common case — a job needs the project-data endpoints plus the role's `path_params`. Use
+    `ica_project_session` directly only when a single client must back more than one `…Api` class.
+
+    Args:
+        role: One of `constants_registry.REQUIRED_ICA_ROLES`.
+
+    Yields:
+        `(ProjectDataApi(client), {'projectId': <id for role>})`.
+    """
+    with ica_project_session(role) as (api_client, path_params):
+        yield project_data_api.ProjectDataApi(api_client), path_params
+
+
+@contextlib.contextmanager
+def ica_project_analysis_api(role: str) -> Generator[tuple[project_analysis_api.ProjectAnalysisApi, dict[str, str]]]:
+    """`ica_project_session` for the analysis API: yield `(ProjectAnalysisApi, path_params)`.
+
+    Args:
+        role: One of `constants_registry.REQUIRED_ICA_ROLES`.
+
+    Yields:
+        `(ProjectAnalysisApi(client), {'projectId': <id for role>})`.
+    """
+    with ica_project_session(role) as (api_client, path_params):
+        yield project_analysis_api.ProjectAnalysisApi(api_client), path_params
 
 
 # --- API Wrappers ---
@@ -261,7 +357,7 @@ def check_object_already_exists(
         tuple[str, str] | None: (object_ID, object_status) if it exists, or else None
     """
     query_params: dict[str, Sequence[str] | list[str] | str] = {
-        'filePath': [f'/{folder_path.strip("/")}/{file_name}'],
+        'filePath': [IcaPath.from_relpath(folder_path).as_file(file_name)],
         'filePathMatchMode': 'STARTS_WITH_CASE_INSENSITIVE',
         'type': object_type,
     }
@@ -310,7 +406,7 @@ def find_file_id_by_name(
     Finds a specific file ID in an ICA folder by its exact name.
     (Used by download_specific_files_from_ica.py)
     """
-    ica_normalised_folder_path: str = '/' + parent_folder_path.strip('/') + '/'
+    ica_normalised_folder_path: str = IcaPath.from_relpath(parent_folder_path).as_folder()
     try:
         api_response = ica_retry(
             api_instance.get_project_data_list,  # pyright: ignore[reportUnknownVariableType]
@@ -359,7 +455,7 @@ def get_file_details_from_ica(
     """
     try:
         query_params: dict[str, Any] = {
-            'parentFolderPath': '/' + ica_folder_path.strip('/') + '/',
+            'parentFolderPath': IcaPath.from_relpath(ica_folder_path).as_folder(),
             'filename': [file_name],
             'filenameMatchMode': 'EXACT',
             'pageSize': '2',

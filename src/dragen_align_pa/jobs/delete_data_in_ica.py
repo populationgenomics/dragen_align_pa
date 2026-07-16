@@ -1,31 +1,37 @@
 """Delete cohort outputs + source CRAMs/FASTQs from ICA to release storage.
 
-Two project-scoped passes:
-- DRAGEN runs project: the cohort-level analysis output folder (cascades
-  to per-batch analyses, per-SG outputs, per-batch FASTQ list CSVs) + the
-  per-SG uploaded CRAM file IDs.
-- Supplier project (FASTQ mode only): the linked FASTQ file IDs from
-  `FastqIntakeQc`'s outpath.
+Two deletion passes share one ICA client — both projects are in the same dataset family, so the
+family API key authenticates both and only the `projectId` differs:
+- DRAGEN-align project: the cohort-level analysis output folder (cascades to per-batch analyses,
+  per-SG outputs, per-batch FASTQ list CSVs) + the per-SG uploaded CRAM file IDs.
+- FASTQ-upload project (FASTQ mode only): the linked FASTQ file IDs from `FastqIntakeQc`'s
+  outpath. Skipped when the family's `can_delete_fastq` is false (collaborator-managed).
 
-Each pass fires all deletes, sleeps `settle_seconds` (default 60) for ICA's
-async delete state machine, then verifies via `get_project_data` (404 or
-`status='DELETING'` is success). Failures across both passes are aggregated
-into a TSV log at `get_pipeline_path('{cohort}_delete_errors.log')`; on any
-failure the job raises so the cpg-flow stage shows red.
+Each pass fires all deletes, sleeps `settle_seconds` (default 60) for ICA's async delete state
+machine, then verifies via `get_project_data` (404 or `status='DELETING'` is success). Failures
+across both passes are aggregated into a TSV log at
+`get_pipeline_path('{cohort}_delete_errors.log')`; on any failure the job raises so the cpg-flow
+stage shows red.
 """
 
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 import cpg_utils
-from cpg_utils.config import config_retrieve
 from icasdk.apis.tags import project_data_api
 from icasdk.exceptions import ApiException, ApiValueError
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
+from dragen_align_pa.constants_registry import (
+    ROLE_DRAGEN_ALIGN,
+    ROLE_FASTQ_UPLOAD,
+    ica_can_delete_fastq,
+    ica_project_id,
+    ica_project_name,
+)
 from dragen_align_pa.utils import get_pipeline_path
 
 _DELETING_STATUS = 'DELETING'
@@ -140,7 +146,20 @@ def _write_success_marker(
     cohort_folder_fid: str,
     cram_count: int,
     fastq_count: int | None,
+    fastq_skipped: bool,
 ) -> None:
+    """Write the audit marker recording what this run deleted.
+
+    Args:
+        output_path: Where to write the marker JSON.
+        cohort_name: The cohort processed.
+        cohort_folder_fid: The deleted cohort-level analysis output folder id.
+        cram_count: Number of per-SG CRAM file ids deleted from the DRAGEN project.
+        fastq_count: Number of FASTQ file ids in scope, or `None` in CRAM-only mode. When the
+            FASTQ pass was skipped, these were not deleted (see `fastq_skipped`).
+        fastq_skipped: `True` if the FASTQ pass was skipped (collaborator-managed family), so
+            `fastq_count` reflects files left for the collaborator to delete, not files deleted.
+    """
     payload: dict[str, Any] = {
         'cohort_name': cohort_name,
         'runs_project': {
@@ -149,7 +168,7 @@ def _write_success_marker(
         },
     }
     if fastq_count is not None:
-        payload['fastq_source_project'] = {'fastq_count': fastq_count}
+        payload['fastq_source_project'] = {'fastq_count': fastq_count, 'skipped': fastq_skipped}
     with output_path.open('w') as fh:
         json.dump(payload, fh)
 
@@ -167,36 +186,44 @@ def run(
     `settle_seconds` is a parameter (not a constant) so unit tests can pass 0
     to skip the production 60s wait. Production callers always use the default.
     """
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    runs_project_id = secrets['projectID']
-
-    cohort_folder_fid = _read_cohort_folder_fid(cohort_analysis_output_fid_path)
-    cram_fids = _read_cram_fids(cram_fid_paths_dict) if cram_fid_paths_dict else []
-    fastq_fids = _read_fastq_fids(fastq_ids_list_path) if fastq_ids_list_path else []
-
-    runs_project_fids = [cohort_folder_fid, *cram_fids]
-
     failures: list[DeleteFailure] = []
-    with ica_api_utils.get_ica_api_client() as api_client:
-        api_instance = project_data_api.ProjectDataApi(api_client)
+    cohort_folder_fid: str = _read_cohort_folder_fid(cohort_analysis_output_fid_path)
+    cram_fids: list[str] = _read_cram_fids(cram_fid_paths_dict) if cram_fid_paths_dict else []
+    fastq_fids: list[str] = _read_fastq_fids(fastq_ids_list_path) if fastq_ids_list_path else []
 
+    if not cram_fid_paths_dict and not fastq_ids_list_path:
+        raise ValueError('Either cram_fid_paths_dict or fastq_ids_list_path must be provided')
+
+    # The DRAGEN runs project and the FASTQ-upload project are in the same dataset family, so one
+    # client (authenticated with the family API key) serves both — only the `projectId` in
+    # path_params differs. Open it once via the DRAGEN-align session and reuse it for both passes.
+    fastq_skipped = False
+    with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_params):
+        # DRAGEN runs project: cohort output folder (cascades) + per-SG CRAMs.
         failures += _delete_and_verify(
             api_instance=api_instance,
-            project_id=runs_project_id,
-            fids=runs_project_fids,
+            project_id=path_params['projectId'],
+            fids=[cohort_folder_fid, *cram_fids],
             settle_seconds=settle_seconds,
         )
 
-        if fastq_fids:
-            fastq_project_id: str = config_retrieve(
-                ['ica', 'projects', 'fastq_source_project_id'],
-            )
-            failures += _delete_and_verify(
-                api_instance=api_instance,
-                project_id=fastq_project_id,
-                fids=fastq_fids,
-                settle_seconds=settle_seconds,
-            )
+        # FASTQ-upload project. `can_delete_fastq` gates whether we touch it at all; ICA enforces
+        # the same permission independently, so this is a pre-check that skips a family whose
+        # upload area we don't control rather than attempting a delete ICA would refuse.
+        if fastq_ids_list_path:
+            if ica_can_delete_fastq():
+                failures += _delete_and_verify(
+                    api_instance=api_instance,
+                    project_id=ica_project_id(ROLE_FASTQ_UPLOAD),
+                    fids=fastq_fids,
+                    settle_seconds=settle_seconds,
+                )
+            else:
+                fastq_skipped = True
+                logger.info(
+                    f'FASTQ source project {ica_project_name(ROLE_FASTQ_UPLOAD)!r} is collaborator-managed '
+                    f'(can_delete_fastq=false); skipping FASTQ deletion (collaborators delete on request).',
+                )
 
     if failures:
         error_log_path = _write_failure_log(cohort_name, failures)
@@ -211,4 +238,5 @@ def run(
         cohort_folder_fid=cohort_folder_fid,
         cram_count=len(cram_fids),
         fastq_count=len(fastq_fids) if fastq_ids_list_path is not None else None,
+        fastq_skipped=fastq_skipped,
     )

@@ -23,7 +23,7 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.batches import IcaBatch, validate_error_strategy
-from dragen_align_pa.constants import BUCKET_NAME, resolve_ica_file_id
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN, resolve_ica_file_id
 from dragen_align_pa.utils import get_bed_names_for_seqtype
 
 # DRAGEN flags that don't depend on input type (CRAM vs FASTQ) or sequencing type (WGS vs WES).
@@ -290,7 +290,7 @@ def _upload_per_batch_fastq_list(
     Returns the ICA file ID of the uploaded CSV.
     """
     file_name = f'{cohort_name}_batch{batch_index:04d}_fastq_list.csv'
-    folder_path = f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{cohort_name}'
+    folder_path = ica_utils.ica_cohort_path(cohort_name).as_folder()
 
     file_id, file_status = ica_utils.create_upload_object_id(
         api_instance=api_instance,
@@ -427,7 +427,8 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
     # registry. For run-specific inputs whose per-sample IDs don't belong in
     # shared constants (e.g. CNV panel-of-normals count files + normals list).
     raw_file_ids: list[str] = config_retrieve(
-        ['dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_file_ids'], default=[],
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_file_ids'],
+        default=[],
     )
     additional_file_ids.extend(raw_file_ids)
 
@@ -512,9 +513,6 @@ def run(
             f'fastq_ids_path and per_sg_fastq_list_paths.',
         )
 
-    secrets = ica_api_utils.get_ica_secrets()
-    project_id: str = secrets['projectID']
-
     with analysis_output_fid_path.open('r') as fh:
         analysis_output_fid: str = json.load(fh)['analysis_output_fid']
 
@@ -531,7 +529,8 @@ def run(
     technical_tags: list[str] = config_retrieve(['ica', 'tags', 'technical_tags'])
     reference_tags: list[str] = config_retrieve(['ica', 'tags', 'reference_tags'])
 
-    with ica_api_utils.get_ica_api_client() as api_client:
+    with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_parameters):
+        project_id = path_parameters['projectId']
         analysis_api = project_analysis_api.ProjectAnalysisApi(api_client)
         data_api = project_data_api.ProjectDataApi(api_client)
 

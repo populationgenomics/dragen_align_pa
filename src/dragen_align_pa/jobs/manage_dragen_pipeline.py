@@ -13,17 +13,15 @@ Responsibilities:
 
 import json
 from collections.abc import Callable
-from typing import Literal
 
-import cpg_utils
+import cpg_utils.config
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve
-from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
 from dragen_align_pa.batches import BatchesFile, IcaBatch, chunk_sgs_into_batches
-from dragen_align_pa.constants import BUCKET_NAME
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, submit_dragen_batch
 from dragen_align_pa.jobs.ica_pipeline_manager import (
     MonitoredTarget,
@@ -31,6 +29,7 @@ from dragen_align_pa.jobs.ica_pipeline_manager import (
     manage_ica_pipeline_loop,
 )
 from dragen_align_pa.jobs.parse_passfail import fetch_passfail_from_ica
+from dragen_align_pa.ica_utils import ica_cohort_path, ica_run_path
 from dragen_align_pa.utils import get_pipeline_path
 
 # Single source of truth for the default batch chunking width. Used both by
@@ -210,26 +209,23 @@ def _on_succeeded_factory(
 
         batch_entry = batches_file.batches[batch.batch_index]
         # ICA names the analysis folder `{user_reference}-{pipeline_id}` (see
-        # `get_ica_sample_folder` in utils.py — same separator). The hyphen is
+        # `get_ica_sample_folder` in ica_utils.py — same separator). The hyphen is
         # required: user_reference ends in `_`, so the resulting folder name
         # is `…_-{pipeline_id}/`.
         analysis_folder_name = f'{batch_entry["user_reference"]}-{batch_entry["pipeline_id"]}'
-        # ICA writes each batch's analysis folder INSIDE the cohort-level
-        # parent folder (`PrepareIcaForDragenAnalysis` creates one folder
-        # named `cohort.name`, and its fid is passed to ICA as
-        # `outputParentFolderId`). The `batch.cohort_name` segment below
-        # mirrors the layout described in `utils.get_ica_sample_folder`.
-        ica_parent = f'/{BUCKET_NAME}/{config_retrieve(["ica", "data_prep", "output_folder"])}/{batch.cohort_name}/'
-        ica_folder = f'{ica_parent}{analysis_folder_name}/'
-
-        secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-        path_parameters = {'projectId': secrets['projectID']}
+        # ICA writes each batch's analysis folder INSIDE the cohort-level parent folder
+        # (`PrepareIcaForDragenAnalysis` creates one folder named `cohort.name` and passes
+        # its fid to ICA as `outputParentFolderId`). Both levels come from the shared
+        # builders so they stay in lockstep with `ica_utils.get_ica_sample_folder`.
+        ica_parent = ica_cohort_path(batch.cohort_name).as_folder()
+        ica_folder = ica_run_path(
+            batch.cohort_name, batch_entry['user_reference'], batch_entry['pipeline_id']
+        ).as_folder()
 
         passfail = None
         folder_fid: str | None = None
         try:
-            with ica_api_utils.get_ica_api_client() as api_client:
-                api_instance = project_data_api.ProjectDataApi(api_client)
+            with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
                 passfail = fetch_passfail_from_ica(
                     api_instance=api_instance,
                     path_parameters=path_parameters,

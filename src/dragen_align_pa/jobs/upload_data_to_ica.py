@@ -9,15 +9,15 @@ Uses a hybrid PythonJob approach:
 """
 
 import os
-from typing import Literal
 
 import cpg_utils.config
 from cpg_flow.targets import SequencingGroup
-from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
-from dragen_align_pa.constants import BUCKET_NAME, DRAGEN_VERSION
+from dragen_align_pa.constants import DRAGEN_VERSION
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
+from dragen_align_pa.paths import IcaPath
 from dragen_align_pa.utils import validate_cli_path_input
 
 
@@ -77,7 +77,7 @@ def _setup_paths(
         'cram_name': cram_name,
         'gcs_cram_path': str(gcs_cram_path),
         'local_cram_path': local_cram_path,
-        'ica_folder_path': f'/{BUCKET_NAME}/{upload_folder}/{sg_name}/',
+        'ica_folder_path': IcaPath.under_bucket(upload_folder, sg_name).as_folder(),
     }
 
 
@@ -96,29 +96,23 @@ def run(
     validate_cli_path_input(paths['gcs_cram_path'], 'gcs_cram_path')
     validate_cli_path_input(paths['ica_folder_path'], 'ica_folder_path')
 
-    # 2. --- Authenticate Python SDK ---
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    project_id: str = secrets['projectID']
-    path_params: dict[str, str] = {'projectId': project_id}
-
-    # 3. --- Check File Existence ---
+    # 2. --- Check File Existence ---
     cram_status: str | None = None
-    with ica_api_utils.get_ica_api_client() as api_client:
-        api_instance = project_data_api.ProjectDataApi(api_client)
+    with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         cram_status = ica_utils.check_file_existence(
             api_instance=api_instance,
-            path_params=path_params,
+            path_params=path_parameters,
             ica_folder_path=paths['ica_folder_path'],
             file_name=paths['cram_name'],
         )
 
-        # 4. --- Perform Upload (if needed) ---
-        ica_cli_utils.perform_upload_if_needed(cram_status, paths)
+        # 3. --- Perform Upload (if needed) ---
+        ica_cli_utils.perform_upload_if_needed(cram_status, paths, ROLE_DRAGEN_ALIGN)
 
         # 5. --- Get Final File ID and Write Output ---
         ica_utils.finalise_upload(
             api_instance=api_instance,
-            path_params=path_params,
+            path_params=path_parameters,
             paths=paths,
             output_path_str=output_path_str,
         )

@@ -2,9 +2,9 @@
 Download specific files (e.g., CRAM, GVCF) from ICA using the Python SDK.
 """
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
-import cpg_utils
+import cpg_utils.config
 from cpg_flow.targets import SequencingGroup
 from cpg_utils.config import get_driver_image
 from google.cloud import storage
@@ -13,8 +13,11 @@ from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
 from dragen_align_pa.file_types import FileTypeSpec
-from dragen_align_pa.utils import get_ica_sample_folder, initialise_python_job
+from dragen_align_pa.ica_utils import get_ica_sample_folder
+from dragen_align_pa.paths import gcs_bucket_and_key
+from dragen_align_pa.utils import initialise_python_job
 
 if TYPE_CHECKING:
     from hailtop.batch.job import PythonJob
@@ -107,7 +110,7 @@ def run(
     Coordinates helper functions to list, filter, and stream files.
 
     `ica_folder_path` is the pre-resolved ICA folder (caller resolves it via
-    `utils.get_ica_sample_folder`, which reads the per-SG state file and
+    `ica_utils.get_ica_sample_folder`, which reads the per-SG state file and
     builds `/{BUCKET}/{output_folder}/{cohort}/{user_reference}-{pipeline_id}/{sg}/`).
 
     `gcs_output_dir` is the directory the calling stage declared in `expected_outputs`
@@ -121,18 +124,12 @@ def run(
     md5_gcp_name: str = f'{sg_name}.{file_spec.data_suffix}.md5sum'  # Always save as .md5sum in GCS
 
     # --- 3. Setup GCS Client ---
-    gcs_output_bucket_name, _, gcs_output_path_prefix = (
-        str(gcs_output_dir).removeprefix('gs://').partition('/')
-    )
+    gcs_output_bucket_name, gcs_output_path_prefix = gcs_bucket_and_key(gcs_output_dir)
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(gcs_output_bucket_name)
 
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    path_parameters: dict[str, str] = {'projectId': secrets['projectID']}
-
     # --- 5. Run Orchestration ---
-    with ica_api_utils.get_ica_api_client() as api_client:
-        api_instance = project_data_api.ProjectDataApi(api_client)
+    with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         _orchestrate_download(
             api_instance=api_instance,
             path_parameters=path_parameters,

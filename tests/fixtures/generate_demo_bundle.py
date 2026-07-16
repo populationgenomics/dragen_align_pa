@@ -13,7 +13,7 @@ from pathlib import Path
 # Defaults match the production user_reference convention from Task 13:
 # `f'{batch.name}_{ar_guid}_'` — ends with `_`. The analysis-folder path
 # below uses `{cohort_name}/{user_reference}-{pipeline_id}` to match
-# `get_ica_sample_folder` in utils.py (production), so the bundle layout
+# `get_ica_sample_folder` in ica_utils.py (production), so the bundle layout
 # is a faithful fixture.
 DEFAULT_COHORT_NAME = 'COH0001'
 DEFAULT_USER_REFERENCE = 'COH0001-batch0000_test-guid_'
@@ -50,7 +50,7 @@ def generate_demo_bundle(
 ) -> Path:
     """Materialise the synthetic bundle. Returns the analysis directory path."""
     failed_set = set(failed_samples)
-    # Production convention (matches `get_ica_sample_folder` in utils.py):
+    # Production convention (matches `get_ica_sample_folder` in ica_utils.py):
     # `{cohort_name}/{user_reference}-{pipeline_id}`. The `{cohort_name}/`
     # segment is the cohort-level folder created by `PrepareIcaForDragenAnalysis`
     # — ICA writes each batch's analysis run inside it. Because `user_reference`

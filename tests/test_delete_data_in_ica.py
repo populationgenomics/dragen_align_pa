@@ -15,8 +15,10 @@ import pytest
 
 from dragen_align_pa.jobs import delete_data_in_ica
 
-RUNS_PROJECT_ID = 'runs-project-id'
-FASTQ_PROJECT_ID = 'fastq-supplier-project-id'
+# Real ourdna project ids (conftest sets project_root='ourdna', so the job resolves these from
+# the ICA_PROJECT_SETUP table via the DRAGEN-align / FASTQ-upload roles).
+RUNS_PROJECT_ID = '5c3a60b0-1458-4e37-8877-ec6b25dc4003'
+FASTQ_PROJECT_ID = 'e7a1d085-f12e-4cff-acda-2334338585a8'
 
 
 def _write_cohort_fid(tmp_path: Path, fid: str = 'fol.cohort_xyz') -> Path:
@@ -83,31 +85,18 @@ def _make_api_instance(
 
 @pytest.fixture
 def patched_env(monkeypatch):
-    """Stub get_ica_secrets + get_ica_api_client + config_retrieve for the
-    fastq source project lookup. The api_instance MagicMock is returned via
-    a closure so each test can swap it per scenario."""
+    """Stub the ICA client + ProjectDataApi constructor. Project ids/names resolve from the real
+    ICA_PROJECT_SETUP table via the configured family (conftest sets `project_root='ourdna'`), so
+    `ica_project_session` yields the real ourdna project ids the assertions expect. The
+    api_instance MagicMock is returned via a closure so each test can swap it per scenario."""
     state: dict[str, MagicMock] = {'api_instance': MagicMock()}
 
-    monkeypatch.setattr(
-        'dragen_align_pa.jobs.delete_data_in_ica.ica_api_utils.get_ica_secrets',
-        lambda: {'projectID': RUNS_PROJECT_ID, 'apiKey': 'stub'},
-    )
     fake_client = MagicMock()
     fake_client.__enter__ = MagicMock(return_value=fake_client)
     fake_client.__exit__ = MagicMock(return_value=False)
     monkeypatch.setattr(
         'dragen_align_pa.jobs.delete_data_in_ica.ica_api_utils.get_ica_api_client',
         lambda: fake_client,
-    )
-
-    def fake_config_retrieve(key, default=None):
-        if tuple(key) == ('ica', 'projects', 'fastq_source_project_id'):
-            return FASTQ_PROJECT_ID
-        return default
-
-    monkeypatch.setattr(
-        'dragen_align_pa.jobs.delete_data_in_ica.config_retrieve',
-        fake_config_retrieve,
     )
 
     # Patch the ProjectDataApi constructor so it returns our mock api_instance.
@@ -196,6 +185,44 @@ def test_fastq_mode_uses_supplier_project_and_writes_marker(tmp_path: Path, patc
     assert len(fastq_calls) == 3, 'one delete per FASTQ FID in supplier project'
 
 
+def test_fastq_mode_skips_collaborator_managed_project(tmp_path: Path, patched_env, monkeypatch):
+    """A family with `can_delete_fastq=false` (collaborator-managed, e.g. tenk10k) is skipped: no
+    FASTQ deletes attempted, no error, marker still written with `skipped=true`. We ask
+    collaborators to delete that data rather than doing it ourselves."""
+    cohort_fid = 'fol.cohort_003'
+    fastq_fids = {'fil.fastq_001': 'fil.fastq_001'}
+    api = _make_api_instance(verify_deleting_fids={cohort_fid})
+    patched_env['api_instance'] = api
+    # project_root=tenk10k → can_delete_fastq is False. `ica_can_delete_fastq` reads config in the
+    # constants_registry binding, so patch it there.
+    monkeypatch.setattr(
+        'dragen_align_pa.constants_registry.config_retrieve',
+        lambda key, default=None: 'tenk10k',  # noqa: ARG005
+    )
+
+    cohort_path = _write_cohort_fid(tmp_path, fid=cohort_fid)
+    fastq_path = _write_fastq_fid_list(tmp_path, fastq_fids)
+    marker_path = tmp_path / 'COH0003_delete_complete.json'
+
+    delete_data_in_ica.run(
+        cohort_name='COH0003',
+        output_path=marker_path,
+        cohort_analysis_output_fid_path=cohort_path,
+        cram_fid_paths_dict=None,
+        fastq_ids_list_path=fastq_path,
+        settle_seconds=0,
+    )
+
+    assert marker_path.exists()
+    fastq_calls = [
+        c for c in api.delete_data.call_args_list if c.kwargs['path_params']['projectId'] == FASTQ_PROJECT_ID
+    ]
+    assert not fastq_calls, 'collaborator-managed project must not be deleted from'
+    # The marker records the skip so a downstream reader doesn't mistake the count for deletions.
+    payload = json.loads(marker_path.read_text())
+    assert payload['fastq_source_project'] == {'fastq_count': 1, 'skipped': True}
+
+
 def test_spurious_apivalueerror_with_404_verify_is_success(tmp_path: Path, patched_env):
     """User-reported scenario: delete_data raises ApiValueError but actually
     deletes. Verify returns 404 → counted as success, no log."""
@@ -212,7 +239,7 @@ def test_spurious_apivalueerror_with_404_verify_is_success(tmp_path: Path, patch
         cohort_name='COH0003',
         output_path=marker_path,
         cohort_analysis_output_fid_path=cohort_path,
-        cram_fid_paths_dict=None,
+        cram_fid_paths_dict=_write_cram_fids(tmp_path, {'SYN1': 'fil.cram_good'}),
         fastq_ids_list_path=None,
         settle_seconds=0,
     )

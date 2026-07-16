@@ -24,23 +24,18 @@ def _fake_cohort(name: str = 'COH0001') -> MagicMock:
 
 @pytest.fixture
 def patched_environment(monkeypatch):
-    """Stub the secrets fetch and ICA client context manager."""
-    monkeypatch.setattr(
-        'dragen_align_pa.jobs.prepare_ica_for_analysis.ica_api_utils.get_ica_secrets',
-        lambda: {'projectID': 'proj', 'apiKey': 'key'},
-    )
+    """Stub the ICA client context manager.
+
+    Project id/name resolution goes through the real `ICA_PROJECT_SETUP` table for the configured
+    family (conftest sets `project_root='ourdna'`); only the client (and thus the Secret Manager
+    fetch) needs stubbing.
+    """
     fake_client = MagicMock()
     fake_client.__enter__ = MagicMock(return_value=fake_client)
     fake_client.__exit__ = MagicMock(return_value=False)
     monkeypatch.setattr(
         'dragen_align_pa.jobs.prepare_ica_for_analysis.ica_api_utils.get_ica_api_client',
         lambda: fake_client,
-    )
-    monkeypatch.setattr(
-        'dragen_align_pa.jobs.prepare_ica_for_analysis.config_retrieve',
-        lambda key, default=None: {  # noqa: ARG005
-            ('ica', 'data_prep', 'output_folder'): 'test-dragen-378',
-        }.get(tuple(key)),
     )
 
 
@@ -53,7 +48,10 @@ def _patch_create_object(monkeypatch, status: str, folder_id: str = 'fid-123') -
 
 @pytest.mark.parametrize('terminal_status', ['ARCHIVED', 'DELETING', 'UNARCHIVING'])
 def test_run_raises_on_terminal_bad_status(
-    patched_environment, monkeypatch, tmp_path: Path, terminal_status,  # noqa: ARG001
+    patched_environment,  # noqa: ARG001
+    monkeypatch,
+    tmp_path: Path,
+    terminal_status,  # noqa: ARG001
 ):
     """ARCHIVED / DELETING / UNARCHIVING are terminal-bad: subsequent
     pipeline submissions WILL fail with opaque ICA errors, so fail-fast
@@ -63,7 +61,8 @@ def test_run_raises_on_terminal_bad_status(
 
     with pytest.raises(RuntimeError, match='terminal-bad status'):
         prepare_ica_for_analysis.run(
-            cohort=_fake_cohort(), output=cpg_utils.to_path(output_path),
+            cohort=_fake_cohort(),
+            output=cpg_utils.to_path(output_path),
         )
 
     assert not output_path.exists()
@@ -71,7 +70,11 @@ def test_run_raises_on_terminal_bad_status(
 
 @pytest.mark.parametrize('transient_status', ['ARCHIVING', 'PARTIAL'])
 def test_run_warns_on_transient_status_but_writes_output(
-    patched_environment, monkeypatch, tmp_path: Path, transient_status, caplog,  # noqa: ARG001
+    patched_environment,  # noqa: ARG001
+    monkeypatch,
+    tmp_path: Path,
+    transient_status,
+    caplog,  # noqa: ARG001
 ):
     """ARCHIVING / PARTIAL are in-flight transitions — they may resolve
     by the time the orchestrator submits. Warn but continue; the output
@@ -80,7 +83,8 @@ def test_run_warns_on_transient_status_but_writes_output(
     output_path = tmp_path / 'analysis_output_fid.json'
 
     prepare_ica_for_analysis.run(
-        cohort=_fake_cohort(), output=cpg_utils.to_path(output_path),
+        cohort=_fake_cohort(),
+        output=cpg_utils.to_path(output_path),
     )
 
     assert output_path.exists()
@@ -89,7 +93,9 @@ def test_run_warns_on_transient_status_but_writes_output(
 
 
 def test_run_silent_path_on_available_status(
-    patched_environment, monkeypatch, tmp_path: Path,  # noqa: ARG001
+    patched_environment,  # noqa: ARG001
+    monkeypatch,
+    tmp_path: Path,  # noqa: ARG001
 ):
     """AVAILABLE is the happy path: no raise, output written. We don't
     assert on log level here (the docstring just says 'log info'), only
@@ -98,7 +104,8 @@ def test_run_silent_path_on_available_status(
     output_path = tmp_path / 'analysis_output_fid.json'
 
     prepare_ica_for_analysis.run(
-        cohort=_fake_cohort(), output=cpg_utils.to_path(output_path),
+        cohort=_fake_cohort(),
+        output=cpg_utils.to_path(output_path),
     )
 
     payload = json.loads(output_path.read_text())

@@ -58,12 +58,12 @@ import gzip
 import json
 import os
 import tempfile
-from typing import Literal
 
-from icasdk.apis.tags import project_data_api
+from icasdk.apis.tags import project_data_api  # noqa: TC002  (used only in annotations; keep as a runtime import)
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils, utils
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
 
 # WES tool (WGS self-normalises and never builds a PON). DRAGEN's gc-corrected
 # counts <SG>.target.counts.gc-corrected.gz are the right PON input when GC
@@ -267,19 +267,20 @@ def build_panel(
         ValueError: If an upload completes but ICA returns no file ID for it.
     """
     ica_folder_path = ica_reference_folder.rstrip('/') + '/'
-    secrets: dict[Literal['projectID', 'apiKey'], str] = ica_api_utils.get_ica_secrets()
-    path_params = {'projectId': secrets['projectID']}
-
+    # The PON is built in the DRAGEN-align project: the counts come from its runs and the
+    # renamed panel files are uploaded to its reference storage. The role resolves against the
+    # configured [ica.projects].project_root family for CLI auth, the API client, and path params.
     metrics_prefix = str(utils.get_output_path('dragen_metrics'))
 
     file_ids: dict[str, str] = {}
 
     # The icav2 CLI (used for uploads) needs to be authenticated once up front.
-    ica_cli_utils.authenticate_ica_cli()
+    ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_ALIGN)
 
-    with ica_api_utils.get_ica_api_client() as api_client, tempfile.TemporaryDirectory() as ica_local_dir:
-        api_instance = project_data_api.ProjectDataApi(api_client)
-
+    with (
+        ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_params),
+        tempfile.TemporaryDirectory() as ica_local_dir,
+    ):
         for sg in sequencing_groups:
             original_basename = _counts_basename(sg, counts_suffix)
             pon_basename = _pon_basename(sg, counts_suffix, rename_suffix)
@@ -308,10 +309,7 @@ def build_panel(
         logger.info(f'[{panel_name}] wrote {list_basename} with {len(sequencing_groups)} entries.')
         ica_cli_utils.upload_local_file(list_local, ica_folder_path)
         ica_utils.wait_for_file_available(
-            api_instance,
-            path_params,
-            file_name=list_basename,
-            folder_path=ica_folder_path
+            api_instance, path_params, file_name=list_basename, folder_path=ica_folder_path
         )
         file_ids[list_basename] = _require_file_id(api_instance, path_params, ica_folder_path, list_basename)
 
@@ -338,25 +336,32 @@ def main() -> None:
     parser = argparse.ArgumentParser(description='Build a DRAGEN CNV Panel of Normals from existing target counts.')
     parser.add_argument('--panel-name', required=True, help='Panel label, used for the list filename and folder.')
     parser.add_argument(
-        '--sequencing-groups', required=True, nargs='+', help='CPG sequencing-group IDs to include as normals.',
+        '--sequencing-groups',
+        required=True,
+        nargs='+',
+        help='CPG sequencing-group IDs to include as normals.',
     )
     parser.add_argument(
-        '--ica-reference-folder', required=True,
+        '--ica-reference-folder',
+        required=True,
         help='Destination ICA reference folder, e.g. /references/exo_CNV_panels_normals/<panel>',
     )
     parser.add_argument(
-        '--provenance-prefix', default=None,
+        '--provenance-prefix',
+        default=None,
         help='Optional GCS prefix to snapshot the counts into before upload (provenance). Omit to skip.',
     )
     parser.add_argument(
-        '--counts-suffix', default=DEFAULT_COUNTS_SUFFIX,
+        '--counts-suffix',
+        default=DEFAULT_COUNTS_SUFFIX,
         help=f'Counts file suffix (default {DEFAULT_COUNTS_SUFFIX}). Use .target.counts.gz for plain counts.',
     )
     parser.add_argument(
-        '--rename-suffix', default='_pon',
+        '--rename-suffix',
+        default='_pon',
         help="Suffix applied to each panel sample's identity (filename + in-file "
-             'sample names) so DRAGEN never sees a case SG as a panel member. '
-             "Default '_pon'.",
+        'sample names) so DRAGEN never sees a case SG as a panel member. '
+        "Default '_pon'.",
     )
     args = parser.parse_args()
 

@@ -36,10 +36,10 @@ def test_fetch_passfail_returns_parsed_payload_on_happy_path():
     fake_response.json.return_value = payload
     fake_response.raise_for_status.return_value = None
 
-    with patch('dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
-               return_value='fil.passfail'), \
-         patch('dragen_align_pa.jobs.parse_passfail.requests.get',
-               return_value=fake_response):
+    with (
+        patch('dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name', return_value='fil.passfail'),
+        patch('dragen_align_pa.jobs.parse_passfail.requests.get', return_value=fake_response),
+    ):
         result = fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
 
     assert result == payload
@@ -49,8 +49,7 @@ def test_fetch_passfail_returns_none_when_file_missing():
     """Catastrophically-failed batch may not have produced passfail.json —
     FileNotFoundError from the lookup is legitimate, not an error."""
     api = MagicMock()
-    with patch('dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
-               side_effect=FileNotFoundError):
+    with patch('dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name', side_effect=FileNotFoundError):
         result = fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
     assert result is None
 
@@ -111,10 +110,12 @@ def test_fetch_passfail_retries_once_on_403_then_succeeds():
     second_response.json.return_value = payload
     second_response.raise_for_status.return_value = None
 
-    with patch('dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
-               return_value='fil.passfail'), \
-         patch('dragen_align_pa.jobs.parse_passfail.requests.get',
-               side_effect=[first_response, second_response]) as mock_get:
+    with (
+        patch('dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name', return_value='fil.passfail'),
+        patch(
+            'dragen_align_pa.jobs.parse_passfail.requests.get', side_effect=[first_response, second_response]
+        ) as mock_get,
+    ):
         result = fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
 
     assert result == payload

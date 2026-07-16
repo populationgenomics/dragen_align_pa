@@ -28,15 +28,12 @@ sample_id = 'sample_id'
 # If false, will default to using the test manifest in fewgenomes-test
 control_manifest = false
 
-# Projects in ICA to run different analyses
+# Dataset family for this run's ICA projects. The DRAGEN-align, DRAGEN-MLR and FASTQ-upload
+# projects (plus the API-key field and MLR config id) are derived from this family in
+# `constants.ICA_PROJECT_SETUP` (resolved by `constants_registry.ica_project_name` et al.), so a
+# run only needs to name the family here. Must be a registered family (e.g. "ourdna").
 [ica.projects]
-dragen_align = "main_dragen_project"
-dragen_mlr = "mlr_job_project"
-dragen_mlr_project_id = "mlr_project_id"
-# Supplier project where third-party FASTQ uploads live; we operate against this
-# project (not `dragen_align`) to delete linked FASTQs in `DeleteDataInIca`.
-# Only consulted in FASTQ mode.
-fastq_source_project_id = "fastq_source_project_id"
+project_root = "REPLACE_WITH_DATASET_FAMILY"
 
 # Flags to manage existing pipeline runs: set the appropriate flag to true and resubmit the job to cancel or resume monitoring.
 [ica.management]
@@ -177,8 +174,3 @@ coverage_region_beds = [
     'Twist_VCGS_Exome_Covered_Targets_hg38.bed', # Example for Twist capture region
     'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed',
 ]
-
-[dragen_align_pa.manage_dragen_mlr]
-config_json = "fil.91c3e63114fc43dc31ed08dde927d6b4"
-mlr_hash_table = "ica://ourdna-dragen-mlr-jobs/data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9"
-analysis_instance_tier = "economy"
