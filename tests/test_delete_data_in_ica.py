@@ -186,14 +186,14 @@ def test_fastq_mode_uses_supplier_project_and_writes_marker(tmp_path: Path, patc
 
 
 def test_fastq_mode_skips_collaborator_managed_project(tmp_path: Path, patched_env, monkeypatch):
-    """A family with `can-delete-fastq=false` (collaborator-managed, e.g. tenk10k) is skipped: no
+    """A family with `can_delete_fastq=false` (collaborator-managed, e.g. tenk10k) is skipped: no
     FASTQ deletes attempted, no error, marker still written with `skipped=true`. We ask
     collaborators to delete that data rather than doing it ourselves."""
     cohort_fid = 'fol.cohort_003'
     fastq_fids = {'fil.fastq_001': 'fil.fastq_001'}
     api = _make_api_instance(verify_deleting_fids={cohort_fid})
     patched_env['api_instance'] = api
-    # project_root=tenk10k → can-delete-fastq is False. `ica_can_delete_fastq` reads config in the
+    # project_root=tenk10k → can_delete_fastq is False. `ica_can_delete_fastq` reads config in the
     # constants_registry binding, so patch it there.
     monkeypatch.setattr(
         'dragen_align_pa.constants_registry.config_retrieve',

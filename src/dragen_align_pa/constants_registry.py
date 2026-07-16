@@ -20,9 +20,9 @@ from dragen_align_pa import constants
 
 # The three roles every family registers under `ICA_PROJECT_SETUP[family]['projects']`. Call
 # sites pass these instead of literal strings so a typo is a NameError, not a silent lookup miss.
-ROLE_DRAGEN_ALIGN: Final = 'dragen-align'
-ROLE_DRAGEN_MLR: Final = 'dragen-mlr'
-ROLE_FASTQ_UPLOAD: Final = 'fastq-upload'
+ROLE_DRAGEN_ALIGN: Final = 'dragen_align'
+ROLE_DRAGEN_MLR: Final = 'dragen_mlr'
+ROLE_FASTQ_UPLOAD: Final = 'fastq_upload'
 
 REQUIRED_ICA_ROLES: Final = (ROLE_DRAGEN_ALIGN, ROLE_DRAGEN_MLR, ROLE_FASTQ_UPLOAD)
 
@@ -55,7 +55,7 @@ def _family_setup(project_root: str) -> constants.IcaFamilySetup:
 
 
 def _project_entry(project_root: str, role: str) -> constants.IcaProject:
-    """Return the `{project-name, project-id}` entry for `role` in family `project_root`.
+    """Return the `{project_name, project_id}` entry for `role` in family `project_root`.
 
     Args:
         project_root: The dataset family.
@@ -87,7 +87,7 @@ def resolve_ica_project_name(project_root: str, role: str) -> str:
     Raises:
         KeyError: If the family or role is not registered.
     """
-    return _project_entry(project_root, role)['project-name']
+    return _project_entry(project_root, role)['project_name']
 
 
 def resolve_ica_project_id_or_none(project_root: str, role: str) -> str | None:
@@ -104,7 +104,7 @@ def resolve_ica_project_id_or_none(project_root: str, role: str) -> str | None:
     Raises:
         KeyError: If the family or role is not registered.
     """
-    return _project_entry(project_root, role)['project-id']
+    return _project_entry(project_root, role)['project_id']
 
 
 def resolve_ica_project_id(project_root: str, role: str) -> str:
@@ -147,14 +147,14 @@ def resolve_ica_api_key_field(project_root: str) -> str:
     Raises:
         KeyError: If `project_root` is not a registered family.
     """
-    return _family_setup(project_root)['api-key']['name']
+    return _family_setup(project_root)['api_key']['name']
 
 
 def resolve_mlr_config_file_id(project_root: str) -> str:
     """Return the ICA file ID of family `project_root`'s MLR config JSON.
 
     The config JSON lives in the family's MLR project; its file id is registered under
-    `ICA_PROJECT_SETUP[family]['mlr-config-json']`.
+    `ICA_PROJECT_SETUP[family]['mlr_config_json']`.
 
     Args:
         project_root: The dataset family.
@@ -166,7 +166,7 @@ def resolve_mlr_config_file_id(project_root: str) -> str:
         KeyError: If `project_root` is not a registered family.
         ValueError: If the registered value is still the `fil.TODO_…` placeholder (not yet uploaded).
     """
-    file_id = _family_setup(project_root)['mlr-config-json']['ica-file-id']
+    file_id = _family_setup(project_root)['mlr_config_json']['ica_file_id']
     return _reject_placeholder_file_id(f'{project_root} MLR config JSON', file_id)
 
 
@@ -175,7 +175,7 @@ def resolve_ica_can_delete_fastq(project_root: str) -> bool:
 
     This is the authoritative in-repo call on FASTQ-deletion authority (ICA enforces the same
     permission independently, so a `True` here still can't delete from a collaborator project).
-    A family we don't control the upload area for registers `can-delete-fastq = False`, and
+    A family we don't control the upload area for registers `can_delete_fastq = False`, and
     `DeleteDataInIca` skips its FASTQ deletion.
 
     Args:
@@ -187,7 +187,7 @@ def resolve_ica_can_delete_fastq(project_root: str) -> bool:
     Raises:
         KeyError: If `project_root` is not a registered family.
     """
-    return _family_setup(project_root)['can-delete-fastq']
+    return _family_setup(project_root)['can_delete_fastq']
 
 
 def ica_project_name(role: str) -> str:

@@ -5,7 +5,7 @@ family API key authenticates both and only the `projectId` differs:
 - DRAGEN-align project: the cohort-level analysis output folder (cascades to per-batch analyses,
   per-SG outputs, per-batch FASTQ list CSVs) + the per-SG uploaded CRAM file IDs.
 - FASTQ-upload project (FASTQ mode only): the linked FASTQ file IDs from `FastqIntakeQc`'s
-  outpath. Skipped when the family's `can-delete-fastq` is false (collaborator-managed).
+  outpath. Skipped when the family's `can_delete_fastq` is false (collaborator-managed).
 
 Each pass fires all deletes, sleeps `settle_seconds` (default 60) for ICA's async delete state
 machine, then verifies via `get_project_data` (404 or `status='DELETING'` is success). Failures
@@ -207,7 +207,7 @@ def run(
             settle_seconds=settle_seconds,
         )
 
-        # FASTQ-upload project. `can-delete-fastq` gates whether we touch it at all; ICA enforces
+        # FASTQ-upload project. `can_delete_fastq` gates whether we touch it at all; ICA enforces
         # the same permission independently, so this is a pre-check that skips a family whose
         # upload area we don't control rather than attempting a delete ICA would refuse.
         if fastq_ids_list_path:
@@ -222,7 +222,7 @@ def run(
                 fastq_skipped = True
                 logger.info(
                     f'FASTQ source project {ica_project_name(ROLE_FASTQ_UPLOAD)!r} is collaborator-managed '
-                    f'(can-delete-fastq=false); skipping FASTQ deletion (collaborators delete on request).',
+                    f'(can_delete_fastq=false); skipping FASTQ deletion (collaborators delete on request).',
                 )
 
     if failures:

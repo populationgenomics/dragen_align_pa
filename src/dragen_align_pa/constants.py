@@ -21,64 +21,67 @@ DRAGEN_VERSION: Final = config_retrieve(['ica', 'pipelines', 'dragen_version'])
 TODO_FID_PREFIX: Final = 'fil.TODO_'
 _TODO_FID: Final = f'{TODO_FID_PREFIX}REPLACE_AFTER_ICA_UPLOAD'
 
+
 # ICA project setup
 # Contains the following:
 # A project block informing the user of the project names and IDs for running pipelines in ICA
 # An api key dict recording the name of the apikey secret in secretsmanager
 # An ICA file ID for the MLR config JSON
-IcaProject = TypedDict('IcaProject', {'project-name': str, 'project-id': str | None})
-IcaFamilySetup = TypedDict(
-    'IcaFamilySetup',
-    {
-        'projects': dict[str, IcaProject],
-        'api-key': dict[str, str],
-        'mlr-config-json': dict[str, str],
-        'can-delete-fastq': bool,
-    },
-)
+class IcaProject(TypedDict):
+    project_name: str
+    project_id: str | None
+
+
+class IcaFamilySetup(TypedDict):
+    projects: dict[str, IcaProject]
+    api_key: dict[str, str]
+    mlr_config_json: dict[str, str]
+    can_delete_fastq: bool
+
+
 ICA_PROJECT_SETUP: Final[dict[str, IcaFamilySetup]] = {
     'ourdna': {
         'projects': {
-            'dragen-align': {
-                'project-name': 'OurDNA-DRAGEN-378',
-                'project-id': '5c3a60b0-1458-4e37-8877-ec6b25dc4003',
+            'dragen_align': {
+                'project_name': 'OurDNA-DRAGEN-378',
+                'project_id': '5c3a60b0-1458-4e37-8877-ec6b25dc4003',
             },
-            'dragen-mlr': {
-                'project-name': 'ourdna-dragen-mlr-jobs',
-                'project-id': 'f2f55709-f8d4-4364-bb04-c41975d4c0ed',
+            'dragen_mlr': {
+                'project_name': 'ourdna-dragen-mlr-jobs',
+                'project_id': 'f2f55709-f8d4-4364-bb04-c41975d4c0ed',
             },
-            'fastq-upload': {
-                'project-name': 'ourdna-data-upload-agrf',
-                'project-id': 'e7a1d085-f12e-4cff-acda-2334338585a8',
+            'fastq_upload': {
+                'project_name': 'ourdna-data-upload-agrf',
+                'project_id': 'e7a1d085-f12e-4cff-acda-2334338585a8',
             },
         },
-        'api-key': {'name': 'apiKey'},
-        'mlr-config-json': {'ica-file-id': 'fil.91c3e63114fc43dc31ed08dde927d6b4'},
-        'can-delete-fastq': True,
+        'api_key': {'name': 'apiKey'},
+        'mlr_config_json': {'ica_file_id': 'fil.91c3e63114fc43dc31ed08dde927d6b4'},
+        'can_delete_fastq': True,
     },
     'tenk10k': {
         'projects': {
-            'dragen-align': {
-                'project-name': 'Tenk10k_Dragen_378',
-                'project-id': 'b9e2edbd-6ff8-4e76-b839-bb029e59fb73',
+            'dragen_align': {
+                'project_name': 'Tenk10k_Dragen_378',
+                'project_id': 'b9e2edbd-6ff8-4e76-b839-bb029e59fb73',
             },
-            'dragen-mlr': {
-                'project-name': 'Tenk10K_Dragen_MLR_Jobs',
-                'project-id': '16bb091c-5866-4e39-929f-2b678457b772',
+            'dragen_mlr': {
+                'project_name': 'Tenk10K_Dragen_MLR_Jobs',
+                'project_id': '16bb091c-5866-4e39-929f-2b678457b772',
             },
-            'fastq-upload': {
-                'project-name': 'tenk10k_fastq_upload',
-                'project-id': None,  # Explicit `None`, as we have to ask collaborators to delete this data.
+            'fastq_upload': {
+                'project_name': 'tenk10k_fastq_upload',
+                'project_id': None,  # Explicit `None`, as we have to ask collaborators to delete this data.
             },
         },
-        'api-key': {'name': 'tenk10k_apiKey'},
-        'mlr-config-json': {'ica-file-id': _TODO_FID},
-        'can-delete-fastq': False,  # Controlled by collaborators
+        'api_key': {'name': 'tenk10k_apiKey'},
+        'mlr_config_json': {'ica_file_id': _TODO_FID},
+        'can_delete_fastq': False,  # Controlled by collaborators
     },
 }
 
 # MLR setup information.
-# Project-relative MLR hash table path; the ICA project is the configured family's `dragen-mlr`
+# Project-relative MLR hash table path; the ICA project is the configured family's `dragen_mlr`
 # project, resolved at use time via `IcaPath.from_relpath(MLR_HASH_TABLE_RELPATH).as_url(ROLE_DRAGEN_MLR)`.
 # The hashtable is provided as a part of the popgen cli package in every ICA project and always exists at this path.
 MLR_HASH_TABLE_RELPATH: Final = 'data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9'
