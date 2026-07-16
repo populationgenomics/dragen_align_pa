@@ -45,7 +45,7 @@ def test_resolve_ica_file_id_rejects_placeholder_id(monkeypatch):
 def test_resolve_mlr_config_file_id_returns_registered_id():
     """The MLR config JSON is registered per family in ICA_PROJECT_SETUP, separate from the
     reference-asset basenames in ICA_FILE_IDS."""
-    assert constants_registry.resolve_mlr_config_file_id('ourdna') == 'fil.91c3e63114fc43dc31ed08dde927d6b4'
+    assert constants_registry.resolve_mlr_config_file_id('ourdna') == 'fil.a1007afeae3741bb815108dedba2c6eb'
 
 
 def test_resolve_mlr_config_file_id_raises_on_unknown_family():
@@ -141,5 +141,5 @@ def test_config_reading_entry_points_use_configured_family():
     mlr_id = constants_registry.ica_project_id(constants_registry.ROLE_DRAGEN_MLR)
     assert mlr_id == 'f2f55709-f8d4-4364-bb04-c41975d4c0ed'
     assert constants_registry.ica_api_key_field() == 'apiKey'
-    assert constants_registry.ica_mlr_config_file_id() == 'fil.91c3e63114fc43dc31ed08dde927d6b4'
+    assert constants_registry.ica_mlr_config_file_id() == 'fil.a1007afeae3741bb815108dedba2c6eb'
     assert constants_registry.ica_can_delete_fastq() is True
