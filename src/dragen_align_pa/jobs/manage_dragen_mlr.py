@@ -19,8 +19,8 @@ from dragen_align_pa.constants_registry import (
     ROLE_DRAGEN_MLR,
     ica_mlr_config_file_id,
 )
-from dragen_align_pa.paths import IcaPath
 from dragen_align_pa.ica_utils import ica_run_path
+from dragen_align_pa.paths import IcaPath
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
 from dragen_align_pa.utils import load_per_sg_state
 

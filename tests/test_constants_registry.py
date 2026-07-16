@@ -100,8 +100,10 @@ def test_resolve_ica_project_id_by_role():
 
 def test_resolve_ica_project_id_raises_on_none_id():
     """tenk10k's fastq_upload is registered with an explicit None id (collaborator-managed data);
-    resolve_ica_project_id fails loud rather than returning None into its `str` contract."""
-    with pytest.raises(KeyError, match=r'fastq_upload'):
+    resolve_ica_project_id fails loud rather than returning None into its `str` contract. A
+    registered-but-unusable id raises ValueError (matching the placeholder-file-id path), distinct
+    from the KeyError raised for an unregistered family/role."""
+    with pytest.raises(ValueError, match=r'fastq_upload'):
         constants_registry.resolve_ica_project_id('tenk10k', constants_registry.ROLE_FASTQ_UPLOAD)
 
 

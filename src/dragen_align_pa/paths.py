@@ -1,9 +1,11 @@
 """Low-level path primitives — the single home for path-string discipline.
 
-Holds the value types and pure parsers every path scheme is built from, with no config or
-run-state dependencies (deps: `constants` + `cpg_utils` only). That clean dep floor is why
-both the low-level `ica_api_utils` and the high-level `ica_utils` can build ICA paths from
-`IcaPath` without a circular import.
+Holds the value types and pure parsers every path scheme is built from (deps: `constants`,
+`constants_registry`, and `cpg_utils`). `IcaPath.output_root` and `IcaPath.as_url` read config
+at call time — the output folder and, via `constants_registry`, the configured project name;
+the remaining methods are pure string ops. No circular import arises because `constants_registry`
+imports none of `paths`, `ica_utils`, or `ica_api_utils`, so both the low-level `ica_api_utils`
+and the high-level `ica_utils` can build ICA paths from `IcaPath`.
 
 - `IcaPath` — the ICA path value type owning ICA's three incompatible slash conventions.
 - `gcs_bucket_and_key` / `gcs_relative_key` — split a `gs://` path into its bucket and key.

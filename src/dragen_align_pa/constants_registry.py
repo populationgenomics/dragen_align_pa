@@ -118,12 +118,14 @@ def resolve_ica_project_id(project_root: str, role: str) -> str:
         The ICA project ID (UUID).
 
     Raises:
-        KeyError: If the family or role is not registered, or the role is registered with an
-            explicit `None` id (collaborator-managed; use `resolve_ica_project_id_or_none`).
+        KeyError: If the family or role is not registered.
+        ValueError: If the role is registered with an explicit `None` id (collaborator-managed;
+            use `resolve_ica_project_id_or_none`). This mirrors the placeholder-file-id path:
+            both mean "registered but unusable", distinct from "not registered" (`KeyError`).
     """
     project_id = resolve_ica_project_id_or_none(project_root, role)
     if project_id is None:
-        raise KeyError(
+        raise ValueError(
             f'{role!r} project in family {project_root!r} is registered with no ICA project ID '
             f'(an explicit None in ICA_PROJECT_SETUP); it cannot be addressed by project ID. Use '
             f'resolve_ica_project_id_or_none if a missing ID is expected here.',

@@ -248,7 +248,6 @@ def patched_environment(tmp_path: Path, monkeypatch):
         'dragen_align_pa.jobs.download_batch_artefacts.cpg_utils.config.config_retrieve',
         lambda key, default=None: {
             ('ica', 'data_prep', 'output_folder'): 'test-dragen-378',
-            ('ica', 'projects', 'dragen_align'): 'OurDNA-DRAGEN-378',
         }.get(tuple(key), default),
     )
 

@@ -17,8 +17,10 @@ from dragen_align_pa.constants_registry import (
     REQUIRED_ICA_ROLES,
     ROLE_DRAGEN_ALIGN,
     ROLE_DRAGEN_MLR,
+    ROLE_FASTQ_UPLOAD,
     configured_family,
     resolve_ica_api_key_field,
+    resolve_ica_can_delete_fastq,
     resolve_ica_project_id,
     resolve_ica_project_name,
     resolve_mlr_config_file_id,
@@ -56,13 +58,17 @@ def assert_ica_project_root_resolves() -> None:
     - the family has a registered `illumina_cpg_workbench_api` API-key field (else every ICA
       client build would fail at job runtime with a bare `KeyError`);
     - the family's MLR project has a minted MLR config JSON (not the `fil.TODO_` placeholder),
-      which the MLR submission job would otherwise only discover mid-run.
+      which the MLR submission job would otherwise only discover mid-run;
+    - the family registers `can_delete_fastq` (a TypedDict gives no runtime enforcement), and if
+      it claims deletion authority (`True`), its FASTQ-upload project has a resolvable id — else
+      `DeleteDataInIca` would fail at cleanup, after a full alignment run, rather than here.
 
     Raises:
         KeyError: If `project_root` isn't a registered family, a required role or its project
             name is missing, the DRAGEN-align / DRAGEN-MLR project id is absent, or the family
-            has no registered API-key field.
-        ValueError: If the MLR config JSON is still the not-yet-minted placeholder.
+            has no registered API-key field or `can_delete_fastq` flag.
+        ValueError: If the MLR config JSON is still the not-yet-minted placeholder, or the family
+            sets `can_delete_fastq = True` but registers its FASTQ-upload project with no id.
     """
     project_root = configured_family()
     for role in REQUIRED_ICA_ROLES:
@@ -71,6 +77,8 @@ def assert_ica_project_root_resolves() -> None:
     resolve_ica_project_id(project_root, ROLE_DRAGEN_MLR)
     resolve_ica_api_key_field(project_root)
     resolve_mlr_config_file_id(project_root)
+    if resolve_ica_can_delete_fastq(project_root):
+        resolve_ica_project_id(project_root, ROLE_FASTQ_UPLOAD)
 
 
 def _resolve_sg_canonical_design(sg: SequencingGroup) -> str:
