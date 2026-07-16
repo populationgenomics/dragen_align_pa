@@ -18,21 +18,11 @@ from dragen_align_pa.constants_registry import (
     ROLE_DRAGEN_ALIGN,
     ROLE_DRAGEN_MLR,
     ica_mlr_config_file_id,
-    ica_project_id,
 )
 from dragen_align_pa.paths import IcaPath
 from dragen_align_pa.ica_utils import ica_run_path
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
 from dragen_align_pa.utils import load_per_sg_state
-
-
-def _mlr_enter_project(mlr_project: str) -> None:
-    """Enters the specified MLR project."""
-    # Set ICA project context
-    utils.run_subprocess_with_log(
-        ['icav2', 'projects', 'enter', mlr_project],
-        f'Set ICA project to {mlr_project}',
-    )
 
 
 def _mlr_find_input_urls(ica_base_folder: str, sg_name: str) -> tuple[str, str]:
@@ -133,7 +123,6 @@ def _submit_mlr_run(
     pipeline_id_arguid_path: cpg_utils.Path,
     sg_name: str,
     cohort_name: str,
-    mlr_project: str,
     mlr_config_json: str,
     mlr_hash_table: str,
 ) -> str:
@@ -159,8 +148,9 @@ def _submit_mlr_run(
         # --- 1. Find input file paths ---
         cram_url, gvcf_url = _mlr_find_input_urls(ica_base_folder, sg_name)
 
-        # --- 2. Authenticate ---
-        _mlr_enter_project(mlr_project)
+        # --- 2. Switch the CLI to the MLR project to submit into (same family key, so this just
+        # re-enters as the MLR project) ---
+        ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_MLR)
         # --- 3. Download MLR config JSON ---
         local_config_path = _mlr_download_config(mlr_config_json, batch_tmpdir)
 
@@ -198,9 +188,8 @@ def run(
     """
     Calls the generic pipeline manager with settings for the MLR pipeline.
     """
-    # The configured family's MLR project to run in, plus the config JSON registered for that
-    # family (both from ICA_PROJECT_SETUP).
-    mlr_project: str = ica_project_id(ROLE_DRAGEN_MLR)
+    # The config JSON registered for the configured family (from ICA_PROJECT_SETUP). The MLR
+    # project itself is entered via `authenticate_ica_cli(ROLE_DRAGEN_MLR)` inside `_submit_mlr_run`.
     mlr_config_json: str = ica_mlr_config_file_id()
     mlr_hash_table: str = IcaPath.from_relpath(MLR_HASH_TABLE_RELPATH).as_url(ROLE_DRAGEN_MLR)
 
@@ -211,7 +200,6 @@ def run(
             pipeline_id_arguid_path=pipeline_id_arguid_path_dict[f'{sg_name}_pipeline_id_and_arguid'],
             sg_name=sg_name,
             cohort_name=cohort.name,
-            mlr_project=mlr_project,
             mlr_config_json=mlr_config_json,
             mlr_hash_table=mlr_hash_table,
         )

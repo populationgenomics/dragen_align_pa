@@ -29,6 +29,7 @@ from dragen_align_pa.constants_registry import (
     ROLE_DRAGEN_ALIGN,
     ROLE_FASTQ_UPLOAD,
     ica_can_delete_fastq,
+    ica_project_id,
     ica_project_name,
 )
 from dragen_align_pa.utils import get_pipeline_path
@@ -193,8 +194,13 @@ def run(
     if not cram_fid_paths_dict and not fastq_ids_list_path:
         raise ValueError('Either cram_fid_paths_dict or fastq_ids_list_path must be provided')
 
+    # The DRAGEN runs project and the FASTQ-upload project are in the same dataset family, so one
+    # client (authenticated with the family API key) serves both — only the `projectId` in
+    # path_params differs. Open it once via the DRAGEN-align session and reuse it for both passes.
+    fastq_skipped = False
     with ica_api_utils.ica_project_session(ROLE_DRAGEN_ALIGN) as (api_client, path_params):
         api_instance = project_data_api.ProjectDataApi(api_client)
+        # DRAGEN runs project: cohort output folder (cascades) + per-SG CRAMs.
         failures += _delete_and_verify(
             api_instance=api_instance,
             project_id=path_params['projectId'],
@@ -202,29 +208,23 @@ def run(
             settle_seconds=settle_seconds,
         )
 
-    fastq_skipped = False
-    if fastq_ids_list_path:
-        # Whether we may delete uploaded FASTQ data is the family's `can-delete-fastq` flag. ICA
-        # enforces the same permission independently, so this is a pre-check that skips a family
-        # we don't control the upload area for (rather than attempting a delete ICA would refuse).
-        if ica_can_delete_fastq():
-            # The FASTQ-upload project sits in the same dataset family as the DRAGEN project, so
-            # its client authenticates with the same family API key; a fresh session just swaps
-            # in the FASTQ project's id for the delete path_params.
-            with ica_api_utils.ica_project_session(ROLE_FASTQ_UPLOAD) as (fastq_client, fastq_path_params):
-                fastq_api_instance = project_data_api.ProjectDataApi(fastq_client)
+        # FASTQ-upload project. `can-delete-fastq` gates whether we touch it at all; ICA enforces
+        # the same permission independently, so this is a pre-check that skips a family whose
+        # upload area we don't control rather than attempting a delete ICA would refuse.
+        if fastq_ids_list_path:
+            if ica_can_delete_fastq():
                 failures += _delete_and_verify(
-                    api_instance=fastq_api_instance,
-                    project_id=fastq_path_params['projectId'],
+                    api_instance=api_instance,
+                    project_id=ica_project_id(ROLE_FASTQ_UPLOAD),
                     fids=fastq_fids,
                     settle_seconds=settle_seconds,
                 )
-        else:
-            fastq_skipped = True
-            logger.info(
-                f'FASTQ source project {ica_project_name(ROLE_FASTQ_UPLOAD)!r} is collaborator-managed '
-                f'(can-delete-fastq=false); skipping FASTQ deletion (collaborators delete on request).',
-            )
+            else:
+                fastq_skipped = True
+                logger.info(
+                    f'FASTQ source project {ica_project_name(ROLE_FASTQ_UPLOAD)!r} is collaborator-managed '
+                    f'(can-delete-fastq=false); skipping FASTQ deletion (collaborators delete on request).',
+                )
 
     if failures:
         error_log_path = _write_failure_log(cohort_name, failures)
