@@ -84,6 +84,7 @@ ICA_PROJECT_SETUP: Final[dict[str, IcaFamilySetup]] = {
 # Project-relative MLR hash table path; the ICA project is the configured family's `dragen_mlr`
 # project, resolved at use time via `IcaPath.from_relpath(MLR_HASH_TABLE_RELPATH).as_url(ROLE_DRAGEN_MLR)`.
 # The hashtable is provided as a part of the popgen cli package in every ICA project and always exists at this path.
+# We always use an 'economy' instance.
 MLR_HASH_TABLE_RELPATH: Final = 'data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9'
 ANALYSIS_INSTANCE_TIER: Final[str] = 'economy'
 

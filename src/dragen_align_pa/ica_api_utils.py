@@ -185,7 +185,7 @@ def ica_project_session(role: str) -> Iterator[tuple[ApiClient, dict[str, str]]]
         `(api_client, {'projectId': <id for role>})`.
 
     Raises:
-        KeyError: If the configured family or `role` isn't registered, or the role has no id.
+        ValueError: If the configured family or `role` isn't registered, or the role has no id.
     """
     project_id = ica_project_id(role)
     with get_ica_api_client() as api_client:
