@@ -83,7 +83,7 @@ _SAMPLE_NAME_COLUMN = 4
 
 SEQUENCING_GROUP_QUERY: DocumentNode = gql(
     """
-sg_query($cohort: String) {
+query sg_query($cohort: String) {
     cohorts(id: {eq: $cohort}) {
         sequencingGroups {
             id
