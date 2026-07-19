@@ -294,7 +294,7 @@ def build_panel(
     ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_ALIGN)
 
     if len(cohort_or_sequencing_groups) == 1 and cohort_or_sequencing_groups[0].startswith('COH'):
-        query_results = query(SEQUENCING_GROUP_QUERY, variables={'cohort': cohort_or_sequencing_groups})
+        query_results = query(SEQUENCING_GROUP_QUERY, variables={'cohort': cohort_or_sequencing_groups[0]})
         sequencing_groups = [x['id'] for x in query_results['cohorts'][0]['sequencingGroups']]
     else:
         sequencing_groups = cohort_or_sequencing_groups
