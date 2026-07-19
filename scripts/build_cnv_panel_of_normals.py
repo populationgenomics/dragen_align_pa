@@ -57,10 +57,13 @@ import argparse
 import gzip
 import json
 import os
+import sys
 import tempfile
 
+from graphql import DocumentNode
 from icasdk.apis.tags import project_data_api  # noqa: TC002  (used only in annotations; keep as a runtime import)
 from loguru import logger
+from metamist.graphql import gql, query
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils, utils
 from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
@@ -76,6 +79,19 @@ DEFAULT_COUNTS_SUFFIX = '.target.counts.gc-corrected.gz'
 # 0-based index of the sample-name column in a counts-file header line:
 # contig, start, stop, name, <sample>, improper_pairs.
 _SAMPLE_NAME_COLUMN = 4
+
+
+SEQUENCING_GROUP_QUERY: DocumentNode = gql(
+    """
+sg_query($cohort: String) {
+    cohorts(id: {eq: $cohort}) {
+        sequencingGroups {
+            id
+        }
+    }
+}
+""",
+)
 
 
 def _counts_basename(sg: str, counts_suffix: str) -> str:
@@ -233,7 +249,7 @@ def _require_file_id(
 
 def build_panel(
     panel_name: str,
-    sequencing_groups: list[str],
+    cohort_or_sequencing_groups: list[str],
     ica_reference_folder: str,
     provenance_prefix: str | None,
     counts_suffix: str,
@@ -277,6 +293,13 @@ def build_panel(
     # The icav2 CLI (used for uploads) needs to be authenticated once up front.
     ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_ALIGN)
 
+    if len(cohort_or_sequencing_groups) == 1 and cohort_or_sequencing_groups[0].startswith('COH'):
+        query_results = query(SEQUENCING_GROUP_QUERY, variables={'cohort': cohort_or_sequencing_groups})
+        sequencing_groups = [x['id'] for x in query_results['cohorts'][0]['sequencingGroups']]
+    else:
+        sequencing_groups = cohort_or_sequencing_groups
+    print(f'{sequencing_groups}')
+    sys.exit(0)
     with (
         ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_params),
         tempfile.TemporaryDirectory() as ica_local_dir,
@@ -325,7 +348,7 @@ def _print_registration_snippet(panel_name: str, file_ids: dict[str, str]) -> No
     """
     logger.info(
         f'Panel "{panel_name}" built ({len(file_ids)} entries). Merge this block into '
-        f'ICA_FILE_IDS in dragen_align_pa.constants:',
+        f'ICA_PON_FILE_IDS in dragen_align_pa.constants:',
     )
     print(f'\n# --- CNV PON: {panel_name} ---')
     print(json.dumps(file_ids, indent=4))
@@ -336,10 +359,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description='Build a DRAGEN CNV Panel of Normals from existing target counts.')
     parser.add_argument('--panel-name', required=True, help='Panel label, used for the list filename and folder.')
     parser.add_argument(
-        '--sequencing-groups',
+        '--cohort-or-sequencing-groups',
         required=True,
         nargs='+',
-        help='CPG sequencing-group IDs to include as normals.',
+        help='Cohort ID or space separated list of CPG sequencing-group IDs to include as normals.',
     )
     parser.add_argument(
         '--ica-reference-folder',
@@ -367,7 +390,7 @@ def main() -> None:
 
     file_ids = build_panel(
         panel_name=args.panel_name,
-        sequencing_groups=args.sequencing_groups,
+        cohort_or_sequencing_groups=args.cohort_or_sequencing_groups,
         ica_reference_folder=args.ica_reference_folder,
         provenance_prefix=args.provenance_prefix,
         counts_suffix=args.counts_suffix,
