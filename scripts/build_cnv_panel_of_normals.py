@@ -72,6 +72,7 @@ import re
 import tempfile
 
 import cpg_utils
+import cpg_utils.config
 from graphql import DocumentNode
 from icasdk.apis.tags import project_data_api  # noqa: TC002  (used only in annotations; keep as a runtime import)
 from loguru import logger
@@ -92,11 +93,14 @@ DEFAULT_COUNTS_SUFFIX = '.target.counts.gc-corrected.gz'
 # contig, start, stop, name, <sample>, improper_pairs.
 _SAMPLE_NAME_COLUMN = 4
 
+DATASET = cpg_utils.config.config_retrieve(['workflow', 'dataset'])
+ACCESS_LEVEL = cpg_utils.config.get_access_level()
+PROJECT = f'{DATASET}{"" if ACCESS_LEVEL != "test" else "-" + ACCESS_LEVEL}'
 
 SEQUENCING_GROUP_QUERY: DocumentNode = gql(
     """
-query sg_query($cohort: String) {
-    cohorts(id: {eq: $cohort}) {
+query sg_query($cohort: String, $project: String) {
+    cohorts(id: {eq: $cohort}, project: {eq: $project}) {
         sequencingGroups {
             id
         }
@@ -287,12 +291,12 @@ def _resolve_sequencing_groups(cohort_or_sequencing_groups: list[str]) -> list[s
         )
 
     cohort_id = cohort_or_sequencing_groups[0]
-    cohorts = query(SEQUENCING_GROUP_QUERY, variables={'cohort': cohort_id})['cohorts']
+    cohorts = query(SEQUENCING_GROUP_QUERY, variables={'cohort': cohort_id, 'project': PROJECT})['cohorts']
     if not cohorts:
         raise ValueError(f'Cohort {cohort_id} was not found in metamist.')
     sequencing_groups = [sg['id'] for sg in cohorts[0]['sequencingGroups']]
     if not sequencing_groups:
-        raise ValueError(f'Cohort {cohort_id} resolved to no sequencing groups.')
+        raise ValueError(f'Cohort {cohort_id} resolved to no sequencing groups. Is the cohort in the supplied project?')
     return sequencing_groups
 
 
