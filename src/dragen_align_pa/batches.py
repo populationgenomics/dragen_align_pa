@@ -24,12 +24,46 @@ ALLOWED_ERROR_STRATEGIES = frozenset({'auto', 'continue', 'terminate'})
 # the persistence layer collapses both to `'FAILED'`.
 ALLOWED_BATCH_STATUSES = frozenset({'PENDING', 'INPROGRESS', 'SUCCEEDED', 'FAILED', 'CANCELLED'})
 
+# Per-sample passfail status vocabulary. DRAGEN's `passfail.json` writes
+# `"Success"` / `"Failed"`, but every downstream consumer (`failed_sg_names`,
+# `successful_sg_names`, `_build_retry_batches`) compares against the canonical
+# `"Success"` / `"Fail"`. Normalising at the `record_passfail` choke point maps
+# DRAGEN's vocabulary onto the canonical form so those comparisons keep working,
+# and — crucially — validating here makes an unrecognised status RAISE rather
+# than silently record a value that matches neither `== 'Fail'` nor
+# `== 'Success'`. That silent-passthrough is exactly what let a `"Failed"`
+# sample slip past both the retry path and the 5% threshold, completing the
+# stage as if all samples had succeeded.
+CANONICAL_PASSFAIL_SUCCESS = 'Success'
+CANONICAL_PASSFAIL_FAIL = 'Fail'
+_PASSFAIL_STATUS_NORMALISATION = {
+    'Success': CANONICAL_PASSFAIL_SUCCESS,
+    'Fail': CANONICAL_PASSFAIL_FAIL,
+    'Failed': CANONICAL_PASSFAIL_FAIL,
+}
+
 
 def validate_error_strategy(value: str, *, context: str) -> None:
     if value not in ALLOWED_ERROR_STRATEGIES:
         raise ValueError(
             f'{context}: error_strategy must be one of {sorted(ALLOWED_ERROR_STRATEGIES)}, got {value!r}.',
         )
+
+
+def normalise_passfail_status(value: str, *, context: str) -> str:
+    """Map a raw passfail status onto the canonical `"Success"` / `"Fail"`.
+
+    Raises `ValueError` on any status outside the recognised input set, so a
+    future DRAGEN wording change fails loudly at the ingestion boundary instead
+    of silently dropping a sample.
+    """
+    try:
+        return _PASSFAIL_STATUS_NORMALISATION[value]
+    except KeyError:
+        raise ValueError(
+            f'{context}: passfail status must be one of '
+            f'{sorted(_PASSFAIL_STATUS_NORMALISATION)}, got {value!r}.',
+        ) from None
 
 
 @dataclass
@@ -288,7 +322,10 @@ class BatchesFile:
         self.batches[batch_index]['status'] = status
 
     def record_passfail(self, batch_index: int, passfail: dict[str, str]) -> None:
-        self.batches[batch_index]['passfail'] = dict(passfail)
+        self.batches[batch_index]['passfail'] = {
+            sg: normalise_passfail_status(status, context=f'record_passfail(batch_index={batch_index}, sg={sg!r})')
+            for sg, status in passfail.items()
+        }
         self.batches[batch_index]['passfail_seen'] = True
 
     def record_analysis_output_folder_fid(self, batch_index: int, fid: str) -> None:

@@ -112,6 +112,38 @@ def test_batches_file_record_passfail(tmp_path: Path):
     assert loaded.batches[0]['passfail_seen'] is True
 
 
+def test_record_passfail_normalises_dragen_failed_status(tmp_path: Path):
+    """DRAGEN writes `"Failed"`; record_passfail normalises it to canonical `"Fail"`
+    so `failed_sg_names` (and the retry path) pick the sample up."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(
+        batch_size=5,
+        batches=[
+            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
+        ],
+    )
+    bf.record_passfail(batch_index=0, passfail={'CPG_A': 'Success', 'CPG_B': 'Failed'})
+    assert bf.batches[0]['passfail'] == {'CPG_A': 'Success', 'CPG_B': 'Fail'}
+    assert bf.failed_sg_names() == ['CPG_B']
+    assert bf.successful_sg_names() == ['CPG_A']
+
+
+def test_record_passfail_raises_on_unknown_status(tmp_path: Path):
+    """An unrecognised status raises loudly rather than silently recording a value
+    that matches neither `== 'Fail'` nor `== 'Success'`."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(
+        batch_size=5,
+        batches=[
+            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
+        ],
+    )
+    with pytest.raises(ValueError, match=r'passfail status must be one of'):
+        bf.record_passfail(batch_index=0, passfail={'CPG_A': 'Success', 'CPG_B': 'PASS'})
+
+
 def test_batches_file_record_cram_fids(tmp_path: Path):
     path = tmp_path / 'COH0001_batches.json'
     bf = BatchesFile(path=path)

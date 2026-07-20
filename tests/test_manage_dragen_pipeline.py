@@ -76,6 +76,36 @@ def test_retry_batches_from_passfail_failure(tmp_path: Path):
     assert bf.batches[1]['has_been_retried'] is True
 
 
+def test_retry_batches_from_dragen_failed_status(tmp_path: Path):
+    """Regression: DRAGEN's passfail.json writes `"Failed"`, not `"Fail"`.
+
+    A batch of 5 where one sample fails records e.g. `{"CPG_A": "Success", ...,
+    "CPG_B": "Failed"}`. Before normalisation at `record_passfail`, the raw
+    `"Failed"` matched neither `== 'Fail'` (retry / threshold) nor
+    `== 'Success'`, so the failed sample was silently dropped — never retried,
+    never counted against the 5% threshold. `record_passfail` now normalises
+    `"Failed"` to the canonical `"Fail"`, so the sample enters the retry path.
+    """
+    bf = _make_file(
+        tmp_path,
+        [IcaBatch('COH0001', 0, ['CPG_A', 'CPG_B', 'CPG_C', 'CPG_D', 'CPG_E'])],
+    )
+    bf.record_passfail(
+        0,
+        {
+            'CPG_A': 'Success',
+            'CPG_B': 'Failed',
+            'CPG_C': 'Success',
+            'CPG_D': 'Success',
+            'CPG_E': 'Success',
+        },
+    )
+    new = _build_retry_batches(cohort_name='COH0001', batches_file=bf, batch_size=5)
+    assert len(new) == 1
+    assert new[0].sg_names == ['CPG_B']
+    assert bf.failed_sg_names() == ['CPG_B']
+
+
 def test_retry_batches_single_sample_uses_continue_strategy(tmp_path: Path):
     bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, ['SYN_A', 'SYN_B'])])
     bf.record_passfail(0, {'SYN_A': 'Success', 'SYN_B': 'Fail'})
