@@ -399,17 +399,21 @@ def build_panel(
 def _print_registration_snippet(panel_name: str, file_ids: dict[str, str]) -> None:
     """Print the panel's ICA_PON_FILE_IDS entry as a ready-to-paste JSON block.
 
-    The normals-list file is emitted under the reserved ``pon_list_file`` key; the
-    per-SG count files keep their basenames as keys. See ``ICA_PON_FILE_IDS`` in
-    ``dragen_align_pa.constants`` for the consumed structure.
+    The normals-list file is emitted under the ``pon_list_file`` key; the per-SG
+    count files are emitted as a plain list of IDs under ``count_file_ids``. Their
+    basenames are intentionally dropped — they embed CPG sample IDs (blocked by
+    the CPG-ID pre-commit hook) and are never consumed. See ``ICA_PON_FILE_IDS``
+    in ``dragen_align_pa.constants`` for the consumed structure.
 
     Args:
         panel_name: Panel label, also the JSON block's top-level key.
         file_ids: Map of artifact basename to ICA file ID (as built by build_panel).
     """
     list_basename = f'{panel_name}.normals.txt'
-    entry = {'pon_list_file': file_ids[list_basename]}
-    entry.update({name: file_id for name, file_id in file_ids.items() if name != list_basename})
+    entry = {
+        'pon_list_file': file_ids[list_basename],
+        'count_file_ids': [file_id for name, file_id in file_ids.items() if name != list_basename],
+    }
     logger.info(
         f'Panel "{panel_name}" built ({len(file_ids)} entries). Merge this block into '
         f'ICA_PON_FILE_IDS in dragen_align_pa.constants:',

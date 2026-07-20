@@ -107,17 +107,20 @@ ICA_FILE_IDS: Final[dict[str, str]] = {
 }
 
 
-# CNV Panels of Normals (WES only), keyed by panel name. Each panel maps:
-#   - the reserved key 'pon_list_file' -> the `fil.…` ID of the `<panel>.normals.txt`
-#     list file (DRAGEN reads that list, by basename, via --cnv-normals-list),
-#   - each per-SG renamed count file's ICA basename -> its `fil.…` ID.
-# Every value is a file ID; the submitter sends them all as `additional_files` data
-# inputs (ICA localises them into cwd), and derives the --cnv-normals-list basename
-# as `<panel>.normals.txt`. Built and printed by
-# scripts/build_cnv_panel_of_normals.py; a run selects a panel by name via
-# [presets.exome].cnv_normals_panel, so the operator never lists file IDs by hand.
-# Resolve via constants_registry.resolve_cnv_normals_panel.
-ICA_PON_FILE_IDS: Final[dict[str, dict[str, str]]] = {}
+# CNV Panels of Normals (WES only), keyed by panel name. Each panel holds:
+#   - 'pon_list_file'  -> the `fil.…` ID of the `<panel>.normals.txt` list file
+#     (DRAGEN reads that list, by basename, via --cnv-normals-list),
+#   - 'count_file_ids' -> the list of `fil.…` IDs for the per-SG count files.
+# We store only file IDs — never the count-file basenames. Those basenames embed
+# CPG sample IDs (blocked by the CPG-ID pre-commit hook) and serve no purpose
+# here: ICA localises each file by its own registered name, and DRAGEN reads the
+# actual filenames from the `.normals.txt` list at runtime. The submitter sends
+# every ID (list + counts) as `additional_files` data inputs and derives the
+# --cnv-normals-list basename as `<panel>.normals.txt` from the panel name.
+# Built and printed by scripts/build_cnv_panel_of_normals.py; a run selects a
+# panel by name via [presets.exome].cnv_normals_panel, so the operator never
+# lists file IDs by hand. Resolve via constants_registry.resolve_cnv_normals_panel.
+ICA_PON_FILE_IDS: Final[dict[str, dict[str, str | list[str]]]] = {}
 
 
 # Canonical exome design names. Each exome cohort resolves to exactly one.

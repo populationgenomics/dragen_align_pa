@@ -260,9 +260,11 @@ def resolve_ica_file_id(name: str) -> str:
     return _reject_placeholder_file_id(name, file_id)
 
 
-# Reserved key in an ICA_PON_FILE_IDS panel entry holding the `fil.…` ID of the
-# `<panel>.normals.txt` list file (all other keys are per-SG count basenames).
+# Keys in an ICA_PON_FILE_IDS panel entry: the `<panel>.normals.txt` list file
+# ID, and the list of per-SG count file IDs. No basenames are stored — see the
+# ICA_PON_FILE_IDS comment in constants.py for why.
 _PON_LIST_KEY = 'pon_list_file'
+_PON_COUNT_KEY = 'count_file_ids'
 
 
 def resolve_cnv_normals_panel(panel_name: str) -> tuple[str, list[str]]:
@@ -275,14 +277,15 @@ def resolve_cnv_normals_panel(panel_name: str) -> tuple[str, list[str]]:
         A `(normals_list_basename, file_ids)` tuple: the basename DRAGEN reads via
         `--cnv-normals-list` (`<panel>.normals.txt`, derived from `panel_name`
         because the builder always names it that way), and every ICA file ID in
-        the panel (the per-SG count files plus the list file) to pass as analysis
-        data inputs.
+        the panel (the list file first, then the per-SG count files) to pass as
+        analysis data inputs.
 
     Raises:
         KeyError: If `panel_name` is not registered. The message lists the
             registered panels so a config typo surfaces at submitter startup.
-        ValueError: If the panel has no `pon_list_file` entry, or if any registered
-            file ID is still a `fil.TODO_…` placeholder.
+        ValueError: If the panel has no `pon_list_file` entry, its `count_file_ids`
+            is not a list, or any registered file ID is still a `fil.TODO_…`
+            placeholder.
     """
     try:
         panel = constants.ICA_PON_FILE_IDS[panel_name]
@@ -294,11 +297,23 @@ def resolve_cnv_normals_panel(panel_name: str) -> tuple[str, list[str]]:
             f'Registered panels: {sorted(constants.ICA_PON_FILE_IDS)}',
         ) from None
 
-    if _PON_LIST_KEY not in panel:
+    list_id = panel.get(_PON_LIST_KEY)
+    if not isinstance(list_id, str) or not list_id:
         raise ValueError(
             f'CNV panel {panel_name!r} has no {_PON_LIST_KEY!r} entry naming its normals-list '
             f'file ID. Rebuild it with scripts/build_cnv_panel_of_normals.py.',
         )
 
-    file_ids = [_reject_placeholder_file_id(name, file_id) for name, file_id in panel.items()]
+    count_ids = panel.get(_PON_COUNT_KEY, [])
+    if not isinstance(count_ids, list):
+        raise ValueError(
+            f'CNV panel {panel_name!r} {_PON_COUNT_KEY!r} must be a list of ICA file IDs, '
+            f'got {type(count_ids).__name__}. Rebuild it with scripts/build_cnv_panel_of_normals.py.',
+        )
+
+    file_ids = [_reject_placeholder_file_id(_PON_LIST_KEY, list_id)]
+    file_ids.extend(
+        _reject_placeholder_file_id(f'{panel_name} count file #{index}', file_id)
+        for index, file_id in enumerate(count_ids)
+    )
     return f'{panel_name}.normals.txt', file_ids
