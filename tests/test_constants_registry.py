@@ -143,3 +143,51 @@ def test_config_reading_entry_points_use_configured_family():
     assert constants_registry.ica_api_key_field() == 'apiKey'
     assert constants_registry.ica_mlr_config_file_id() == 'fil.a1007afeae3741bb815108dedba2c6eb'
     assert constants_registry.ica_can_delete_fastq() is True
+
+
+def test_resolve_cnv_normals_panel_returns_list_basename_and_all_ids(monkeypatch):
+    """A registered panel resolves to its derived list basename plus every file ID."""
+    monkeypatch.setattr(
+        'dragen_align_pa.constants.ICA_PON_FILE_IDS',
+        {
+            'panel-a': {
+                'pon_list_file': 'fil.list',
+                'sgA_pon.target.counts.gc-corrected.gz': 'fil.count1',
+                'sgB_pon.target.counts.gc-corrected.gz': 'fil.count2',
+            },
+        },
+    )
+    list_basename, file_ids = constants_registry.resolve_cnv_normals_panel('panel-a')
+    assert list_basename == 'panel-a.normals.txt'
+    assert set(file_ids) == {'fil.count1', 'fil.count2', 'fil.list'}
+
+
+def test_resolve_cnv_normals_panel_raises_on_unknown_panel():
+    """Unknown panel name → clear error naming the unknown panel."""
+    with pytest.raises(KeyError, match=r'not-a-real-panel'):
+        constants_registry.resolve_cnv_normals_panel('not-a-real-panel')
+
+
+def test_resolve_cnv_normals_panel_raises_without_pon_list_file(monkeypatch):
+    """A panel missing its pon_list_file entry can't be run against, so fail loud."""
+    monkeypatch.setattr(
+        'dragen_align_pa.constants.ICA_PON_FILE_IDS',
+        {'panel-b': {'sgA_pon.target.counts.gc-corrected.gz': 'fil.count1'}},
+    )
+    with pytest.raises(ValueError, match=r'pon_list_file'):
+        constants_registry.resolve_cnv_normals_panel('panel-b')
+
+
+def test_resolve_cnv_normals_panel_rejects_placeholder_id(monkeypatch):
+    """A not-yet-uploaded file (fil.TODO_ placeholder) in the panel must raise."""
+    monkeypatch.setattr(
+        'dragen_align_pa.constants.ICA_PON_FILE_IDS',
+        {
+            'panel-c': {
+                'pon_list_file': 'fil.list',
+                'sgA_pon.target.counts.gc-corrected.gz': 'fil.TODO_REPLACE_AFTER_ICA_UPLOAD',
+            },
+        },
+    )
+    with pytest.raises(ValueError, match=r'placeholder'):
+        constants_registry.resolve_cnv_normals_panel('panel-c')

@@ -570,3 +570,97 @@ def test_build_fastq_data_inputs_handles_duplicate_fastq_rows(tmp_path, monkeypa
     # Most-recent-wins: NEW IDs preserved, OLD discarded.
     assert sorted(ica_ids) == ['fil.NEW_R1', 'fil.NEW_R2']
     assert len(set(ica_ids)) == len(ica_ids), 'duplicate ICA IDs leaked into dataIds'
+
+
+def _stub_pon_registry(monkeypatch, panels: dict) -> None:
+    """Replace constants.ICA_PON_FILE_IDS for one test (resolver reads it at call time)."""
+    monkeypatch.setattr('dragen_align_pa.constants.ICA_PON_FILE_IDS', panels)
+
+
+_PANEL_X = {
+    'panel-x': {
+        'pon_list_file': 'fil.list',
+        'sgA_pon.target.counts.gc-corrected.gz': 'fil.c1',
+        'sgB_pon.target.counts.gc-corrected.gz': 'fil.c2',
+    },
+}
+
+
+def test_build_additional_args_exome_adds_cnv_normals_list(monkeypatch):
+    """A configured exome CNV panel adds --cnv-normals-list <panel>.normals.txt."""
+    _stub_pon_registry(monkeypatch, _PANEL_X)
+    preset = {
+        'cnv_segmentation_mode': 'HSLM',
+        'additional_args': '',
+        'additional_files': [],
+        'vc_target_bed_padding': 0,
+    }
+    cfg = {
+        ('workflow', 'sequencing_type'): 'exome',
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome'): preset,
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'cnv_normals_panel'): 'panel-x',
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'user'): {'additional_args': '', 'additional_files': []},
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names'): {
+            'vc_target': 'x.bed',
+            'cnv_target': 'x.bed',
+            'sv_call_regions': 'x.bed',
+        },
+    }
+    _patch_config(monkeypatch, lambda key, default=None: cfg.get(tuple(key), default))
+    assert '--cnv-normals-list panel-x.normals.txt' in submit_dragen_batch._build_additional_args()
+
+
+def test_build_additional_args_exome_without_panel_omits_cnv_normals_list(monkeypatch):
+    """An empty cnv_normals_panel adds no --cnv-normals-list flag."""
+    _stub_pon_registry(monkeypatch, _PANEL_X)
+    preset = {
+        'cnv_segmentation_mode': 'HSLM',
+        'additional_args': '',
+        'additional_files': [],
+        'vc_target_bed_padding': 0,
+    }
+    cfg = {
+        ('workflow', 'sequencing_type'): 'exome',
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome'): preset,
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'cnv_normals_panel'): '',
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'user'): {'additional_args': '', 'additional_files': []},
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names'): {
+            'vc_target': 'x.bed',
+            'cnv_target': 'x.bed',
+            'sv_call_regions': 'x.bed',
+        },
+    }
+    _patch_config(monkeypatch, lambda key, default=None: cfg.get(tuple(key), default))
+    assert '--cnv-normals-list' not in submit_dragen_batch._build_additional_args()
+
+
+def test_build_common_data_inputs_adds_cnv_panel_file_ids(monkeypatch):
+    """A configured exome panel contributes all its count + list file IDs as inputs."""
+    _stub_registry(monkeypatch, {'x.bed': 'fil.x'})
+    _stub_pon_registry(monkeypatch, _PANEL_X)
+    cfg = {
+        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
+        ('ica', 'qc', 'exome', 'coverage_region_beds'): [],
+        ('ica', 'qc', 'cross_cont_vcf'): None,
+        ('workflow', 'sequencing_type'): 'exome',
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'additional_files'): [],
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'cnv_normals_panel'): 'panel-x',
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names'): {
+            'vc_target': 'x.bed',
+            'cnv_target': 'x.bed',
+            'sv_call_regions': 'x.bed',
+        },
+    }
+    _patch_config(monkeypatch, lambda key, default=None: cfg.get(tuple(key), default))
+    inputs = submit_dragen_batch._build_common_data_inputs()
+    additional = [i for i in inputs if i['parameterCode'] == 'additional_files']
+    assert len(additional) == 1
+    assert set(additional[0]['dataIds']) == {'fil.c1', 'fil.c2', 'fil.list', 'fil.x'}
+
+
+def test_configured_cnv_normals_panel_ignored_for_genome(monkeypatch):
+    """Panels are WES-only; a genome run never reads the exome selector."""
+    cfg = {('workflow', 'sequencing_type'): 'genome'}
+    monkeypatch.setattr(submit_dragen_batch, 'config_retrieve', lambda key, default=None: cfg.get(tuple(key), default))
+    assert submit_dragen_batch._configured_cnv_normals_panel() is None

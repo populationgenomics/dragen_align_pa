@@ -113,6 +113,13 @@ vc_target_bed_padding = 0
 additional_args = "--sv-exome true --sv-call-regions-bed {sv_call_regions} --vc-target-bed {vc_target} --cnv-target-bed {cnv_target} --cnv-target-factor-threshold 5 --cnv-merge-threshold 0.4 --cnv-enable-self-normalization false"
 # Auto-populated from bed_names below; list extras here (e.g. PoN files) as basenames.
 additional_files = []
+# CNV panel-of-normals selector. Set to a panel name registered in
+# dragen_align_pa.constants.ICA_PON_FILE_IDS (built by
+# scripts/build_cnv_panel_of_normals.py) to run CNV calling against that panel:
+# the submitter passes all the panel's count files + normals list as data inputs
+# and adds --cnv-normals-list <panel>.normals.txt, so you don't list file IDs by
+# hand. Empty (default) means no panel — DRAGEN uses its configured normalization.
+cnv_normals_panel = ""
 
 # BED basenames for each DRAGEN target slot. Set these in your run's config
 # TOML using names registered in dragen_align_pa.constants.ICA_FILE_IDS.

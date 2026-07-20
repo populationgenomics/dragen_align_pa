@@ -258,3 +258,47 @@ def resolve_ica_file_id(name: str) -> str:
             f'Registered names: {sorted(constants.ICA_FILE_IDS)}',
         ) from None
     return _reject_placeholder_file_id(name, file_id)
+
+
+# Reserved key in an ICA_PON_FILE_IDS panel entry holding the `fil.…` ID of the
+# `<panel>.normals.txt` list file (all other keys are per-SG count basenames).
+_PON_LIST_KEY = 'pon_list_file'
+
+
+def resolve_cnv_normals_panel(panel_name: str) -> tuple[str, list[str]]:
+    """Resolve a registered CNV panel-of-normals to its list basename and file IDs.
+
+    Args:
+        panel_name: The panel key registered in `ICA_PON_FILE_IDS`.
+
+    Returns:
+        A `(normals_list_basename, file_ids)` tuple: the basename DRAGEN reads via
+        `--cnv-normals-list` (`<panel>.normals.txt`, derived from `panel_name`
+        because the builder always names it that way), and every ICA file ID in
+        the panel (the per-SG count files plus the list file) to pass as analysis
+        data inputs.
+
+    Raises:
+        KeyError: If `panel_name` is not registered. The message lists the
+            registered panels so a config typo surfaces at submitter startup.
+        ValueError: If the panel has no `pon_list_file` entry, or if any registered
+            file ID is still a `fil.TODO_…` placeholder.
+    """
+    try:
+        panel = constants.ICA_PON_FILE_IDS[panel_name]
+    except KeyError:
+        raise KeyError(
+            f'{panel_name!r} is not a registered CNV panel of normals. '
+            f'Add it to ICA_PON_FILE_IDS in dragen_align_pa.constants (via '
+            f'scripts/build_cnv_panel_of_normals.py), or check for typos. '
+            f'Registered panels: {sorted(constants.ICA_PON_FILE_IDS)}',
+        ) from None
+
+    if _PON_LIST_KEY not in panel:
+        raise ValueError(
+            f'CNV panel {panel_name!r} has no {_PON_LIST_KEY!r} entry naming its normals-list '
+            f'file ID. Rebuild it with scripts/build_cnv_panel_of_normals.py.',
+        )
+
+    file_ids = [_reject_placeholder_file_id(name, file_id) for name, file_id in panel.items()]
+    return f'{panel_name}.normals.txt', file_ids
