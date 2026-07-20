@@ -107,6 +107,19 @@ ICA_FILE_IDS: Final[dict[str, str]] = {
 }
 
 
+# CNV Panels of Normals (WES only), keyed by panel name. Each panel maps:
+#   - the reserved key 'pon_list_file' -> the `fil.…` ID of the `<panel>.normals.txt`
+#     list file (DRAGEN reads that list, by basename, via --cnv-normals-list),
+#   - each per-SG renamed count file's ICA basename -> its `fil.…` ID.
+# Every value is a file ID; the submitter sends them all as `additional_files` data
+# inputs (ICA localises them into cwd), and derives the --cnv-normals-list basename
+# as `<panel>.normals.txt`. Built and printed by
+# scripts/build_cnv_panel_of_normals.py; a run selects a panel by name via
+# [presets.exome].cnv_normals_panel, so the operator never lists file IDs by hand.
+# Resolve via constants_registry.resolve_cnv_normals_panel.
+ICA_PON_FILE_IDS: Final[dict[str, dict[str, str]]] = {}
+
+
 # Canonical exome design names. Each exome cohort resolves to exactly one.
 CANONICAL_DESIGN_CREV2: Final = 'CREv2'
 CANONICAL_DESIGN_TWIST: Final = 'TWIST'

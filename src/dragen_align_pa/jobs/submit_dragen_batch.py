@@ -23,7 +23,7 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.batches import IcaBatch, validate_error_strategy
-from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN, resolve_ica_file_id
+from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN, resolve_cnv_normals_panel, resolve_ica_file_id
 from dragen_align_pa.utils import get_bed_names_for_seqtype
 
 # DRAGEN flags that don't depend on input type (CRAM vs FASTQ) or sequencing type (WGS vs WES).
@@ -50,6 +50,21 @@ _COMMON_ADDITIONAL_ARGS = (
 _PRESET_PLACEHOLDER_RE = re.compile(r'<[a-zA-Z][a-zA-Z0-9_-]*>')
 
 _MAX_COVERAGE_REGION_BEDS = 3
+
+
+def _configured_cnv_normals_panel() -> str | None:
+    """Return the configured CNV panel-of-normals name, or None if unset / not exome.
+
+    Panels of normals are WES-only (genome self-normalises), so the selector at
+    [presets.exome].cnv_normals_panel is only read for an exome run.
+    """
+    if config_retrieve(['workflow', 'sequencing_type']) != 'exome':
+        return None
+    panel = config_retrieve(
+        ['dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'cnv_normals_panel'],
+        default='',
+    )
+    return panel or None
 
 
 def _build_additional_args() -> str:
@@ -128,11 +143,21 @@ def _build_additional_args() -> str:
     )
     cyp2d6_arg = f'--enable-cyp2d6 {"true" if enable_cyp2d6 else "false"}'
 
+    # Point DRAGEN at a configured CNV panel of normals (WES only). The count files
+    # and this list are supplied as data inputs by _build_common_data_inputs, and
+    # DRAGEN references the list by basename once ICA localises inputs into cwd.
+    pon_panel = _configured_cnv_normals_panel()
+    pon_arg = ''
+    if pon_panel:
+        list_basename, _ = resolve_cnv_normals_panel(pon_panel)
+        pon_arg = f'--cnv-normals-list {list_basename}'
+
     parts = [
         _COMMON_ADDITIONAL_ARGS.strip(),
         f'--cnv-segmentation-mode {preset["cnv_segmentation_mode"]}',
         cyp2d6_arg,
         vc_padding_arg,
+        pon_arg,
         preset_args,
         user_args,
     ]
@@ -431,6 +456,18 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
         default=[],
     )
     additional_file_ids.extend(raw_file_ids)
+
+    # A configured CNV panel of normals (WES only) contributes all its ICA file IDs
+    # (per-SG count files + the normals list) as data inputs, so the operator selects
+    # the panel by name instead of pasting every fil.… ID into additional_file_ids.
+    pon_panel = _configured_cnv_normals_panel()
+    if pon_panel:
+        _, pon_file_ids = resolve_cnv_normals_panel(pon_panel)
+        additional_file_ids.extend(pon_file_ids)
+
+    # De-duplicate while preserving order: a PON file could also be named in a
+    # manually-listed additional_file_ids, and there's no value in sending it twice.
+    additional_file_ids = list(dict.fromkeys(additional_file_ids))
 
     inputs: list[AnalysisDataInput] = [AnalysisDataInput(parameterCode='ref_tar', dataIds=[dragen_ht_id])]
     if coverage_region_bed_ids:
