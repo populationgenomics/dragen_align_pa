@@ -19,8 +19,11 @@ So this script's whole job is data management, in five steps, per panel:
                   data persists run-to-run. Each upload yields a `fil.…` ID.
     4. LIST     — write `<panel>.normals.txt`, one renamed BASENAME per line
                   (see note below), and upload it to ICA too (its own file ID).
-    5. REGISTER — print a ready-to-paste JSON block of basename -> `fil.…` ID
-                  for the run config (user.additional_file_ids) / `ICA_FILE_IDS`.
+    5. REGISTER — print a ready-to-paste JSON block, `{<panel-name>: {pon_list_file
+                  -> list `fil.…` ID, basename -> count `fil.…` ID, …}}`, to merge
+                  into `ICA_PON_FILE_IDS` in `dragen_align_pa.constants`. A run then
+                  selects the panel by name (`[presets.exome].cnv_normals_panel`)
+                  instead of listing IDs.
 
 WHY THE RENAME (`--rename-suffix`, default `_pon`):
     DRAGEN aborts CNV calling if a case sample is detected as a member of its
@@ -48,7 +51,15 @@ Example (bioheart WGS wiring panel from 4 of the 5 COH2308 SGs; 5th is the case)
 
     python scripts/build_cnv_panel_of_normals.py \\
         --panel-name bioheart-wgs-wiring-20260611 \\
-        --sequencing-groups CPGAAAAAA CPGBBBBBB CPGCCCCCC CPGDDDDDD  \\
+        --cohort-or-sequencing-groups CPGAAAAAA CPGBBBBBB CPGCCCCCC CPGDDDDDD  \\
+        --ica-reference-folder /references/exo_CNV_panels_normals/bioheart-wgs-wiring-20260611 \\
+        --provenance-prefix gs://cpg-bioheart-test/ica/dragen_3_7_8/pon_provenance
+
+    OR
+
+    python scripts/build_cnv_panel_of_normals.py \\
+        --panel-name bioheart-wgs-wiring-20260611 \\
+        --cohort-or-sequencing-groups COHXXXXX  \\
         --ica-reference-folder /references/exo_CNV_panels_normals/bioheart-wgs-wiring-20260611 \\
         --provenance-prefix gs://cpg-bioheart-test/ica/dragen_3_7_8/pon_provenance
 """
@@ -57,10 +68,15 @@ import argparse
 import gzip
 import json
 import os
+import re
 import tempfile
 
+import cpg_utils
+import cpg_utils.config
+from graphql import DocumentNode
 from icasdk.apis.tags import project_data_api  # noqa: TC002  (used only in annotations; keep as a runtime import)
 from loguru import logger
+from metamist.graphql import gql, query
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils, utils
 from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
@@ -76,6 +92,22 @@ DEFAULT_COUNTS_SUFFIX = '.target.counts.gc-corrected.gz'
 # 0-based index of the sample-name column in a counts-file header line:
 # contig, start, stop, name, <sample>, improper_pairs.
 _SAMPLE_NAME_COLUMN = 4
+
+DATASET = cpg_utils.config.config_retrieve(['workflow', 'dataset'])
+ACCESS_LEVEL = cpg_utils.config.get_access_level()
+PROJECT = f'{DATASET}{"" if ACCESS_LEVEL != "test" else "-" + ACCESS_LEVEL}'
+
+SEQUENCING_GROUP_QUERY: DocumentNode = gql(
+    """
+query sg_query($cohort: String, $project: String) {
+    cohorts(id: {eq: $cohort}, project: {eq: $project}) {
+        sequencingGroups {
+            id
+        }
+    }
+}
+""",
+)
 
 
 def _counts_basename(sg: str, counts_suffix: str) -> str:
@@ -109,6 +141,12 @@ def _preserve_to_provenance(gcs_counts_path: str, provenance_prefix: str, panel_
         subprocess.CalledProcessError: If the gcloud copy fails.
     """
     dest = f'{provenance_prefix.rstrip("/")}/{panel_name}/{basename}'
+    # Never overwrite an existing snapshot. The provenance copy exists so a later DRAGEN
+    # re-run of this SG can't replace the counts the panel was built from; re-running this
+    # script must not itself clobber that snapshot with (possibly newer) source data.
+    if cpg_utils.to_path(dest).exists():
+        logger.info(f'Provenance snapshot {dest} already exists; leaving it untouched.')
+        return dest
     utils.run_subprocess_with_log(
         ['gcloud', 'storage', 'cp', gcs_counts_path, dest],
         f'Preserve {basename} to provenance',
@@ -137,7 +175,9 @@ def _rewrite_counts_identity(local_in: str, local_out: str, sg: str, rename_suff
     with gzip.open(local_in, 'rt') as fin, gzip.open(local_out, 'wt') as fout:
         for line in fin:
             if line.startswith('#'):
-                out_line = line.replace(sg, pon)
+                # Whole-token replace only: a bare str.replace would also rewrite an SG
+                # id that happens to be a prefix of a longer id sharing the same digits.
+                out_line = re.sub(rf'\b{re.escape(sg)}\b', pon, line)
             elif not header_seen:
                 fields = line.rstrip('\n').split('\t')
                 if len(fields) > _SAMPLE_NAME_COLUMN:
@@ -231,9 +271,38 @@ def _require_file_id(
     return data['id']
 
 
+def _resolve_sequencing_groups(cohort_or_sequencing_groups: list[str]) -> list[str]:
+    """Resolve the CLI argument into a concrete list of sequencing-group IDs.
+
+    A single ``COH``-prefixed argument is treated as a cohort and expanded to its
+    member SGs via metamist; anything else is taken as a literal list of SG IDs.
+
+    Raises:
+        ValueError: If a cohort ID is mixed with other tokens, if the cohort is not
+            found in metamist, or if it resolves to no sequencing groups.
+    """
+    if not any(arg.startswith('COH') for arg in cohort_or_sequencing_groups):
+        return cohort_or_sequencing_groups
+
+    if len(cohort_or_sequencing_groups) != 1:
+        raise ValueError(
+            'A cohort ID must be passed on its own, not mixed with sequencing-group IDs; '
+            f'got {cohort_or_sequencing_groups}.',
+        )
+
+    cohort_id = cohort_or_sequencing_groups[0]
+    cohorts = query(SEQUENCING_GROUP_QUERY, variables={'cohort': cohort_id, 'project': PROJECT})['cohorts']
+    if not cohorts:
+        raise ValueError(f'Cohort {cohort_id} was not found in metamist.')
+    sequencing_groups = [sg['id'] for sg in cohorts[0]['sequencingGroups']]
+    if not sequencing_groups:
+        raise ValueError(f'Cohort {cohort_id} resolved to no sequencing groups. Is the cohort in the supplied project?')
+    return sequencing_groups
+
+
 def build_panel(
     panel_name: str,
-    sequencing_groups: list[str],
+    cohort_or_sequencing_groups: list[str],
     ica_reference_folder: str,
     provenance_prefix: str | None,
     counts_suffix: str,
@@ -247,8 +316,9 @@ def build_panel(
     Args:
         panel_name: Panel label; names the ``.normals.txt`` list and the
             provenance subfolder.
-        sequencing_groups: Sequencing group IDs whose gc-corrected target
-            counts form the panel.
+        cohort_or_sequencing_groups: Either a single ``COH`` cohort ID (expanded
+            to its member SGs via metamist) or a literal list of SG IDs whose
+            gc-corrected target counts form the panel.
         ica_reference_folder: Destination ICA folder for the uploaded counts
             and list file.
         provenance_prefix: GCS prefix to snapshot counts into before upload;
@@ -277,6 +347,7 @@ def build_panel(
     # The icav2 CLI (used for uploads) needs to be authenticated once up front.
     ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_ALIGN)
 
+    sequencing_groups = _resolve_sequencing_groups(cohort_or_sequencing_groups)
     with (
         ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_params),
         tempfile.TemporaryDirectory() as ica_local_dir,
@@ -302,33 +373,49 @@ def build_panel(
             )
 
         list_basename = f'{panel_name}.normals.txt'
-        list_local = os.path.join(ica_local_dir, list_basename)
-        with open(list_local, 'w') as fh:
-            for sg in sequencing_groups:
-                fh.write(_pon_basename(sg, counts_suffix, rename_suffix) + '\n')
-        logger.info(f'[{panel_name}] wrote {list_basename} with {len(sequencing_groups)} entries.')
-        ica_cli_utils.upload_local_file(list_local, ica_folder_path)
-        ica_utils.wait_for_file_available(
-            api_instance, path_params, file_name=list_basename, folder_path=ica_folder_path
+        existing_list = ica_api_utils.get_file_details_from_ica(
+            api_instance, path_params, ica_folder_path, list_basename
         )
-        file_ids[list_basename] = _require_file_id(api_instance, path_params, ica_folder_path, list_basename)
+        if existing_list and existing_list['details']['status'] == 'AVAILABLE':
+            # Mirror the per-counts idempotency skip: re-uploading would leave a second
+            # same-named list file in ICA and make the registered file ID ambiguous.
+            logger.info(f'{list_basename} already AVAILABLE in ICA reference folder; reusing {existing_list["id"]}.')
+            file_ids[list_basename] = existing_list['id']
+        else:
+            list_local = os.path.join(ica_local_dir, list_basename)
+            with open(list_local, 'w') as fh:
+                for sg in sequencing_groups:
+                    fh.write(_pon_basename(sg, counts_suffix, rename_suffix) + '\n')
+            logger.info(f'[{panel_name}] wrote {list_basename} with {len(sequencing_groups)} entries.')
+            ica_cli_utils.upload_local_file(list_local, ica_folder_path)
+            ica_utils.wait_for_file_available(
+                api_instance, path_params, file_name=list_basename, folder_path=ica_folder_path
+            )
+            file_ids[list_basename] = _require_file_id(api_instance, path_params, ica_folder_path, list_basename)
 
     return file_ids
 
 
 def _print_registration_snippet(panel_name: str, file_ids: dict[str, str]) -> None:
-    """Print the panel's basename->file-ID map as a JSON block for ICA_FILE_IDS.
+    """Print the panel's ICA_PON_FILE_IDS entry as a ready-to-paste JSON block.
+
+    The normals-list file is emitted under the reserved ``pon_list_file`` key; the
+    per-SG count files keep their basenames as keys. See ``ICA_PON_FILE_IDS`` in
+    ``dragen_align_pa.constants`` for the consumed structure.
 
     Args:
-        panel_name: Panel label, shown in the printed header.
-        file_ids: Map of artifact basename to ICA file ID.
+        panel_name: Panel label, also the JSON block's top-level key.
+        file_ids: Map of artifact basename to ICA file ID (as built by build_panel).
     """
+    list_basename = f'{panel_name}.normals.txt'
+    entry = {'pon_list_file': file_ids[list_basename]}
+    entry.update({name: file_id for name, file_id in file_ids.items() if name != list_basename})
     logger.info(
         f'Panel "{panel_name}" built ({len(file_ids)} entries). Merge this block into '
-        f'ICA_FILE_IDS in dragen_align_pa.constants:',
+        f'ICA_PON_FILE_IDS in dragen_align_pa.constants:',
     )
     print(f'\n# --- CNV PON: {panel_name} ---')
-    print(json.dumps(file_ids, indent=4))
+    print(json.dumps({panel_name: entry}, indent=4))
 
 
 def main() -> None:
@@ -336,10 +423,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description='Build a DRAGEN CNV Panel of Normals from existing target counts.')
     parser.add_argument('--panel-name', required=True, help='Panel label, used for the list filename and folder.')
     parser.add_argument(
-        '--sequencing-groups',
+        '--cohort-or-sequencing-groups',
         required=True,
         nargs='+',
-        help='CPG sequencing-group IDs to include as normals.',
+        help='Cohort ID or space separated list of CPG sequencing-group IDs to include as normals.',
     )
     parser.add_argument(
         '--ica-reference-folder',
@@ -367,7 +454,7 @@ def main() -> None:
 
     file_ids = build_panel(
         panel_name=args.panel_name,
-        sequencing_groups=args.sequencing_groups,
+        cohort_or_sequencing_groups=args.cohort_or_sequencing_groups,
         ica_reference_folder=args.ica_reference_folder,
         provenance_prefix=args.provenance_prefix,
         counts_suffix=args.counts_suffix,
