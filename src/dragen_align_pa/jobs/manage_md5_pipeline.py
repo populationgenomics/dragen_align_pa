@@ -45,14 +45,15 @@ def _get_fastq_ica_id_list(
             ica_fastq_info[file_id] = file_name
 
     if len(ica_fastq_info) != len(fastq_filenames):
-        logger.error(
+        found_filenames: set[str] = set(ica_fastq_info.values())
+        missing_filenames: list[str] = [name for name in fastq_filenames if name not in found_filenames]
+        message: str = (
             f'Mismatch: Found {len(ica_fastq_info)} file IDs in ICA, '
-            f'but {len(fastq_filenames)} were expected from manifest.',
+            f'but {len(fastq_filenames)} were expected from manifest. '
+            f'{len(missing_filenames)} file(s) missing in ICA: {missing_filenames}'
         )
-        raise ValueError(
-            f'Mismatch: Found {len(ica_fastq_info)} file IDs in ICA, '
-            f'but {len(fastq_filenames)} were expected from manifest.'
-        )
+        logger.error(message)
+        raise ValueError(message)
 
     logger.info(f'Found {len(ica_fastq_info)} total FASTQ file IDs.')
     return ica_fastq_info
