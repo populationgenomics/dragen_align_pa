@@ -335,6 +335,11 @@ class BatchesFile:
         }
         self.batches[batch_index]['passfail_seen'] = True
 
+    def clear_passfail(self, batch_index: int) -> None:
+        """Reset a batch's passfail result to unset (`passfail=None`, `passfail_seen=False`)."""
+        self.batches[batch_index]['passfail'] = None
+        self.batches[batch_index]['passfail_seen'] = False
+
     def record_analysis_output_folder_fid(self, batch_index: int, fid: str) -> None:
         self.batches[batch_index]['analysis_output_folder_fid'] = fid
 

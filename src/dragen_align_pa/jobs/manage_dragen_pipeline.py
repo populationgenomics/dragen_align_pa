@@ -406,8 +406,9 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
 
     For every batch that reached ICA (has a `pipeline_id`), query the live analysis
     status and — for a SUCCEEDED analysis — its `passfail.json`, then rewrite the
-    batches file to match. A batch whose analysis is gone (404) is marked FAILED;
-    an INPROGRESS analysis is set INPROGRESS for the normal resume to monitor.
+    batches file to match. A batch whose analysis is gone (404) is marked FAILED
+    with its stale passfail cleared (so every SG resubmits); an INPROGRESS analysis
+    is set INPROGRESS for the normal resume to monitor.
     Batches with no `pipeline_id` are skipped. Writes the batches file.
 
     Args:
@@ -435,6 +436,11 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
                 f'marking {BATCH_STATUS_FAILED} to resubmit fresh.',
             )
             batches_file.record_status(batch.batch_index, BATCH_STATUS_FAILED)
+            # Its outputs are gone, so any recorded passfail is stale. Clear it so
+            # the batch is a whole-batch failure again and EVERY SG resubmits;
+            # otherwise the Success SGs stay in `successful_sg_names()` and are
+            # harvested (skipped) despite their analysis output no longer existing.
+            batches_file.clear_passfail(batch.batch_index)
             counts['gone'] += 1
             continue
 

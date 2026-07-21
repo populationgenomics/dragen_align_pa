@@ -454,6 +454,28 @@ def test_reconcile_marks_failed_when_ica_analysis_gone(tmp_path: Path, monkeypat
     assert bf.batches[0]['status'] == 'FAILED'
 
 
+def test_reconcile_gone_batch_clears_passfail_so_all_sgs_resubmit(tmp_path: Path, monkeypatch):
+    """A gone (404) analysis that previously recorded a passfail must clear it: its
+    outputs no longer exist, so every SG — including ones marked Success — resubmits
+    fresh rather than being harvested from a stale outcome."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A', 'SYN_B'], status='SUCCEEDED')
+    bf.record_passfail(0, {'SYN_A': 'Success', 'SYN_B': 'Fail'})
+
+    def _raise_not_found(**_kwargs):
+        raise icasdk.ApiException(status=404)
+
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        _raise_not_found,
+    )
+    _reconcile_batches_with_ica('COH0001', bf)
+    assert bf.batches[0]['status'] == 'FAILED'
+    assert bf.batches[0]['passfail'] is None
+    assert bf.successful_sg_names() == []  # SYN_A no longer harvested from a gone analysis
+    forced = _build_retry_batches('COH0001', bf, 5, force=True)
+    assert sorted(sg for b in forced for sg in b.sg_names) == ['SYN_A', 'SYN_B']
+
+
 def test_reconcile_reraises_non_404_ica_error(tmp_path: Path, monkeypatch):
     """A transient/unexpected ICA error must not be swallowed as 'gone'."""
     bf = _submitted_batch_file(tmp_path, ['SYN_A'], status='INPROGRESS')
