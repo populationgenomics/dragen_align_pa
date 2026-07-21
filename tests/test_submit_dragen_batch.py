@@ -580,8 +580,7 @@ def _stub_pon_registry(monkeypatch, panels: dict) -> None:
 _PANEL_X = {
     'panel-x': {
         'pon_list_file': 'fil.list',
-        'sgA_pon.target.counts.gc-corrected.gz': 'fil.c1',
-        'sgB_pon.target.counts.gc-corrected.gz': 'fil.c2',
+        'count_file_ids': ['fil.c1', 'fil.c2'],
     },
 }
 

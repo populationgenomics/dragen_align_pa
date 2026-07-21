@@ -16,13 +16,44 @@ SCHEMA_VERSION = 1
 # opaque message; we validate locally so misuse fails fast with a clear error.
 ALLOWED_ERROR_STRATEGIES = frozenset({'auto', 'continue', 'terminate'})
 
-# Per-batch status values written into batches.json. Downstream consumers
-# (`failed_sg_names`, `cancelled_sg_names`, `successful_sg_names`) compare
-# against these literals — a typo here silently produces a batch that is
-# neither successful nor failed nor cancelled. The orchestrator's in-memory
-# `PipelineStatus` enum is finer-grained (FAILED_RETRYING / FAILED_FINAL);
-# the persistence layer collapses both to `'FAILED'`.
-ALLOWED_BATCH_STATUSES = frozenset({'PENDING', 'INPROGRESS', 'SUCCEEDED', 'FAILED', 'CANCELLED'})
+# Per-batch status values written into batches.json. Named so call sites
+# compare against `BATCH_STATUS_FAILED` rather than the bare string 'FAILED' —
+# a typo in a literal is a silent lookup miss, a typo in a name is a NameError.
+# The orchestrator's in-memory `PipelineStatus` enum is finer-grained
+# (FAILED_RETRYING / FAILED_FINAL); the persistence layer collapses both to
+# `BATCH_STATUS_FAILED`.
+BATCH_STATUS_PENDING = 'PENDING'
+BATCH_STATUS_INPROGRESS = 'INPROGRESS'
+BATCH_STATUS_SUCCEEDED = 'SUCCEEDED'
+BATCH_STATUS_FAILED = 'FAILED'
+BATCH_STATUS_CANCELLED = 'CANCELLED'
+
+ALLOWED_BATCH_STATUSES = frozenset(
+    {
+        BATCH_STATUS_PENDING,
+        BATCH_STATUS_INPROGRESS,
+        BATCH_STATUS_SUCCEEDED,
+        BATCH_STATUS_FAILED,
+        BATCH_STATUS_CANCELLED,
+    },
+)
+
+# Statuses that mean "a batch is still being worked (or waiting to be)". Used by
+# the resume paths to decide which batches to re-monitor.
+ACTIVE_BATCH_STATUSES = frozenset({BATCH_STATUS_PENDING, BATCH_STATUS_INPROGRESS})
+
+# Per-sample passfail status vocabulary. DRAGEN's `passfail.json` writes
+# `"Success"` / `"Failed"`; we normalise at the persistence boundary
+# (`record_passfail`) so downstream code only ever compares against the two
+# canonical values below. `"Fail"` (not `"Failed"`) is canonical because every
+# existing consumer already compared `== 'Fail'`.
+CANONICAL_PASSFAIL_SUCCESS = 'Success'
+CANONICAL_PASSFAIL_FAIL = 'Fail'
+_PASSFAIL_STATUS_NORMALISATION = {
+    'Success': CANONICAL_PASSFAIL_SUCCESS,
+    'Fail': CANONICAL_PASSFAIL_FAIL,
+    'Failed': CANONICAL_PASSFAIL_FAIL,
+}
 
 
 def validate_error_strategy(value: str, *, context: str) -> None:
@@ -30,6 +61,19 @@ def validate_error_strategy(value: str, *, context: str) -> None:
         raise ValueError(
             f'{context}: error_strategy must be one of {sorted(ALLOWED_ERROR_STRATEGIES)}, got {value!r}.',
         )
+
+
+def normalise_passfail_status(value: str, *, context: str) -> str:
+    """Map a raw passfail status onto the canonical `"Success"` / `"Fail"`.
+
+    Raises `ValueError` on any status outside the recognised input set.
+    """
+    try:
+        return _PASSFAIL_STATUS_NORMALISATION[value]
+    except KeyError:
+        raise ValueError(
+            f'{context}: passfail status must be one of {sorted(_PASSFAIL_STATUS_NORMALISATION)}, got {value!r}.',
+        ) from None
 
 
 @dataclass
@@ -189,7 +233,7 @@ class BatchesFile:
             'analysis_output_folder_fid': None,
             'fastq_list_fid': None,
             'cram_fids': None,
-            'status': 'PENDING',
+            'status': BATCH_STATUS_PENDING,
             'passfail': None,
             'passfail_seen': False,
             # Retry batches pre-set has_been_retried=True so a second retry pass short-circuits.
@@ -246,6 +290,19 @@ class BatchesFile:
                 )
         self.batch_size = data['batch_size']
         self.batches = data['batches']
+        # Migrate the passfail vocabulary on read. A batches.json written by an
+        # earlier build stored DRAGEN's raw "Failed" verbatim (record_passfail did
+        # not normalise yet). Re-normalising here means resuming an already-SUCCEEDED
+        # batch does not silently drop a "Failed" sample from the retry path — the
+        # write-time fix, applied to state persisted before it existed. Idempotent
+        # for already-canonical values; an unrecognised status fails loud, matching
+        # the write path.
+        for i, b in enumerate(self.batches):
+            if b['passfail'] is not None:
+                b['passfail'] = {
+                    sg: normalise_passfail_status(status, context=f'read {self.path} batch {i} sg={sg!r}')
+                    for sg, status in b['passfail'].items()
+                }
 
     def write(self) -> None:
         """Single-PUT atomic write — GCS object PUTs are atomic per object.
@@ -275,7 +332,7 @@ class BatchesFile:
         b['pipeline_id'] = pipeline_id
         b['ar_guid'] = ar_guid
         b['user_reference'] = user_reference
-        b['status'] = 'INPROGRESS'
+        b['status'] = BATCH_STATUS_INPROGRESS
 
     def record_status(self, batch_index: int, status: str) -> None:
         if status not in ALLOWED_BATCH_STATUSES:
@@ -288,7 +345,10 @@ class BatchesFile:
         self.batches[batch_index]['status'] = status
 
     def record_passfail(self, batch_index: int, passfail: dict[str, str]) -> None:
-        self.batches[batch_index]['passfail'] = dict(passfail)
+        self.batches[batch_index]['passfail'] = {
+            sg: normalise_passfail_status(status, context=f'record_passfail(batch_index={batch_index}, sg={sg!r})')
+            for sg, status in passfail.items()
+        }
         self.batches[batch_index]['passfail_seen'] = True
 
     def record_analysis_output_folder_fid(self, batch_index: int, fid: str) -> None:
@@ -372,10 +432,10 @@ class BatchesFile:
         seen: set[str] = set()
         failed: list[str] = []
         for b in self.batches:
-            if b['status'] == 'FAILED' and b['passfail'] is None:
+            if b['status'] == BATCH_STATUS_FAILED and b['passfail'] is None:
                 candidates: list[str] = list(b['sg_names'])
             elif b['passfail']:
-                candidates = [sg for sg, status in b['passfail'].items() if status == 'Fail']
+                candidates = [sg for sg, status in b['passfail'].items() if status == CANONICAL_PASSFAIL_FAIL]
             else:
                 continue
             for sg in candidates:
@@ -393,7 +453,7 @@ class BatchesFile:
         failures, and cancel only fires on PENDING/INPROGRESS batches).
         Callers that need unique SGs should wrap in `set(...)`.
         """
-        return [sg for b in self.batches if b['status'] == 'CANCELLED' for sg in b['sg_names']]
+        return [sg for b in self.batches if b['status'] == BATCH_STATUS_CANCELLED for sg in b['sg_names']]
 
     def successful_sg_names(self) -> list[str]:
         """SGs explicitly marked Success in any non-CANCELLED batch's passfail.
@@ -410,10 +470,10 @@ class BatchesFile:
         """
         successful: list[str] = []
         for b in self.batches:
-            if b['status'] == 'CANCELLED':
+            if b['status'] == BATCH_STATUS_CANCELLED:
                 continue
             if b['passfail']:
-                successful.extend(sg for sg, status in b['passfail'].items() if status == 'Success')
+                successful.extend(sg for sg, status in b['passfail'].items() if status == CANONICAL_PASSFAIL_SUCCESS)
         return successful
 
     def find_batch_for_sg(self, sg_name: str) -> dict[str, Any] | None:

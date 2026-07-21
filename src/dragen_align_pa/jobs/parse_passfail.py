@@ -1,7 +1,9 @@
 """Download and parse the per-batch `passfail.json` from ICA.
 
 `passfail.json` is at the batch's analysis-output root and maps
-`sample_id → "Success" | "Fail"`. In our pipeline `sample_id` == `sg_name`:
+`sample_id → "Success" | "Failed"` (DRAGEN's own spelling; `batches.record_passfail`
+normalises `"Failed"` to the canonical `"Fail"` on write). In our pipeline
+`sample_id` == `sg_name`:
 - FASTQ mode: `MakeFastqFileList` writes RGSM = SG name in every row.
 - CRAM mode: the original CRAM's RG SM tag is preserved through the unified
   pipeline's input handling. If a CRAM cohort surfaces RGSM != sg_name, the

@@ -19,11 +19,13 @@ So this script's whole job is data management, in five steps, per panel:
                   data persists run-to-run. Each upload yields a `fil.…` ID.
     4. LIST     — write `<panel>.normals.txt`, one renamed BASENAME per line
                   (see note below), and upload it to ICA too (its own file ID).
-    5. REGISTER — print a ready-to-paste JSON block, `{<panel-name>: {pon_list_file
-                  -> list `fil.…` ID, basename -> count `fil.…` ID, …}}`, to merge
-                  into `ICA_PON_FILE_IDS` in `dragen_align_pa.constants`. A run then
-                  selects the panel by name (`[presets.exome].cnv_normals_panel`)
-                  instead of listing IDs.
+    5. REGISTER — print a ready-to-paste JSON block, `{<panel-name>:
+                  {"pon_list_file": <list `fil.…` ID>, "count_file_ids":
+                  [<count `fil.…` ID>, …]}}`, to merge into `ICA_PON_FILE_IDS` in
+                  `dragen_align_pa.constants`. Only file IDs are stored — the
+                  renamed count basenames (which embed CPG sample IDs) are
+                  intentionally dropped. A run then selects the panel by name
+                  (`[presets.exome].cnv_normals_panel`) instead of listing IDs.
 
 WHY THE RENAME (`--rename-suffix`, default `_pon`):
     DRAGEN aborts CNV calling if a case sample is detected as a member of its
@@ -40,12 +42,13 @@ WHY BASENAMES IN THE LIST (not ICA paths or file IDs):
     count files are passed to the analysis as data inputs (by file ID), land
     next to the list in cwd, and the list refers to them by bare basename.
 
-WIRING STILL TO DO (downstream of this script, the part the test exercises):
-    The submitter (`jobs/submit_dragen_batch.py`) has no `cnv_normals_list` /
-    `cnv_normals_files` parameterCode yet. Passing the list + the count files
-    into the DRAGEN ICA analysis (and adding `--cnv-normals-list` /
-    `--cnv-input` to the DRAGEN args) is a separate pipeline change. This
-    script only produces and registers the artifacts that change will consume.
+HOW A RUN CONSUMES THE PANEL (downstream of this script):
+    The submitter (`jobs/submit_dragen_batch.py`) resolves the selected panel via
+    `constants_registry.resolve_cnv_normals_panel`, sends every registered file ID
+    (the normals list + the count files) as `additional_files` data inputs, and
+    derives `--cnv-normals-list <panel>.normals.txt` in the DRAGEN args. The count
+    files land next to the list in cwd, and DRAGEN reads them by the basenames the
+    list references.
 
 Example (bioheart WGS wiring panel from 4 of the 5 COH2308 SGs; 5th is the case):
 
@@ -399,20 +402,25 @@ def build_panel(
 def _print_registration_snippet(panel_name: str, file_ids: dict[str, str]) -> None:
     """Print the panel's ICA_PON_FILE_IDS entry as a ready-to-paste JSON block.
 
-    The normals-list file is emitted under the reserved ``pon_list_file`` key; the
-    per-SG count files keep their basenames as keys. See ``ICA_PON_FILE_IDS`` in
-    ``dragen_align_pa.constants`` for the consumed structure.
+    The normals-list file is emitted under the ``pon_list_file`` key; the per-SG
+    count files are emitted as a plain list of IDs under ``count_file_ids``. Their
+    basenames are intentionally dropped — they embed CPG sample IDs (blocked by
+    the CPG-ID pre-commit hook) and are never consumed. See ``ICA_PON_FILE_IDS``
+    in ``dragen_align_pa.constants`` for the consumed structure.
 
     Args:
         panel_name: Panel label, also the JSON block's top-level key.
         file_ids: Map of artifact basename to ICA file ID (as built by build_panel).
     """
     list_basename = f'{panel_name}.normals.txt'
-    entry = {'pon_list_file': file_ids[list_basename]}
-    entry.update({name: file_id for name, file_id in file_ids.items() if name != list_basename})
+    entry = {
+        'pon_list_file': file_ids[list_basename],
+        'count_file_ids': [file_id for name, file_id in file_ids.items() if name != list_basename],
+    }
     logger.info(
-        f'Panel "{panel_name}" built ({len(file_ids)} entries). Merge this block into '
-        f'ICA_PON_FILE_IDS in dragen_align_pa.constants:',
+        f'Panel "{panel_name}" built (1 normals list + {len(entry["count_file_ids"])} count files). '
+        f'Merge this block into ICA_PON_FILE_IDS in dragen_align_pa.constants '
+        f'(reformat to the repo code style — the block below is JSON, not Python):',
     )
     print(f'\n# --- CNV PON: {panel_name} ---')
     print(json.dumps({panel_name: entry}, indent=4))

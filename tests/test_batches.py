@@ -112,6 +112,76 @@ def test_batches_file_record_passfail(tmp_path: Path):
     assert loaded.batches[0]['passfail_seen'] is True
 
 
+def test_record_passfail_normalises_dragen_failed_status(tmp_path: Path):
+    """DRAGEN writes `"Failed"`; record_passfail normalises it to canonical `"Fail"`
+    so `failed_sg_names` (and the retry path) pick the sample up."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(
+        batch_size=5,
+        batches=[
+            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
+        ],
+    )
+    bf.record_passfail(batch_index=0, passfail={'CPG_A': 'Success', 'CPG_B': 'Failed'})
+    assert bf.batches[0]['passfail'] == {'CPG_A': 'Success', 'CPG_B': 'Fail'}
+    assert bf.failed_sg_names() == ['CPG_B']
+    assert bf.successful_sg_names() == ['CPG_A']
+
+
+def test_read_migrates_legacy_failed_passfail_value(tmp_path: Path):
+    """A batches.json written by an earlier build stored DRAGEN's raw `"Failed"`
+    verbatim in an already-SUCCEEDED batch. read() must re-normalise it to `"Fail"`
+    so a resume doesn't silently drop the sample from failed_sg_names / the retry
+    path (the straddling-deploy blind spot)."""
+    path = tmp_path / 'COH0001_batches.json'
+    legacy = {
+        'schema_version': 1,
+        'batch_size': 5,
+        'n_batches': 1,
+        'batches': [
+            {
+                'batch_index': 0,
+                'retry_generation': 0,
+                'sg_names': ['CPG_A', 'CPG_B'],
+                'retried_sgs': [],
+                'user_reference': None,
+                'pipeline_id': None,
+                'ar_guid': None,
+                'analysis_output_folder_fid': None,
+                'fastq_list_fid': None,
+                'cram_fids': None,
+                'status': 'SUCCEEDED',
+                'passfail': {'CPG_A': 'Success', 'CPG_B': 'Failed'},  # legacy raw value
+                'passfail_seen': True,
+                'has_been_retried': False,
+                'error_strategy': 'auto',
+            },
+        ],
+    }
+    path.write_text(json.dumps(legacy))
+
+    bf = BatchesFile(path=path)
+    bf.read()
+    assert bf.batches[0]['passfail'] == {'CPG_A': 'Success', 'CPG_B': 'Fail'}
+    assert bf.failed_sg_names() == ['CPG_B']
+
+
+def test_record_passfail_raises_on_unknown_status(tmp_path: Path):
+    """An unrecognised status raises loudly rather than silently recording a value
+    that matches neither `== 'Fail'` nor `== 'Success'`."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(
+        batch_size=5,
+        batches=[
+            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
+        ],
+    )
+    with pytest.raises(ValueError, match=r'passfail status must be one of'):
+        bf.record_passfail(batch_index=0, passfail={'CPG_A': 'Success', 'CPG_B': 'PASS'})
+
+
 def test_batches_file_record_cram_fids(tmp_path: Path):
     path = tmp_path / 'COH0001_batches.json'
     bf = BatchesFile(path=path)
