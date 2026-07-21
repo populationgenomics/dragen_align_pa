@@ -295,6 +295,28 @@ def test_check_ica_pipeline_status_retries_on_503_then_succeeds():
     assert api.get_analysis.call_count == 2
 
 
+def test_check_ica_pipeline_status_retries_on_409_then_succeeds():
+    """409 (ICA_DATA_105 'Conflict while updating file/folder. Please try again
+    later.') is a transient concurrency conflict ICA itself advises retrying —
+    observed on create_data_in_project during upload. It must be retried through
+    the shared predicate, not propagated on the first occurrence."""
+    api = MagicMock()
+    succeeding_response = MagicMock()
+    succeeding_response.body = {'status': 'INPROGRESS'}
+    api.get_analysis.side_effect = [
+        ApiException(status=409, reason='Conflict'),
+        succeeding_response,
+    ]
+
+    result = ica_api_utils.check_ica_pipeline_status(
+        api_instance=api,
+        path_params={'projectId': 'p', 'analysisId': 'a'},
+    )
+
+    assert result == 'INPROGRESS'
+    assert api.get_analysis.call_count == 2
+
+
 def test_check_ica_pipeline_status_does_not_retry_non_transient_status():
     """A 404 (analysis not found) is a real not-retryable error — retrying
     just delays the failure signal. Other non-(429|503) ApiExceptions must

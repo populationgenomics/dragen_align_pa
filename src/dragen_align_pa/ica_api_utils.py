@@ -54,9 +54,20 @@ SECRET_PROJECT: Final = 'cpg-common'
 SECRET_NAME: Final = 'illumina_cpg_workbench_api'
 SECRET_VERSION: Final = 'latest'
 
-# Default retries (after the initial attempt) for transient ICA 429/503 on any
+# Default retries (after the initial attempt) for transient ICA errors on any
 # data-plane call. Override per-run via [ica.retry] max_retries.
 _DEFAULT_ICA_MAX_RETRIES: Final = 10
+
+# Transient ICA data-plane HTTP statuses worth retrying:
+#   429 — rate-limit (well-known production failure mode)
+#   503 — ICA backend unavailable
+#   409 — ICA_DATA_105 "Conflict while updating file/folder. Please try again
+#         later." — a concurrency conflict ICA itself advises retrying. Callers
+#         that create data pre-check for an existing object, so a 409 here is the
+#         transient update conflict, never a permanent "already exists".
+# Any other status (404/500/…) propagates immediately — retrying a permanent
+# error just delays the real signal.
+_RETRYABLE_ICA_STATUSES: Final = frozenset({409, 429, 503})
 
 
 # --- Secret Management & Auth ---
@@ -229,13 +240,11 @@ def ica_project_analysis_api(role: str) -> Generator[tuple[project_analysis_api.
 def _is_retryable_ica_error(exc: BaseException) -> bool:
     """Tenacity predicate: retry only on transient ICA-side errors.
 
-    `icasdk.exceptions.ApiException` is a single class with `.status: int`,
-    so we cannot use `retry_if_exception_type` with a subclass. We check
-    `.status` directly. 429 = rate-limit (well-known production failure
-    mode); 503 = ICA backend unavailable. 404/500/etc propagate immediately
-    — retrying a permanent error just delays the real signal.
+    `icasdk.exceptions.ApiException` is a single class with `.status: int`, so we
+    cannot use `retry_if_exception_type` with a subclass — we check `.status`
+    directly against `_RETRYABLE_ICA_STATUSES`.
     """
-    return isinstance(exc, ApiException) and exc.status in (429, 503)  # pyright: ignore[reportAttributeAccessIssue]
+    return isinstance(exc, ApiException) and exc.status in _RETRYABLE_ICA_STATUSES  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def _log_ica_retry(retry_state: RetryCallState) -> None:
@@ -255,7 +264,7 @@ def _log_ica_retry(retry_state: RetryCallState) -> None:
 
 
 def _ica_retrying() -> Retrying:
-    """Build the shared tenacity controller for transient ICA 429/503 errors.
+    """Build the shared tenacity controller for transient ICA errors (`_RETRYABLE_ICA_STATUSES`).
 
     Read at call time (not at import) so the retry count can be tuned via
     `[ica.retry] max_retries` in config without rebuilding the image, and to
@@ -287,10 +296,11 @@ def _ica_retrying() -> Retrying:
 
 
 def ica_retry(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
-    """Invoke a single ICA SDK call with transient-429/503 retry.
+    """Invoke a single ICA SDK call with transient-error retry.
 
     Wraps `fn(*args, **kwargs)` in the shared jittered-backoff controller (see
-    `_ica_retrying`). Only 429 (rate limit) and 503 (backend unavailable) are
+    `_ica_retrying`). Only the transient statuses in `_RETRYABLE_ICA_STATUSES`
+    (429 rate-limit, 503 backend-unavailable, 409 folder-update conflict) are
     retried; every other error propagates on the first occurrence. The
     controller is rebuilt per call so `[ica.retry] max_retries` is read from
     config at call time.
