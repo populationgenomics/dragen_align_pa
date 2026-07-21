@@ -22,8 +22,24 @@ def _get_fastq_ica_id_list(
     api_instance: project_data_api.ProjectDataApi,
     path_parameters: dict[str, str],
 ) -> dict[str, str]:
-    """
-    Finds ICA file IDs for a list of fastq filenames.
+    """Finds ICA file IDs for a list of FASTQ filenames.
+
+    Queries ICA in batches for the given filenames and reconciles the result
+    against the manifest: every expected filename must resolve to exactly one
+    ICA file ID.
+
+    Args:
+        fastq_filenames: FASTQ filenames expected from the manifest.
+        api_instance: ICA project-data API client used to run the queries.
+        path_parameters: ICA path parameters (e.g. project ID) for the query.
+
+    Returns:
+        A mapping of ICA file ID to filename for every resolved FASTQ file.
+
+    Raises:
+        ValueError: If the number of resolved file IDs does not match the
+            number of expected filenames. The message names the files that
+            were missing in ICA.
     """
     ica_fastq_info: dict[str, str] = {}
 
@@ -45,14 +61,15 @@ def _get_fastq_ica_id_list(
             ica_fastq_info[file_id] = file_name
 
     if len(ica_fastq_info) != len(fastq_filenames):
-        logger.error(
+        found_filenames: set[str] = set(ica_fastq_info.values())
+        missing_filenames: list[str] = [name for name in fastq_filenames if name not in found_filenames]
+        message: str = (
             f'Mismatch: Found {len(ica_fastq_info)} file IDs in ICA, '
-            f'but {len(fastq_filenames)} were expected from manifest.',
+            f'but {len(fastq_filenames)} were expected from manifest. '
+            f'{len(missing_filenames)} file(s) missing in ICA: {missing_filenames}'
         )
-        raise ValueError(
-            f'Mismatch: Found {len(ica_fastq_info)} file IDs in ICA, '
-            f'but {len(fastq_filenames)} were expected from manifest.'
-        )
+        logger.error(message)
+        raise ValueError(message)
 
     logger.info(f'Found {len(ica_fastq_info)} total FASTQ file IDs.')
     return ica_fastq_info
