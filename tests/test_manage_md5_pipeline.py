@@ -14,13 +14,28 @@ from dragen_align_pa.jobs import manage_md5_pipeline
 
 
 def _fake_api_response(names_to_ids: dict[str, str]):
-    """Build a stand-in for the ICA `get_project_data_list` response body."""
+    """Build a stand-in for the ICA `get_project_data_list` response body.
+
+    Args:
+        names_to_ids: Mapping of FASTQ filename to the ICA file ID that ICA
+            would report for it.
+
+    Returns:
+        An object whose `.body['items']` mirrors the shape the production code
+        iterates over.
+    """
     items = [{'data': {'id': file_id, 'details': {'name': name}}} for name, file_id in names_to_ids.items()]
     return SimpleNamespace(body={'items': items})
 
 
 def _patch_ica_retry(monkeypatch, names_to_ids: dict[str, str]) -> None:
-    """Stub `ica_retry` so it returns a fixed set of ICA files regardless of query."""
+    """Stub `ica_retry` so it returns a fixed set of ICA files regardless of query.
+
+    Args:
+        monkeypatch: The pytest `monkeypatch` fixture.
+        names_to_ids: The FASTQ filename-to-ID mapping the stubbed ICA query
+            should return.
+    """
     monkeypatch.setattr(
         manage_md5_pipeline.ica_api_utils,
         'ica_retry',

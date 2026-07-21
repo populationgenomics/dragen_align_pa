@@ -22,8 +22,24 @@ def _get_fastq_ica_id_list(
     api_instance: project_data_api.ProjectDataApi,
     path_parameters: dict[str, str],
 ) -> dict[str, str]:
-    """
-    Finds ICA file IDs for a list of fastq filenames.
+    """Finds ICA file IDs for a list of FASTQ filenames.
+
+    Queries ICA in batches for the given filenames and reconciles the result
+    against the manifest: every expected filename must resolve to exactly one
+    ICA file ID.
+
+    Args:
+        fastq_filenames: FASTQ filenames expected from the manifest.
+        api_instance: ICA project-data API client used to run the queries.
+        path_parameters: ICA path parameters (e.g. project ID) for the query.
+
+    Returns:
+        A mapping of ICA file ID to filename for every resolved FASTQ file.
+
+    Raises:
+        ValueError: If the number of resolved file IDs does not match the
+            number of expected filenames. The message names the files that
+            were missing in ICA.
     """
     ica_fastq_info: dict[str, str] = {}
 
