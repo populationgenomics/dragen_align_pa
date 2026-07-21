@@ -193,7 +193,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                       reported as failed (mapped to `PipelineStatus.FAILED_FINAL`)
                       or that the operator cancelled via `cancel_cohort_run`,
                       breaking the per-sample retry
-                      path's `elif b['status'] == 'FAILED':` branch).
+                      path's `elif b['status'] == BATCH_STATUS_FAILED:` branch).
                       `SUCCEEDED` is intentionally NOT routed through this
                       callback — that transition is transactional and goes
                       through `on_succeeded` instead.

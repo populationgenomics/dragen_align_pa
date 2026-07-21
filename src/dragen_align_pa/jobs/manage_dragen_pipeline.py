@@ -20,7 +20,16 @@ from cpg_utils.config import config_retrieve
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
-from dragen_align_pa.batches import BatchesFile, IcaBatch, chunk_sgs_into_batches
+from dragen_align_pa.batches import (
+    ACTIVE_BATCH_STATUSES,
+    BATCH_STATUS_CANCELLED,
+    BATCH_STATUS_FAILED,
+    BATCH_STATUS_SUCCEEDED,
+    CANONICAL_PASSFAIL_FAIL,
+    BatchesFile,
+    IcaBatch,
+    chunk_sgs_into_batches,
+)
 from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, submit_dragen_batch
 from dragen_align_pa.jobs.ica_pipeline_manager import (
@@ -268,7 +277,7 @@ def _on_succeeded_factory(
                 f'folder {analysis_folder_name}): passfail.json not found at ICA root; '
                 f'treating all SGs as Fail.',
             )
-            batches_file.record_passfail(batch.batch_index, dict.fromkeys(batch.sg_names, 'Fail'))
+            batches_file.record_passfail(batch.batch_index, dict.fromkeys(batch.sg_names, CANONICAL_PASSFAIL_FAIL))
         else:
             # Defensive: passfail keys MUST match batch.sg_names (RGSM == sg_name invariant).
             expected = set(batch.sg_names)
@@ -289,11 +298,11 @@ def _on_succeeded_factory(
                 )
             filtered = {sg: passfail[sg] for sg in batch.sg_names if sg in passfail}
             for sg in missing:
-                filtered[sg] = 'Fail'
+                filtered[sg] = CANONICAL_PASSFAIL_FAIL
             batches_file.record_passfail(batch.batch_index, filtered)
         if folder_fid is not None:
             batches_file.record_analysis_output_folder_fid(batch.batch_index, folder_fid)
-        batches_file.record_status(batch.batch_index, 'SUCCEEDED')
+        batches_file.record_status(batch.batch_index, BATCH_STATUS_SUCCEEDED)
         batches_file.write()
 
     return _on_succeeded
@@ -308,7 +317,7 @@ def _on_status_change_factory(
     Without this, the loop's in-memory `FAILED_FINAL` / `CANCELLED` transitions
     never propagate to the batches file, leaving entries stuck at INPROGRESS
     forever. The downstream consequences are:
-    - `_build_retry_batches`'s `elif b['status'] == 'FAILED':` branch becomes
+    - `_build_retry_batches`'s `elif b['status'] == BATCH_STATUS_FAILED:` branch becomes
       unreachable (whole-batch infrastructure failure can't trigger a retry).
     - A subsequent resume's `initial_batches` filter (`status in {PENDING,
       INPROGRESS}`) re-picks-up the dead batch and the loop polls a long-
@@ -328,9 +337,9 @@ def _on_status_change_factory(
             )
             return
         if new_status == PipelineStatus.FAILED_FINAL:
-            batches_file.record_status(batch.batch_index, 'FAILED')
+            batches_file.record_status(batch.batch_index, BATCH_STATUS_FAILED)
         elif new_status == PipelineStatus.CANCELLED:
-            batches_file.record_status(batch.batch_index, 'CANCELLED')
+            batches_file.record_status(batch.batch_index, BATCH_STATUS_CANCELLED)
         else:
             # Defensive: the loop only fires this callback for FAILED_FINAL /
             # CANCELLED. Anything else is a future-proofing surprise.
@@ -379,9 +388,9 @@ def _build_retry_batches(
             continue
         if b['passfail']:
             for sg, status in b['passfail'].items():
-                if status == 'Fail':
+                if status == CANONICAL_PASSFAIL_FAIL:
                     sg_to_source[sg] = b['batch_index']
-        elif b['status'] == 'FAILED':
+        elif b['status'] == BATCH_STATUS_FAILED:
             # CANCELLED is terminal — only FAILED (infrastructure failure) is
             # retried at the batch level when no passfail.json was produced.
             for sg in b['sg_names']:
@@ -536,7 +545,7 @@ def _handle_management_flags(
         existing.read()
         n_aborted = 0
         for b in existing.batches:
-            if b['status'] not in {'PENDING', 'INPROGRESS'}:
+            if b['status'] not in ACTIVE_BATCH_STATUSES:
                 # Already-SUCCEEDED batches are left alone.
                 continue
             pipeline_id = b.get('pipeline_id')
@@ -560,7 +569,7 @@ def _handle_management_flags(
             # Go through record_status so the value is validated against
             # ALLOWED_BATCH_STATUSES — direct dict mutation works today but
             # would silently accept a future typo or enum drift.
-            existing.record_status(b['batch_index'], 'CANCELLED')
+            existing.record_status(b['batch_index'], BATCH_STATUS_CANCELLED)
             n_aborted += 1
         existing.write()
         # Per-SG state-file policy: do NOT delete the versioned per-SG state
@@ -643,7 +652,7 @@ def run(
         initial_batches = [
             IcaBatch(cohort_name=cohort.name, batch_index=b['batch_index'], sg_names=b['sg_names'])
             for b in batches_file.batches
-            if b['retry_generation'] == 0 and b['status'] in {'PENDING', 'INPROGRESS'}
+            if b['retry_generation'] == 0 and b['status'] in ACTIVE_BATCH_STATUSES
         ]
     else:
         # Fresh cohort, or post-`force_resubmit` re-batching. Cohort membership may
@@ -718,7 +727,7 @@ def run(
     existing_retry_in_flight = [
         IcaBatch(cohort_name=cohort.name, batch_index=b['batch_index'], sg_names=b['sg_names'])
         for b in batches_file.batches
-        if b['retry_generation'] == 1 and b['status'] in {'PENDING', 'INPROGRESS'}
+        if b['retry_generation'] == 1 and b['status'] in ACTIVE_BATCH_STATUSES
     ]
     # `_build_retry_batches` may have appended the same batches we just resumed. Dedupe.
     seen_names = {b.name for b in retry_batches}

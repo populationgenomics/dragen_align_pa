@@ -16,13 +16,31 @@ SCHEMA_VERSION = 1
 # opaque message; we validate locally so misuse fails fast with a clear error.
 ALLOWED_ERROR_STRATEGIES = frozenset({'auto', 'continue', 'terminate'})
 
-# Per-batch status values written into batches.json. Downstream consumers
-# (`failed_sg_names`, `cancelled_sg_names`, `successful_sg_names`) compare
-# against these literals — a typo here silently produces a batch that is
-# neither successful nor failed nor cancelled. The orchestrator's in-memory
-# `PipelineStatus` enum is finer-grained (FAILED_RETRYING / FAILED_FINAL);
-# the persistence layer collapses both to `'FAILED'`.
-ALLOWED_BATCH_STATUSES = frozenset({'PENDING', 'INPROGRESS', 'SUCCEEDED', 'FAILED', 'CANCELLED'})
+# Per-batch status values written into batches.json. Named so call sites
+# compare against `BATCH_STATUS_FAILED` rather than the bare string 'FAILED' —
+# a typo in a literal is a silent lookup miss, a typo in a name is a NameError.
+# The orchestrator's in-memory `PipelineStatus` enum is finer-grained
+# (FAILED_RETRYING / FAILED_FINAL); the persistence layer collapses both to
+# `BATCH_STATUS_FAILED`.
+BATCH_STATUS_PENDING = 'PENDING'
+BATCH_STATUS_INPROGRESS = 'INPROGRESS'
+BATCH_STATUS_SUCCEEDED = 'SUCCEEDED'
+BATCH_STATUS_FAILED = 'FAILED'
+BATCH_STATUS_CANCELLED = 'CANCELLED'
+
+ALLOWED_BATCH_STATUSES = frozenset(
+    {
+        BATCH_STATUS_PENDING,
+        BATCH_STATUS_INPROGRESS,
+        BATCH_STATUS_SUCCEEDED,
+        BATCH_STATUS_FAILED,
+        BATCH_STATUS_CANCELLED,
+    },
+)
+
+# Statuses that mean "a batch is still being worked (or waiting to be)". Used by
+# the resume paths to decide which batches to re-monitor.
+ACTIVE_BATCH_STATUSES = frozenset({BATCH_STATUS_PENDING, BATCH_STATUS_INPROGRESS})
 
 # Per-sample passfail status vocabulary.
 # DRAGEN's `passfail.json` writes `"Success"` / `"Failed"`.
@@ -213,7 +231,7 @@ class BatchesFile:
             'analysis_output_folder_fid': None,
             'fastq_list_fid': None,
             'cram_fids': None,
-            'status': 'PENDING',
+            'status': BATCH_STATUS_PENDING,
             'passfail': None,
             'passfail_seen': False,
             # Retry batches pre-set has_been_retried=True so a second retry pass short-circuits.
@@ -299,7 +317,7 @@ class BatchesFile:
         b['pipeline_id'] = pipeline_id
         b['ar_guid'] = ar_guid
         b['user_reference'] = user_reference
-        b['status'] = 'INPROGRESS'
+        b['status'] = BATCH_STATUS_INPROGRESS
 
     def record_status(self, batch_index: int, status: str) -> None:
         if status not in ALLOWED_BATCH_STATUSES:
@@ -399,10 +417,10 @@ class BatchesFile:
         seen: set[str] = set()
         failed: list[str] = []
         for b in self.batches:
-            if b['status'] == 'FAILED' and b['passfail'] is None:
+            if b['status'] == BATCH_STATUS_FAILED and b['passfail'] is None:
                 candidates: list[str] = list(b['sg_names'])
             elif b['passfail']:
-                candidates = [sg for sg, status in b['passfail'].items() if status == 'Fail']
+                candidates = [sg for sg, status in b['passfail'].items() if status == CANONICAL_PASSFAIL_FAIL]
             else:
                 continue
             for sg in candidates:
@@ -420,7 +438,7 @@ class BatchesFile:
         failures, and cancel only fires on PENDING/INPROGRESS batches).
         Callers that need unique SGs should wrap in `set(...)`.
         """
-        return [sg for b in self.batches if b['status'] == 'CANCELLED' for sg in b['sg_names']]
+        return [sg for b in self.batches if b['status'] == BATCH_STATUS_CANCELLED for sg in b['sg_names']]
 
     def successful_sg_names(self) -> list[str]:
         """SGs explicitly marked Success in any non-CANCELLED batch's passfail.
@@ -437,10 +455,10 @@ class BatchesFile:
         """
         successful: list[str] = []
         for b in self.batches:
-            if b['status'] == 'CANCELLED':
+            if b['status'] == BATCH_STATUS_CANCELLED:
                 continue
             if b['passfail']:
-                successful.extend(sg for sg, status in b['passfail'].items() if status == 'Success')
+                successful.extend(sg for sg, status in b['passfail'].items() if status == CANONICAL_PASSFAIL_SUCCESS)
         return successful
 
     def find_batch_for_sg(self, sg_name: str) -> dict[str, Any] | None:
