@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from dragen_align_pa import ica_cli_utils
-from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
+from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
 
 
 def test_authenticate_writes_config_in_python_and_enters_project(monkeypatch, tmp_path: Path):

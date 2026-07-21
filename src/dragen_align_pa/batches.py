@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from dragen_align_pa.batch_constants import (
+from dragen_align_pa.constants.batch_constants import (
     ALLOWED_BATCH_STATUSES,
     ALLOWED_ERROR_STRATEGIES,
     BATCH_STATUS_CANCELLED,

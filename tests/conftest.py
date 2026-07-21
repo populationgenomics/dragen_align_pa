@@ -1,6 +1,6 @@
 """Test config bootstrap.
 
-`dragen_align_pa.constants` reads `cpg_utils.config` at module-import time
+`dragen_align_pa.constants.constants` reads `cpg_utils.config` at module-import time
 (`config_retrieve` for `[workflow][reads_type]` and `[ica.pipelines][dragen_version]`,
 plus `output_path` for the bucket root). To keep unit tests off GCS and free of a
 real cpg-utils config bundle, we install in-memory stand-ins on `cpg_utils.config`
@@ -15,7 +15,7 @@ import cpg_utils.config
 
 # Originals captured so pytest_sessionfinish can restore them at the end of
 # the run. We MUST monkeypatch at module-import time (not in a session-scoped
-# autouse fixture) because dragen_align_pa.constants reads cpg_utils.config
+# autouse fixture) because dragen_align_pa.constants.constants reads cpg_utils.config
 # at its own import time, which happens during pytest collection before any
 # fixture can run. The trade-off is that the patch is not auto-bracketed by
 # pytest's fixture machinery — pytest_sessionfinish below provides explicit

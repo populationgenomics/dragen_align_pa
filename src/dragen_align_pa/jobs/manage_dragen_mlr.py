@@ -10,11 +10,11 @@ from cpg_flow.targets import Cohort
 from loguru import logger
 
 from dragen_align_pa import ica_cli_utils, utils
-from dragen_align_pa.constants import (
+from dragen_align_pa.constants.constants import (
     ANALYSIS_INSTANCE_TIER,
     MLR_HASH_TABLE_RELPATH,
 )
-from dragen_align_pa.constants_registry import (
+from dragen_align_pa.constants.constants_registry import (
     ROLE_DRAGEN_ALIGN,
     ROLE_DRAGEN_MLR,
     ica_mlr_config_file_id,

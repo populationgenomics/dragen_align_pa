@@ -25,7 +25,7 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils
 from dragen_align_pa.batches import BatchesFile, IcaBatch, chunk_sgs_into_batches
-from dragen_align_pa.batch_constants import (
+from dragen_align_pa.constants.batch_constants import (
     ACTIVE_BATCH_STATUSES,
     BATCH_STATUS_CANCELLED,
     BATCH_STATUS_FAILED,
@@ -37,7 +37,7 @@ from dragen_align_pa.batch_constants import (
     ICA_STATUS_SUCCEEDED,
     ICA_TERMINAL_FAILURE_STATUSES,
 )
-from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
+from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline, submit_dragen_batch
 from dragen_align_pa.jobs.ica_pipeline_manager import (
     MonitoredTarget,

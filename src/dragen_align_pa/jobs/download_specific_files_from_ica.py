@@ -13,7 +13,7 @@ from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
-from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
+from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
 from dragen_align_pa.file_types import FileTypeSpec
 from dragen_align_pa.ica_utils import get_ica_sample_folder
 from dragen_align_pa.paths import gcs_bucket_and_key

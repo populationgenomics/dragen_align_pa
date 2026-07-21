@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, utils
-from dragen_align_pa.constants_registry import ica_project_id
+from dragen_align_pa.constants.constants_registry import ica_project_id
 
 if TYPE_CHECKING:
     from subprocess import CompletedProcess

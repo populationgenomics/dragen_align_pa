@@ -189,7 +189,10 @@ def test_get_ica_api_key_raises_when_family_field_missing(monkeypatch):
     mock_client = MagicMock()
     mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
     monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
-    monkeypatch.setattr('dragen_align_pa.constants_registry.config_retrieve', lambda key, default=None: 'tenk10k')  # noqa: ARG005
+    monkeypatch.setattr(
+        'dragen_align_pa.constants.constants_registry.config_retrieve',
+        lambda key, default=None: 'tenk10k',  # noqa: ARG005
+    )
 
     with pytest.raises(KeyError, match=r'tenk10k_apiKey'):
         ica_api_utils.get_ica_api_key()

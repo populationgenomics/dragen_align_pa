@@ -38,7 +38,7 @@ from tenacity import (
     wait_random_exponential,
 )
 
-from dragen_align_pa.constants_registry import ica_api_key_field, ica_project_id
+from dragen_align_pa.constants.constants_registry import ica_api_key_field, ica_project_id
 from dragen_align_pa.paths import IcaPath
 
 if TYPE_CHECKING:

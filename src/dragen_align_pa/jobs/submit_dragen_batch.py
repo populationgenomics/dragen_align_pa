@@ -23,7 +23,11 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.batches import IcaBatch, validate_error_strategy
-from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN, resolve_cnv_normals_panel, resolve_ica_file_id
+from dragen_align_pa.constants.constants_registry import (
+    ROLE_DRAGEN_ALIGN,
+    resolve_cnv_normals_panel,
+    resolve_ica_file_id,
+)
 from dragen_align_pa.utils import get_bed_names_for_seqtype
 
 # DRAGEN flags that don't depend on input type (CRAM vs FASTQ) or sequencing type (WGS vs WES).

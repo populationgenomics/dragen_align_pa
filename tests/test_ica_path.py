@@ -3,7 +3,8 @@
 import pytest
 from cpg_utils.config import ConfigError
 
-from dragen_align_pa import constants, constants_registry, paths
+from dragen_align_pa import paths
+from dragen_align_pa.constants import constants, constants_registry
 
 _SENTINEL = object()
 

@@ -1,10 +1,10 @@
-"""Resolvers over the ICA registry tables in `dragen_align_pa.constants`.
+"""Resolvers over the ICA registry tables in `dragen_align_pa.constants.constants`.
 
 `constants` holds only data (the `ICA_PROJECT_SETUP` and `ICA_FILE_IDS` tables and the
 placeholder marker). The functions here are the logic that reads those tables: project /
 API-key / MLR-config lookups and reference-file-ID resolution. They reference the tables via
 the `constants` module (not `from constants import …`) so a test that patches
-`dragen_align_pa.constants.<TABLE>` is seen here at call time.
+`dragen_align_pa.constants.constants.<TABLE>` is seen here at call time.
 
 A run operates within one dataset *family*, named by `[ica.projects].project_root`.
 `ICA_PROJECT_SETUP[family]` holds everything that family needs: its per-role projects
@@ -16,7 +16,7 @@ from typing import Final
 
 from cpg_utils.config import config_retrieve
 
-from dragen_align_pa import constants
+from dragen_align_pa.constants import constants
 
 # The three roles every family registers under `ICA_PROJECT_SETUP[family]['projects']`. Call
 # sites pass these instead of literal strings so a typo is a NameError, not a silent lookup miss.
@@ -254,7 +254,7 @@ def resolve_ica_file_id(name: str) -> str:
     except KeyError:
         raise KeyError(
             f'{name!r} is not a registered ICA file basename. '
-            f'Add it to ICA_FILE_IDS in dragen_align_pa.constants, or check for typos. '
+            f'Add it to ICA_FILE_IDS in dragen_align_pa.constants.constants, or check for typos. '
             f'Registered names: {sorted(constants.ICA_FILE_IDS)}',
         ) from None
     return _reject_placeholder_file_id(name, file_id)
@@ -292,7 +292,7 @@ def resolve_cnv_normals_panel(panel_name: str) -> tuple[str, list[str]]:
     except KeyError:
         raise KeyError(
             f'{panel_name!r} is not a registered CNV panel of normals. '
-            f'Add it to ICA_PON_FILE_IDS in dragen_align_pa.constants (via '
+            f'Add it to ICA_PON_FILE_IDS in dragen_align_pa.constants.constants (via '
             f'scripts/build_cnv_panel_of_normals.py), or check for typos. '
             f'Registered panels: {sorted(constants.ICA_PON_FILE_IDS)}',
         ) from None

@@ -19,8 +19,8 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.batches import BatchesFile
-from dragen_align_pa.constants import BUCKET_NAME
-from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
+from dragen_align_pa.constants.constants import BUCKET_NAME
+from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
 
 
 @dataclass

@@ -14,7 +14,7 @@ from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import config_retrieve, get_driver_image
 from loguru import logger
 
-from dragen_align_pa.constants import (
+from dragen_align_pa.constants.constants import (
     READS_TYPE,
 )
 from dragen_align_pa.file_types import FileTypeSpec

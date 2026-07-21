@@ -42,13 +42,16 @@ def _make_sg(sg_id: str, sequencing_library: str) -> _FakeSG:
 def test_project_root_resolves_for_registered_family(monkeypatch):
     """A registered family (all roles present) passes. `assert_ica_project_root_resolves` reads the
     family via `constants_registry.configured_family`, so patch config in that binding."""
-    monkeypatch.setattr('dragen_align_pa.constants_registry.config_retrieve', lambda key, default=None: 'ourdna')  # noqa: ARG005
+    monkeypatch.setattr(
+        'dragen_align_pa.constants.constants_registry.config_retrieve',
+        lambda key, default=None: 'ourdna',  # noqa: ARG005
+    )
     assert_ica_project_root_resolves()  # no raise
 
 
 def test_project_root_unknown_family_raises(monkeypatch):
     monkeypatch.setattr(
-        'dragen_align_pa.constants_registry.config_retrieve',
+        'dragen_align_pa.constants.constants_registry.config_retrieve',
         lambda key, default=None: 'not-a-family',  # noqa: ARG005
     )
     with pytest.raises(KeyError, match=r'not-a-family'):
