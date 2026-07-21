@@ -399,6 +399,18 @@ def test_build_retry_batches_force_skips_already_succeeded_sgs(tmp_path: Path):
     assert forced[0].sg_names == ['SYN_B']  # SYN_A harvested from the gen-1 success
 
 
+def test_build_retry_batches_force_skips_sg_with_in_flight_retry(tmp_path: Path):
+    """force mode must not resubmit an SG whose retry is still in flight: the resume
+    path in run() re-monitors the existing PENDING/INPROGRESS batch, so a fresh retry
+    here would run two concurrent ICA analyses for the same SG."""
+    bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, ['SYN_A', 'SYN_B'])])
+    bf.record_passfail(0, {'SYN_A': 'Success', 'SYN_B': 'Fail'})
+    bf.record_status(0, 'SUCCEEDED')
+    bf.add_retry_batch(sg_names=['SYN_B'])  # gen-1 retry, index 1
+    bf.record_status(1, 'INPROGRESS')  # retry still running at ICA
+    assert _build_retry_batches('COH0001', bf, 5, force=True) == []
+
+
 def test_reconcile_flips_stale_failed_to_succeeded_from_ica(tmp_path: Path, monkeypatch):
     """The reported scenario: GCS says FAILED, ICA says SUCCEEDED with all-Success
     passfail → reconcile to SUCCEEDED and harvest (nothing left to rerun)."""

@@ -476,10 +476,10 @@ def _build_retry_batches(
     single-retry invariant.
 
     `force=True` (operator `force_retry`): ignores the single-retry gate and
-    considers failures across ALL generations, so an already-retried failure can be
-    resubmitted again. Still-succeeded SGs (in `successful_sg_names()`) are excluded
-    so a harvested sample is never rerun — this pairs with `_reconcile_batches_with_ica`,
-    which first rewrites each batch's status to ICA reality.
+    considers failures across ALL generations. Excludes SGs already succeeded (in
+    `successful_sg_names()`) and SGs whose retry is still in flight (in an active
+    batch with no passfail result yet); the latter are re-monitored by the resume
+    path in `run()`.
 
     `CANCELLED` is treated as a **terminal** state — `cancel_cohort_run=true` is
     a user-initiated abort and the spec (§4 line 214) does not allow it to spawn
@@ -496,7 +496,7 @@ def _build_retry_batches(
             retry batches to (mutated + written when any retry is formed).
         batch_size: Max sequencing groups per retry batch.
         force: If True, run in operator `force_retry` mode (ignore the single-retry
-            gate, span all generations, exclude already-succeeded SGs).
+            gate, span all generations, exclude already-succeeded and in-flight SGs).
 
     Returns:
         The newly-appended retry batches (empty if there is nothing to retry).
@@ -507,21 +507,38 @@ def _build_retry_batches(
     # writer is `_on_succeeded` / reconciliation). A CANCELLED batch's `passfail`
     # is empty by construction, so the `if b['passfail']:` branch can never
     # re-enable a cancelled batch for retry — preserving CANCELLED's terminal status.
-    # In force mode, an SG already succeeded in some batch is never rerun.
+    # In force mode, an SG already succeeded in some batch is never rerun. Nor is
+    # one whose retry is still genuinely running (an ACTIVE batch that has not yet
+    # produced a passfail result): force mode bypasses the single-retry gate, so
+    # without this such an SG would be resubmitted afresh here while the resume path
+    # in `run()` re-monitors the existing batch — two concurrent ICA analyses for one
+    # SG. The resume path owns the in-flight ones. A batch with a passfail result is
+    # terminal, so it is evaluated normally below.
     already_succeeded = set(batches_file.successful_sg_names()) if force else set()
+    in_flight_sgs = (
+        {
+            sg
+            for b in batches_file.batches
+            if b['status'] in ACTIVE_BATCH_STATUSES and not b['passfail']
+            for sg in b['sg_names']
+        }
+        if force
+        else set()
+    )
+    excluded = already_succeeded | in_flight_sgs
     sg_to_source: dict[str, int] = {}
     for b in batches_file.batches:
         if not force and (b['has_been_retried'] or b['retry_generation'] != 0):
             continue
         if b['passfail']:
             for sg, status in b['passfail'].items():
-                if status == CANONICAL_PASSFAIL_FAIL and sg not in already_succeeded:
+                if status == CANONICAL_PASSFAIL_FAIL and sg not in excluded:
                     sg_to_source[sg] = b['batch_index']
         elif b['status'] == BATCH_STATUS_FAILED:
             # CANCELLED is terminal — only FAILED (infrastructure failure) is
             # retried at the batch level when no passfail.json was produced.
             for sg in b['sg_names']:
-                if sg not in already_succeeded:
+                if sg not in excluded:
                     sg_to_source[sg] = b['batch_index']
 
     if not sg_to_source:
