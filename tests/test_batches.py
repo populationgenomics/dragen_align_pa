@@ -408,6 +408,29 @@ def test_failed_sg_names_whole_batch_failure_recovered_by_retry(tmp_path: Path):
     assert bf.failed_sg_names() == [], f'both SGs recovered on retry; got {bf.failed_sg_names()}'
 
 
+def test_successful_sg_names_resolves_latest_generation(tmp_path: Path):
+    """`successful_sg_names` is latest-generation-aware and symmetric with
+    `failed_sg_names`: an SG whose gen-0 outcome was Fail but whose gen-1 retry
+    Succeeded appears in successful (and NOT in failed), counted once."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(
+        batch_size=5,
+        batches=[
+            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
+        ],
+    )
+    bf.record_passfail(0, {'CPG_A': 'Success', 'CPG_B': 'Fail'})
+    bf.record_status(0, 'SUCCEEDED')
+    bf.add_retry_batch(sg_names=['CPG_B'])  # gen-1 retry, index 1
+    bf.record_passfail(1, {'CPG_B': 'Success'})
+    bf.record_status(1, 'SUCCEEDED')
+
+    assert sorted(bf.successful_sg_names()) == ['CPG_A', 'CPG_B']
+    assert bf.successful_sg_names().count('CPG_B') == 1  # not double-counted across generations
+    assert bf.failed_sg_names() == []
+
+
 def test_record_status_rejects_invalid_status(tmp_path: Path):
     """`failed_sg_names`, `cancelled_sg_names`, `successful_sg_names` compare
     against literal status strings. A typo from a future caller (e.g. the

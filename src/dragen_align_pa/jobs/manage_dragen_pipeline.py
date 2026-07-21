@@ -422,6 +422,12 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
     """
     counts = {'succeeded': 0, 'failed': 0, 'gone': 0, 'in_progress': 0}
     for entry in batches_file.batches:
+        if entry['status'] == BATCH_STATUS_CANCELLED:
+            # CANCELLED is terminal — never relabel it (its ICA analysis reports
+            # ABORTED, which would otherwise map to FAILED and resubmit). run()
+            # refuses force_retry on a cancelled cohort before we get here; this
+            # is defence-in-depth for any other caller.
+            continue
         pipeline_id = entry['pipeline_id']
         if not pipeline_id:
             continue
@@ -450,6 +456,9 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
             counts['succeeded'] += 1
         elif ica_status in ICA_TERMINAL_FAILURE_STATUSES:
             batches_file.record_status(batch.batch_index, BATCH_STATUS_FAILED)
+            # Symmetric with the 404 branch: a terminal ICA failure means any
+            # recorded passfail is stale, so clear it and let every SG resubmit.
+            batches_file.clear_passfail(batch.batch_index)
             counts['failed'] += 1
         else:
             # REQUESTED / AWAITINGINPUT / INPROGRESS — still running; let the resume monitor it.
@@ -854,6 +863,18 @@ def run(
         logger.info(f'Resuming from existing batches file {batches_file_path}')
         batches_file.read()
         if force_retry:
+            # CANCELLED is terminal: force_retry must not resurrect a user-cancelled
+            # cohort. Its aborted ICA analyses report ABORTED, which reconcile would
+            # otherwise map to FAILED and resubmit — silently defeating the cancel
+            # contract. Refuse up front (before any reconcile/resubmit); force_resubmit
+            # is the sanctioned recovery for a cancelled cohort.
+            cancelled_sgs = batches_file.cancelled_sg_names()
+            if cancelled_sgs:
+                raise CohortCancelled(
+                    f'Cohort {cohort.name} has {len(cancelled_sgs)} SG(s) in CANCELLED batches; '
+                    f'force_retry cannot recover a cancelled cohort. Rerun with force_resubmit=true '
+                    f'to start a fresh submission.',
+                )
             # Rewrite each submitted batch's status to ICA reality FIRST, so the
             # initial_batches filter and _build_retry_batches(force=True) below act
             # on the truth (a stale GCS-FAILED that ICA succeeded becomes SUCCEEDED
@@ -1008,8 +1029,11 @@ def run(
     if loop_failed_final:
         persisted = BatchesFile(path=batches_file_path)
         persisted.read()
+        # Resolve by `batch_index`, not list position — `read()` does not enforce
+        # that the list is ordered by batch_index (see `find_batch_for_sg`).
+        persisted_by_index = {b['batch_index']: b for b in persisted.batches}
         unrecorded = sorted(
-            idx for idx in loop_failed_final if persisted.batches[idx]['status'] != BATCH_STATUS_FAILED
+            idx for idx in loop_failed_final if persisted_by_index[idx]['status'] != BATCH_STATUS_FAILED
         )
         if unrecorded:
             raise RuntimeError(

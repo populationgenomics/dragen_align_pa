@@ -476,6 +476,38 @@ def test_reconcile_gone_batch_clears_passfail_so_all_sgs_resubmit(tmp_path: Path
     assert sorted(sg for b in forced for sg in b.sg_names) == ['SYN_A', 'SYN_B']
 
 
+def test_reconcile_terminal_failure_clears_stale_passfail(tmp_path: Path, monkeypatch):
+    """Symmetric with the 404 branch: an ICA terminal failure clears any recorded
+    passfail so the whole batch resubmits rather than harvesting stale Success SGs."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A', 'SYN_B'], status='SUCCEEDED')
+    bf.record_passfail(0, {'SYN_A': 'Success', 'SYN_B': 'Fail'})
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        lambda **_kwargs: 'ABORTED',
+    )
+    _reconcile_batches_with_ica('COH0001', bf)
+    assert bf.batches[0]['status'] == 'FAILED'
+    assert bf.batches[0]['passfail'] is None
+    assert bf.successful_sg_names() == []  # SYN_A not harvested from a failed analysis
+
+
+def test_reconcile_skips_cancelled_batch(tmp_path: Path, monkeypatch):
+    """CANCELLED is terminal: reconcile must not query or relabel a cancelled batch,
+    even though it still carries a pipeline_id (else its ABORTED status would map to
+    FAILED and the cancelled work would be resubmitted)."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A'], status='CANCELLED')
+
+    def _must_not_be_called(**_kwargs):
+        raise AssertionError('reconcile queried a CANCELLED batch')
+
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        _must_not_be_called,
+    )
+    _reconcile_batches_with_ica('COH0001', bf)
+    assert bf.batches[0]['status'] == 'CANCELLED'
+
+
 def test_reconcile_reraises_non_404_ica_error(tmp_path: Path, monkeypatch):
     """A transient/unexpected ICA error must not be swallowed as 'gone'."""
     bf = _submitted_batch_file(tmp_path, ['SYN_A'], status='INPROGRESS')

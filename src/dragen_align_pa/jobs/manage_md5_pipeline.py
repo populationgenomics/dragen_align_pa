@@ -226,4 +226,8 @@ def run(
         submit_function_factory=lambda _target_name: submit_callable,
         allow_retry=True,
         sleep_time_seconds=300,
+        # Zero-tolerance (the loop default): any FAILED_FINAL aborts the cohort.
+        # The 5%-rate gate was removed branch-wide; MD5 intentionally halts on a
+        # single unrecoverable failure rather than tolerating a fraction.
+        raise_on_failed_final=True,
     )

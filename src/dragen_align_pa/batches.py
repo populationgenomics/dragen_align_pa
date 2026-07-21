@@ -13,7 +13,6 @@ from dragen_align_pa.constants.batch_constants import (
     BATCH_STATUS_PENDING,
     BATCHES_SCHEMA_VERSION,
     CANONICAL_PASSFAIL_FAIL,
-    CANONICAL_PASSFAIL_SUCCESS,
     PASSFAIL_STATUS_NORMALISATION,
 )
 
@@ -414,6 +413,43 @@ class BatchesFile:
         )
         return new_index
 
+    def _resolve_latest_outcomes(self) -> tuple[list[str], dict[str, bool]]:
+        """Resolve each SG to its latest-generation determinate outcome.
+
+        An SG's outcome is taken from its highest-`batch_index` determinate
+        batch: per-sample passfail (Success/Fail), or a batch-level FAILED with
+        no passfail (every SG in the batch Fail). CANCELLED batches (empty
+        passfail) contribute no outcome.
+
+        Returns:
+            A `(first_seen_order, is_fail)` tuple: the SG names in first-seen
+            order and a map of SG name to whether its latest outcome is Fail.
+        """
+        latest_idx: dict[str, int] = {}
+        is_fail: dict[str, bool] = {}
+        first_seen: list[str] = []
+        for b in self.batches:
+            if b['status'] == BATCH_STATUS_CANCELLED:
+                # Cancellation is not an outcome — a batch that recorded a passfail
+                # then got CANCELLED reports only through `cancelled_sg_names()`.
+                continue
+            if b['status'] == BATCH_STATUS_FAILED and b['passfail'] is None:
+                outcomes: list[tuple[str, bool]] = [(sg, True) for sg in b['sg_names']]
+            elif b['passfail']:
+                outcomes = [(sg, status == CANONICAL_PASSFAIL_FAIL) for sg, status in b['passfail'].items()]
+            else:
+                continue
+            idx = b['batch_index']
+            for sg, fail in outcomes:
+                if sg not in latest_idx:
+                    first_seen.append(sg)
+                    latest_idx[sg] = idx
+                    is_fail[sg] = fail
+                elif idx > latest_idx[sg]:
+                    latest_idx[sg] = idx
+                    is_fail[sg] = fail
+        return first_seen, is_fail
+
     def failed_sg_names(self) -> list[str]:
         """SGs whose latest-generation outcome is Fail, across all batches.
 
@@ -426,26 +462,8 @@ class BatchesFile:
         Returns:
             The failed SG names (first-seen order); latest generation wins.
         """
-        latest_idx: dict[str, int] = {}
-        latest_is_fail: dict[str, bool] = {}
-        first_seen: list[str] = []
-        for b in self.batches:
-            if b['status'] == BATCH_STATUS_FAILED and b['passfail'] is None:
-                outcomes: list[tuple[str, bool]] = [(sg, True) for sg in b['sg_names']]
-            elif b['passfail']:
-                outcomes = [(sg, status == CANONICAL_PASSFAIL_FAIL) for sg, status in b['passfail'].items()]
-            else:
-                continue
-            idx = b['batch_index']
-            for sg, is_fail in outcomes:
-                if sg not in latest_idx:
-                    first_seen.append(sg)
-                    latest_idx[sg] = idx
-                    latest_is_fail[sg] = is_fail
-                elif idx >= latest_idx[sg]:
-                    latest_idx[sg] = idx
-                    latest_is_fail[sg] = is_fail
-        return [sg for sg in first_seen if latest_is_fail[sg]]
+        first_seen, is_fail = self._resolve_latest_outcomes()
+        return [sg for sg in first_seen if is_fail[sg]]
 
     def cancelled_sg_names(self) -> list[str]:
         """SGs in batches marked CANCELLED (by user `cancel_cohort_run`).
@@ -459,25 +477,17 @@ class BatchesFile:
         return [sg for b in self.batches if b['status'] == BATCH_STATUS_CANCELLED for sg in b['sg_names']]
 
     def successful_sg_names(self) -> list[str]:
-        """SGs explicitly marked Success in any non-CANCELLED batch's passfail.
+        """SGs whose latest-generation outcome is Success, across all batches.
 
-        Asymmetric with `failed_sg_names` by design: success requires positive
-        confirmation from `passfail.json`, whereas batch-level FAILED implies
-        Fail for every SG in the batch. An SG only appears here once its
-        batch's `passfail_seen` is True.
-
-        CANCELLED batches are excluded so a batch that records passfail then
-        is cancelled reports only through `cancelled_sg_names()` — this matches
-        `failed_sg_names`'s exclusion of CANCELLED and prevents the
-        resume-after-cancel guard from double-counting them.
+        Symmetric with `failed_sg_names`: each SG resolves to its highest-
+        `batch_index` determinate outcome, so an SG that failed a retry after an
+        earlier Success does not appear here (and vice versa). Success requires
+        positive confirmation from `passfail.json`; a batch-level FAILED with no
+        passfail is a Fail, not a Success. CANCELLED batches (empty passfail)
+        contribute no outcome.
         """
-        successful: list[str] = []
-        for b in self.batches:
-            if b['status'] == BATCH_STATUS_CANCELLED:
-                continue
-            if b['passfail']:
-                successful.extend(sg for sg, status in b['passfail'].items() if status == CANONICAL_PASSFAIL_SUCCESS)
-        return successful
+        first_seen, is_fail = self._resolve_latest_outcomes()
+        return [sg for sg in first_seen if not is_fail[sg]]
 
     def find_batch_for_sg(self, sg_name: str) -> dict[str, Any] | None:
         """Return the most recent (highest batch_index) batch containing `sg_name`.
