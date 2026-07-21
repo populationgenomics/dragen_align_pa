@@ -19,7 +19,7 @@ from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import config_retrieve, try_get_ar_guid
 from loguru import logger
 
-from dragen_align_pa.batches import IcaBatch
+from dragen_align_pa.batches import IcaBatch, PassfailStatusError
 from dragen_align_pa.constants import MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline
 from dragen_align_pa.utils import delete_pipeline_id_file
@@ -84,6 +84,12 @@ def _process_succeeded_transition(
         return True
     try:
         on_succeeded(target)
+    except PassfailStatusError:
+        # A malformed passfail value is deterministic, not transient: every retry
+        # re-reads the same file and re-raises. Propagate immediately so the cohort
+        # aborts with this error instead of spinning to the cap and condemning the
+        # whole batch to FAILED_FINAL.
+        raise
     except Exception as exc:  # noqa: BLE001
         target.on_succeeded_failure_count += 1
         if target.on_succeeded_failure_count >= max_failures:

@@ -6,7 +6,9 @@ in isolation; the SUCCEEDED-branch logic is extracted into a small helper
 exercised directly.
 """
 
-from dragen_align_pa.batches import IcaBatch
+import pytest
+
+from dragen_align_pa.batches import IcaBatch, PassfailStatusError
 from dragen_align_pa.jobs.ica_pipeline_manager import (
     MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES,
     MonitoredTarget,
@@ -51,6 +53,26 @@ def test_on_succeeded_returns_false_and_increments_counter_on_failure():
     assert proceed is False
     assert t.on_succeeded_failure_count == 1
     assert t.status == PipelineStatus.INPROGRESS  # not escalated yet
+
+
+def test_on_succeeded_propagates_passfail_status_error_immediately():
+    """A `PassfailStatusError` is a deterministic data error, not a transient
+    callback failure: the helper re-raises it immediately rather than counting it
+    toward the cap and escalating the whole batch to FAILED_FINAL (which would cost
+    MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES poll cycles and rerun every SG in the batch)."""
+    t = _make_target()
+
+    def _raise_passfail(_target: MonitoredTarget) -> None:
+        raise PassfailStatusError('unrecognised passfail status')
+
+    with pytest.raises(PassfailStatusError):
+        _process_succeeded_transition(
+            target=t,
+            on_succeeded=_raise_passfail,
+            on_status_change=None,
+        )
+    assert t.on_succeeded_failure_count == 0  # not counted as a transient failure
+    assert t.status == PipelineStatus.INPROGRESS  # not escalated to FAILED_FINAL
 
 
 def test_on_succeeded_escalates_to_failed_final_after_cap():

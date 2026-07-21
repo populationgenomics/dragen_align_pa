@@ -23,6 +23,13 @@ if TYPE_CHECKING:
     import cpg_utils
 
 
+class PassfailStatusError(ValueError):
+    """A passfail.json status value outside the recognised input set.
+
+    Subclasses `ValueError` so callers catching `ValueError` still match.
+    """
+
+
 def validate_error_strategy(value: str, *, context: str) -> None:
     """Validate an ICA `error_strategy` value.
 
@@ -50,12 +57,12 @@ def normalise_passfail_status(value: str, *, context: str) -> str:
         The canonical status (`CANONICAL_PASSFAIL_SUCCESS` or `CANONICAL_PASSFAIL_FAIL`).
 
     Raises:
-        ValueError: If `value` is outside the recognised input set.
+        PassfailStatusError: If `value` is outside the recognised input set.
     """
     try:
         return PASSFAIL_STATUS_NORMALISATION[value]
     except KeyError:
-        raise ValueError(
+        raise PassfailStatusError(
             f'{context}: passfail status must be one of {sorted(PASSFAIL_STATUS_NORMALISATION)}, got {value!r}.',
         ) from None
 
