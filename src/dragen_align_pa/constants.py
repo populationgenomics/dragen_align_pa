@@ -22,69 +22,9 @@ TODO_FID_PREFIX: Final = 'fil.TODO_'
 _TODO_FID: Final = f'{TODO_FID_PREFIX}REPLACE_AFTER_ICA_UPLOAD'
 
 
-# --- DRAGEN batch / pipeline management constants ---
-# Consumed by `batches.py` (the `{cohort}_batches.json` reader/writer) and the
-# DRAGEN orchestrator + shared monitor loop. Centralised here so the state
-# vocabulary lives in one place.
-
-# Schema version of the per-cohort `{cohort}_batches.json` state file.
-BATCHES_SCHEMA_VERSION: Final = 1
-
-# DRAGEN/ICA accepts exactly these `error_strategy` pipeline-parameter values.
-ALLOWED_ERROR_STRATEGIES: Final = frozenset({'auto', 'continue', 'terminate'})
-
-# Per-batch status values persisted in `batches.json`. The orchestrator's in-memory
-# `PipelineStatus` enum is finer-grained (FAILED_RETRYING / FAILED_FINAL); the
-# persistence layer collapses both to `BATCH_STATUS_FAILED`. A typo in a literal is
-# a silent lookup miss; a typo in one of these names is a NameError.
-BATCH_STATUS_PENDING: Final = 'PENDING'
-BATCH_STATUS_INPROGRESS: Final = 'INPROGRESS'
-BATCH_STATUS_SUCCEEDED: Final = 'SUCCEEDED'
-BATCH_STATUS_FAILED: Final = 'FAILED'
-BATCH_STATUS_CANCELLED: Final = 'CANCELLED'
-ALLOWED_BATCH_STATUSES: Final = frozenset(
-    {
-        BATCH_STATUS_PENDING,
-        BATCH_STATUS_INPROGRESS,
-        BATCH_STATUS_SUCCEEDED,
-        BATCH_STATUS_FAILED,
-        BATCH_STATUS_CANCELLED,
-    },
-)
-# Statuses meaning "still being worked (or waiting to be)"; the resume paths use
-# this to decide which batches to re-monitor.
-ACTIVE_BATCH_STATUSES: Final = frozenset({BATCH_STATUS_PENDING, BATCH_STATUS_INPROGRESS})
-
-# Per-sample passfail vocabulary. DRAGEN's `passfail.json` writes `"Success"` /
-# `"Failed"`; `batches.record_passfail` normalises at the persistence boundary so
-# downstream code only ever compares against the two canonical values below.
-# `"Fail"` (not `"Failed"`) is canonical because every existing consumer already
-# compared `== 'Fail'`.
-CANONICAL_PASSFAIL_SUCCESS: Final = 'Success'
-CANONICAL_PASSFAIL_FAIL: Final = 'Fail'
-PASSFAIL_STATUS_NORMALISATION: Final = {
-    'Success': CANONICAL_PASSFAIL_SUCCESS,
-    'Fail': CANONICAL_PASSFAIL_FAIL,
-    'Failed': CANONICAL_PASSFAIL_FAIL,
-}
-
-# Default batch chunking width (sequencing groups per ICA analysis).
-DEFAULT_BATCH_SIZE: Final = 5
-
-# Cap on consecutive `on_succeeded` callback failures before the shared monitor
-# loop escalates a target to FAILED_FINAL rather than spinning forever.
-MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES: Final = 5
-
-# Raw ICA analysis status vocabulary (from `check_ica_pipeline_status`) — a
-# DISTINCT vocabulary from the persisted `BATCH_STATUS_*` values (they coincide
-# only in spelling for SUCCEEDED). `force_retry` reconciliation maps a terminal
-# ICA failure status to `BATCH_STATUS_FAILED`. ABORTED is treated as needing a
-# rerun (force_retry is an explicit attempt to obtain results).
-ICA_STATUS_SUCCEEDED: Final = 'SUCCEEDED'
-ICA_TERMINAL_FAILURE_STATUSES: Final = frozenset({'FAILED', 'FAILEDFINAL', 'ABORTED'})
-
-# HTTP status code for a missing ICA resource (analysis expired/deleted).
-HTTP_NOT_FOUND: Final = 404
+# The config-free DRAGEN batch / pipeline-management constants (batch status +
+# passfail vocabulary, schema version, chunking width, ICA status vocabulary)
+# live in `batch_constants.py` so they can be imported without a loaded config.
 
 
 # ICA project setup

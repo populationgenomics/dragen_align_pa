@@ -20,7 +20,7 @@ from cpg_utils.config import config_retrieve, try_get_ar_guid
 from loguru import logger
 
 from dragen_align_pa.batches import IcaBatch, PassfailStatusError
-from dragen_align_pa.constants import MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES
+from dragen_align_pa.batch_constants import MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline
 from dragen_align_pa.utils import delete_pipeline_id_file
 

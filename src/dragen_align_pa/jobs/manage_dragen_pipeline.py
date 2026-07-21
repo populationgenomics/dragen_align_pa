@@ -25,7 +25,7 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils
 from dragen_align_pa.batches import BatchesFile, IcaBatch, chunk_sgs_into_batches
-from dragen_align_pa.constants import (
+from dragen_align_pa.batch_constants import (
     ACTIVE_BATCH_STATUSES,
     BATCH_STATUS_CANCELLED,
     BATCH_STATUS_FAILED,
