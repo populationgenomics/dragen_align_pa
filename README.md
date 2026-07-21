@@ -92,7 +92,8 @@ Your TOML configuration file must specify the following key options:
    * `[ica.projects]`: Set `project_root` to the dataset family (e.g. `ourdna`). Everything ICA needs for the run is derived from that family's `ICA_PROJECT_SETUP` block in [`constants.py`](src/dragen_align_pa/constants.py) — the DRAGEN-align, DRAGEN-MLR and FASTQ-upload projects, the API-key secret field, the MLR config file id, and the `can_delete_fastq` flag — so only the family is named here. Must be a registered family. **Onboarding a new family** means adding one `ICA_PROJECT_SETUP` block and setting the matching API-key value in the `illumina_cpg_workbench_api` Secret Manager secret; the submitter's validator then fails fast if anything in the block is missing or a placeholder. Note that a *registered* family can still be non-runnable until its MLR config file id is minted (a `fil.TODO_…` placeholder is rejected at submit).
    * `[ica.management]`:
       * `monitor_previous`: Set to `false` for new runs, set to `true` if the pipeline in GCS crashes, but the pipelines in ICA are still running fine.
-      * `force_resubmit`: This should almost always be set to `false`. Set to `true` if you encounter an unrecoverable desync between the state recorded in GCS and ICA. This will overwrite the state files in GCS, and force the ICA pipeline to run again, even if it had completed successfully.
+      * `force_resubmit`: This should almost always be set to `false`. Set to `true` to start a fresh run: it deletes the GCS state (batches file, completion marker, per-SG state) and re-submits every batch from scratch, even ones that had completed. Use this only when you want to discard prior work entirely.
+      * `force_retry`: The non-destructive recovery counterpart to `force_resubmit`. Set to `true` when the GCS state has drifted from ICA (e.g. batches recorded `FAILED` in GCS that actually completed in ICA) and you want to *keep* the successful work. It first reconciles every submitted batch's recorded status against its real ICA analysis status + `passfail.json` — harvesting anything ICA shows succeeded — then reruns only what genuinely failed (overriding the one-shot retry gate, and re-chunking still-failed SGs; a batch whose ICA analysis is gone is resubmitted fresh). Requires an existing state file. Mutually exclusive with the other `[ica.management]` flags.
   * `[ica.tags]`: Set these to sensible values. It is recommended to set reads type and sequencing type in the technical tags, project name in the user tags, correct reference in the reference tags at a minimum.
   * `[dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names]`: Set these to the names of the BED files to use for exome alignment. These must match the name(s) of BED files defined in [`constants.py`](src/dragen_align_pa/constants.py).
   * `[ica.data_prep]`:
@@ -119,6 +120,15 @@ If you need to cancel a pipeline that is running in ICA:
 5.  It will then delete all of the state files in GCS, so that you don't hit an error `The pipeline has been cancelled` when resubmitting.
 
 This sequence avoids the need of cancelling hundreds of pipeline runs in ICA manually.
+
+### Recovering a Desynced Run (`force_retry`)
+
+If a pipeline failure left the GCS state file out of sync with ICA — most commonly batches recorded `FAILED` in GCS whose ICA analyses actually completed — a plain resubmit won't pick the real state back up. Set `ica.management.force_retry = true` and re-launch with the same `analysis-runner` command. The `Manage` stage will:
+
+1.  Reconcile every batch that reached ICA: read its live ICA analysis status (and `passfail.json` for succeeded analyses) and rewrite the GCS state to match, so successfully-completed work is harvested rather than rerun.
+2.  Rerun only what genuinely failed — batches ICA reports failed, and per-sample QC failures — overriding the normal one-shot retry limit. A batch whose ICA analysis no longer exists is resubmitted as fresh work.
+
+Unlike `force_resubmit`, this preserves completed CRAMs instead of recomputing them.
 
 ## Pipeline Outputs
 

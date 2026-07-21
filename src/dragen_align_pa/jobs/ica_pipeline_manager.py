@@ -20,6 +20,7 @@ from cpg_utils.config import config_retrieve, try_get_ar_guid
 from loguru import logger
 
 from dragen_align_pa.batches import IcaBatch
+from dragen_align_pa.constants import MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline
 from dragen_align_pa.utils import delete_pipeline_id_file
 
@@ -35,15 +36,6 @@ class PipelineStatus(Enum):
     FAILED_RETRYING = auto()
     FAILED_FINAL = auto()
     CANCELLED = auto()
-
-
-# Cap on consecutive `on_succeeded` callback failures for a single target.
-# A persistently broken callback (e.g. permanent IAM error fetching passfail.json)
-# would otherwise spin the polling loop forever, hammering ICA on every pass
-# with no escalation. After the cap, the helper transitions the target to
-# FAILED_FINAL and fires on_status_change so the orchestrator surfaces it as
-# a real failure.
-MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES = 5
 
 
 class MonitoredTarget:
@@ -129,6 +121,12 @@ def _failed_final_target_names(monitored_targets: Sequence['MonitoredTarget']) -
     polling loop. `manage_ica_pipeline_loop` raises on a non-empty result unless
     the caller passed `raise_on_failed_final=False` (DRAGEN, which defers the
     decision to its orchestrator).
+
+    Args:
+        monitored_targets: The loop's monitored targets to inspect.
+
+    Returns:
+        The `.name` of each target in `FAILED_FINAL` status (empty if none).
     """
     return [t.name for t in monitored_targets if t.status == PipelineStatus.FAILED_FINAL]
 

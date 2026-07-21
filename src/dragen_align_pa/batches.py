@@ -4,59 +4,35 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from dragen_align_pa.constants import (
+    ALLOWED_BATCH_STATUSES,
+    ALLOWED_ERROR_STRATEGIES,
+    BATCH_STATUS_CANCELLED,
+    BATCH_STATUS_FAILED,
+    BATCH_STATUS_INPROGRESS,
+    BATCH_STATUS_PENDING,
+    BATCHES_SCHEMA_VERSION,
+    CANONICAL_PASSFAIL_FAIL,
+    CANONICAL_PASSFAIL_SUCCESS,
+    PASSFAIL_STATUS_NORMALISATION,
+)
+
 if TYPE_CHECKING:
     from pathlib import Path
 
     import cpg_utils
 
-SCHEMA_VERSION = 1
-
-# DRAGEN/ICA accepts exactly these three values for the `error_strategy`
-# pipeline parameter. Anything else is rejected at the API boundary with an
-# opaque message; we validate locally so misuse fails fast with a clear error.
-ALLOWED_ERROR_STRATEGIES = frozenset({'auto', 'continue', 'terminate'})
-
-# Per-batch status values written into batches.json. Named so call sites
-# compare against `BATCH_STATUS_FAILED` rather than the bare string 'FAILED' —
-# a typo in a literal is a silent lookup miss, a typo in a name is a NameError.
-# The orchestrator's in-memory `PipelineStatus` enum is finer-grained
-# (FAILED_RETRYING / FAILED_FINAL); the persistence layer collapses both to
-# `BATCH_STATUS_FAILED`.
-BATCH_STATUS_PENDING = 'PENDING'
-BATCH_STATUS_INPROGRESS = 'INPROGRESS'
-BATCH_STATUS_SUCCEEDED = 'SUCCEEDED'
-BATCH_STATUS_FAILED = 'FAILED'
-BATCH_STATUS_CANCELLED = 'CANCELLED'
-
-ALLOWED_BATCH_STATUSES = frozenset(
-    {
-        BATCH_STATUS_PENDING,
-        BATCH_STATUS_INPROGRESS,
-        BATCH_STATUS_SUCCEEDED,
-        BATCH_STATUS_FAILED,
-        BATCH_STATUS_CANCELLED,
-    },
-)
-
-# Statuses that mean "a batch is still being worked (or waiting to be)". Used by
-# the resume paths to decide which batches to re-monitor.
-ACTIVE_BATCH_STATUSES = frozenset({BATCH_STATUS_PENDING, BATCH_STATUS_INPROGRESS})
-
-# Per-sample passfail status vocabulary. DRAGEN's `passfail.json` writes
-# `"Success"` / `"Failed"`; we normalise at the persistence boundary
-# (`record_passfail`) so downstream code only ever compares against the two
-# canonical values below. `"Fail"` (not `"Failed"`) is canonical because every
-# existing consumer already compared `== 'Fail'`.
-CANONICAL_PASSFAIL_SUCCESS = 'Success'
-CANONICAL_PASSFAIL_FAIL = 'Fail'
-_PASSFAIL_STATUS_NORMALISATION = {
-    'Success': CANONICAL_PASSFAIL_SUCCESS,
-    'Fail': CANONICAL_PASSFAIL_FAIL,
-    'Failed': CANONICAL_PASSFAIL_FAIL,
-}
-
 
 def validate_error_strategy(value: str, *, context: str) -> None:
+    """Validate an ICA `error_strategy` value.
+
+    Args:
+        value: The `error_strategy` to check.
+        context: Caller description prefixed to the error message.
+
+    Raises:
+        ValueError: If `value` is not one of `ALLOWED_ERROR_STRATEGIES`.
+    """
     if value not in ALLOWED_ERROR_STRATEGIES:
         raise ValueError(
             f'{context}: error_strategy must be one of {sorted(ALLOWED_ERROR_STRATEGIES)}, got {value!r}.',
@@ -66,13 +42,21 @@ def validate_error_strategy(value: str, *, context: str) -> None:
 def normalise_passfail_status(value: str, *, context: str) -> str:
     """Map a raw passfail status onto the canonical `"Success"` / `"Fail"`.
 
-    Raises `ValueError` on any status outside the recognised input set.
+    Args:
+        value: A raw passfail status (DRAGEN writes `"Success"` / `"Failed"`).
+        context: Caller description prefixed to the error message.
+
+    Returns:
+        The canonical status (`CANONICAL_PASSFAIL_SUCCESS` or `CANONICAL_PASSFAIL_FAIL`).
+
+    Raises:
+        ValueError: If `value` is outside the recognised input set.
     """
     try:
-        return _PASSFAIL_STATUS_NORMALISATION[value]
+        return PASSFAIL_STATUS_NORMALISATION[value]
     except KeyError:
         raise ValueError(
-            f'{context}: passfail status must be one of {sorted(_PASSFAIL_STATUS_NORMALISATION)}, got {value!r}.',
+            f'{context}: passfail status must be one of {sorted(PASSFAIL_STATUS_NORMALISATION)}, got {value!r}.',
         ) from None
 
 
@@ -270,10 +254,10 @@ class BatchesFile:
         with self.path.open('r') as fh:
             data = json.load(fh)
         version = data.get('schema_version', 0)
-        if version != SCHEMA_VERSION:
+        if version != BATCHES_SCHEMA_VERSION:
             raise ValueError(
                 f'BatchesFile schema_version mismatch in {self.path}: '
-                f'file has {version}, code expects {SCHEMA_VERSION}',
+                f'file has {version}, code expects {BATCHES_SCHEMA_VERSION}',
             )
         for required in ('batch_size', 'batches'):
             if required not in data:
@@ -313,7 +297,7 @@ class BatchesFile:
         copy+delete) and is intentionally removed here.
         """
         payload = {
-            'schema_version': SCHEMA_VERSION,
+            'schema_version': BATCHES_SCHEMA_VERSION,
             'batch_size': self.batch_size,
             'n_batches': len(self.batches),
             'batches': self.batches,
@@ -428,6 +412,9 @@ class BatchesFile:
         Deduplicated across batches so an SG that fails in both gen=0 and
         gen=1 counts once — the orchestrator's completion-marker failure count
         uses `len(failed_sg_names())` and must not be inflated by retried failures.
+
+        Returns:
+            The failed SG names (deduplicated, first-seen order), excluding CANCELLED.
         """
         seen: set[str] = set()
         failed: list[str] = []

@@ -18,23 +18,28 @@ import json
 from collections.abc import Callable
 
 import cpg_utils
+import icasdk
+import requests
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
-from dragen_align_pa.batches import (
+from dragen_align_pa.batches import BatchesFile, IcaBatch, chunk_sgs_into_batches
+from dragen_align_pa.constants import (
     ACTIVE_BATCH_STATUSES,
     BATCH_STATUS_CANCELLED,
     BATCH_STATUS_FAILED,
+    BATCH_STATUS_INPROGRESS,
     BATCH_STATUS_SUCCEEDED,
     CANONICAL_PASSFAIL_FAIL,
-    BatchesFile,
-    IcaBatch,
-    chunk_sgs_into_batches,
+    DEFAULT_BATCH_SIZE,
+    HTTP_NOT_FOUND,
+    ICA_STATUS_SUCCEEDED,
+    ICA_TERMINAL_FAILURE_STATUSES,
 )
 from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
-from dragen_align_pa.jobs import cancel_ica_pipeline_run, submit_dragen_batch
+from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline, submit_dragen_batch
 from dragen_align_pa.jobs.ica_pipeline_manager import (
     MonitoredTarget,
     PipelineStatus,
@@ -43,14 +48,6 @@ from dragen_align_pa.jobs.ica_pipeline_manager import (
 from dragen_align_pa.jobs.parse_passfail import fetch_passfail_from_ica
 from dragen_align_pa.ica_utils import ica_cohort_path, ica_run_path
 from dragen_align_pa.utils import get_pipeline_path
-
-# Single source of truth for the default batch chunking width. Used both by
-# this orchestrator (to chunk SGs at submit time) and by `ManageDragenPipeline.
-# expected_outputs` (to declare enough per-batch output keys for the loop to
-# resolve). Both readers MUST use this constant — divergence between the two
-# defaults would cause `_build_loop_outputs_for_batches` to raise with a stale
-# "force_resubmit" message even when no user override is in play.
-DEFAULT_BATCH_SIZE = 5
 
 
 class CohortCancelled(RuntimeError):  # noqa: N818
@@ -189,6 +186,124 @@ def _persist_per_sg_state_for_batch(
             )
 
 
+# Errors that a passfail/folder ICA fetch can surface: the ICA SDK's API error,
+# a network failure from the presigned-URL GET, and a non-JSON body slipping past
+# `raise_for_status`. `FileNotFoundError` (folder/file absent) is caught locally.
+_PASSFAIL_FETCH_ERRORS = (icasdk.ApiException, requests.RequestException, json.JSONDecodeError)
+
+
+def _fetch_batch_passfail_and_folder(
+    batch: IcaBatch,
+    user_reference: str,
+    pipeline_id: str,
+) -> tuple[dict[str, str] | None, str | None]:
+    """Fetch a SUCCEEDED batch's `passfail.json` and (best-effort) its output-folder fid.
+
+    Opens one ICA project-data API context. Shared by the live `on_succeeded`
+    callback and `force_retry` reconciliation.
+
+    Args:
+        batch: The batch whose ICA analysis output is being read.
+        user_reference: The batch's stored ICA `user_reference` (names the folder).
+        pipeline_id: The batch's stored ICA analysis (pipeline) id.
+
+    Returns:
+        A `(passfail, folder_fid)` tuple. `passfail` is the parsed `{sg: status}`
+        mapping, or `None` when the file is legitimately absent (a catastrophically-
+        failed batch that produced none). `folder_fid` is the analysis output-folder
+        id, or `None` if it could not be resolved (best-effort).
+
+    Raises:
+        icasdk.ApiException: On an ICA API error fetching passfail.json.
+        requests.RequestException: On a network error fetching the presigned URL.
+        json.JSONDecodeError: If the presigned URL serves a non-JSON body.
+    """
+    # ICA names the analysis folder `{user_reference}-{pipeline_id}` (see
+    # `get_ica_sample_folder` in ica_utils.py — same separator). The hyphen is
+    # required: user_reference ends in `_`, so the folder name is `…_-{pipeline_id}/`.
+    analysis_folder_name = f'{user_reference}-{pipeline_id}'
+    # ICA writes each batch's analysis folder INSIDE the cohort-level parent folder
+    # (`PrepareIcaForDragenAnalysis` creates one folder named `cohort.name`). Both
+    # levels come from the shared builders so they stay in lockstep with
+    # `ica_utils.get_ica_sample_folder`.
+    ica_parent = ica_cohort_path(batch.cohort_name).as_folder()
+    ica_folder = ica_run_path(batch.cohort_name, user_reference, pipeline_id).as_folder()
+
+    folder_fid: str | None = None
+    with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
+        passfail = fetch_passfail_from_ica(
+            api_instance=api_instance,
+            path_parameters=path_parameters,
+            ica_folder_path=ica_folder,
+        )
+        # Best-effort folder-ID lookup; useful for future cleanup. Not fatal if missing.
+        try:
+            folder_fid = ica_api_utils.find_file_id_by_name(
+                api_instance=api_instance,
+                path_parameters=path_parameters,
+                parent_folder_path=ica_parent,
+                file_name=analysis_folder_name,
+            )
+        except (icasdk.ApiException, FileNotFoundError) as e:
+            logger.warning(
+                f'Batch {batch.name} (analysis {pipeline_id}, folder {analysis_folder_name}): '
+                f'could not resolve analysis output folder ID: {e}',
+            )
+    return passfail, folder_fid
+
+
+def _record_succeeded_batch(
+    batches_file: BatchesFile,
+    batch: IcaBatch,
+    pipeline_id: str,
+    passfail: dict[str, str] | None,
+    folder_fid: str | None,
+) -> None:
+    """Persist a SUCCEEDED batch's passfail outcome (+ folder fid + status) to the batches file.
+
+    Shared by `on_succeeded` and `force_retry`. Writes the batches file.
+
+    Args:
+        batches_file: The cohort batches file to record into (mutated + written).
+        batch: The batch being recorded.
+        pipeline_id: The batch's ICA analysis id (for log context).
+        passfail: The parsed `{sg: status}` mapping, or `None`. `None` means the
+            analysis produced no passfail.json (catastrophic) → all SGs are recorded
+            Fail so the retry pass resubmits them.
+        folder_fid: The analysis output-folder id, or `None` if unresolved.
+    """
+    if passfail is None:
+        logger.warning(
+            f'Batch {batch.name} (analysis {pipeline_id}): passfail.json not found at ICA root; '
+            f'treating all SGs as Fail.',
+        )
+        batches_file.record_passfail(batch.batch_index, dict.fromkeys(batch.sg_names, CANONICAL_PASSFAIL_FAIL))
+    else:
+        # Defensive: passfail keys MUST match batch.sg_names (RGSM == sg_name invariant).
+        expected = set(batch.sg_names)
+        unexpected = set(passfail) - expected
+        missing = expected - set(passfail)
+        if unexpected:
+            logger.warning(
+                f'Batch {batch.name} (analysis {pipeline_id}): passfail.json contains unexpected '
+                f'sample IDs {unexpected}; dropping them. This usually means RGSM != sg_name '
+                f'(CRAM mode: original SM tag differs from the cpg-flow SG ID).',
+            )
+        if missing:
+            logger.warning(
+                f'Batch {batch.name} (analysis {pipeline_id}): passfail.json missing entries for '
+                f'SGs {missing}; marking them as Fail so they enter the retry path.',
+            )
+        filtered = {sg: passfail[sg] for sg in batch.sg_names if sg in passfail}
+        for sg in missing:
+            filtered[sg] = CANONICAL_PASSFAIL_FAIL
+        batches_file.record_passfail(batch.batch_index, filtered)
+    if folder_fid is not None:
+        batches_file.record_analysis_output_folder_fid(batch.batch_index, folder_fid)
+    batches_file.record_status(batch.batch_index, BATCH_STATUS_SUCCEEDED)
+    batches_file.write()
+
+
 def _on_succeeded_factory(
     batches_file: BatchesFile,
     batches_by_name: dict[str, IcaBatch],
@@ -208,43 +323,13 @@ def _on_succeeded_factory(
             return
 
         batch_entry = batches_file.batches[batch.batch_index]
-        # ICA names the analysis folder `{user_reference}-{pipeline_id}` (see
-        # `get_ica_sample_folder` in ica_utils.py — same separator). The hyphen is
-        # required: user_reference ends in `_`, so the resulting folder name
-        # is `…_-{pipeline_id}/`.
-        analysis_folder_name = f'{batch_entry["user_reference"]}-{batch_entry["pipeline_id"]}'
-        # ICA writes each batch's analysis folder INSIDE the cohort-level parent folder
-        # (`PrepareIcaForDragenAnalysis` creates one folder named `cohort.name` and passes
-        # its fid to ICA as `outputParentFolderId`). Both levels come from the shared
-        # builders so they stay in lockstep with `ica_utils.get_ica_sample_folder`.
-        ica_parent = ica_cohort_path(batch.cohort_name).as_folder()
-        ica_folder = ica_run_path(
-            batch.cohort_name, batch_entry['user_reference'], batch_entry['pipeline_id']
-        ).as_folder()
-
-        passfail = None
-        folder_fid: str | None = None
         try:
-            with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
-                passfail = fetch_passfail_from_ica(
-                    api_instance=api_instance,
-                    path_parameters=path_parameters,
-                    ica_folder_path=ica_folder,
-                )
-                # Best-effort folder-ID lookup; useful for future cleanup. Not fatal if missing.
-                try:
-                    folder_fid = ica_api_utils.find_file_id_by_name(
-                        api_instance=api_instance,
-                        path_parameters=path_parameters,
-                        parent_folder_path=ica_parent,
-                        file_name=analysis_folder_name,
-                    )
-                except Exception as e:  # noqa: BLE001
-                    logger.warning(
-                        f'Batch {batch.name} (analysis {batch_entry["pipeline_id"]}, '
-                        f'folder {analysis_folder_name}): could not resolve analysis output folder ID: {e}',
-                    )
-        except Exception as e:  # noqa: BLE001
+            passfail, folder_fid = _fetch_batch_passfail_and_folder(
+                batch,
+                batch_entry['user_reference'],
+                batch_entry['pipeline_id'],
+            )
+        except _PASSFAIL_FETCH_ERRORS as e:
             # RAISE (don't `return`): the shared loop's transactional callback
             # contract catches this, logs it, and leaves the per-target status
             # at INPROGRESS. batches.json also stays INPROGRESS (we never
@@ -257,44 +342,7 @@ def _on_succeeded_factory(
                 f'leaving status INPROGRESS so the next poll can re-fetch.',
             ) from e
 
-        # `passfail is None` here means the file is legitimately absent (a
-        # catastrophically-failed batch that never produced one). Distinct from
-        # a transient ICA error — those raise above and re-fire next poll.
-        # Treating an absent passfail.json as "all SGs Fail" is the spec'd
-        # fallback; the retry pass then resubmits those SGs.
-        if passfail is None:
-            logger.warning(
-                f'Batch {batch.name} (analysis {batch_entry["pipeline_id"]}, '
-                f'folder {analysis_folder_name}): passfail.json not found at ICA root; '
-                f'treating all SGs as Fail.',
-            )
-            batches_file.record_passfail(batch.batch_index, dict.fromkeys(batch.sg_names, CANONICAL_PASSFAIL_FAIL))
-        else:
-            # Defensive: passfail keys MUST match batch.sg_names (RGSM == sg_name invariant).
-            expected = set(batch.sg_names)
-            unexpected = set(passfail) - expected
-            missing = expected - set(passfail)
-            if unexpected:
-                logger.warning(
-                    f'Batch {batch.name} (analysis {batch_entry["pipeline_id"]}, '
-                    f'folder {analysis_folder_name}): passfail.json contains unexpected '
-                    f'sample IDs {unexpected}; dropping them. This usually means '
-                    f'RGSM != sg_name (CRAM mode: original SM tag differs from the cpg-flow SG ID).',
-                )
-            if missing:
-                logger.warning(
-                    f'Batch {batch.name} (analysis {batch_entry["pipeline_id"]}, '
-                    f'folder {analysis_folder_name}): passfail.json missing entries for SGs {missing}; '
-                    f'marking them as Fail so they enter the retry path.',
-                )
-            filtered = {sg: passfail[sg] for sg in batch.sg_names if sg in passfail}
-            for sg in missing:
-                filtered[sg] = CANONICAL_PASSFAIL_FAIL
-            batches_file.record_passfail(batch.batch_index, filtered)
-        if folder_fid is not None:
-            batches_file.record_analysis_output_folder_fid(batch.batch_index, folder_fid)
-        batches_file.record_status(batch.batch_index, BATCH_STATUS_SUCCEEDED)
-        batches_file.write()
+        _record_succeeded_batch(batches_file, batch, batch_entry['pipeline_id'], passfail, folder_fid)
 
     return _on_succeeded
 
@@ -319,12 +367,19 @@ def _on_status_change_factory(
     transactional `_on_succeeded_factory` already records SUCCEEDED via
     `batches_file.record_status(idx, BATCH_STATUS_SUCCEEDED)`.
 
-    `failed_final_sink` receives the batch_index of every FAILED_FINAL transition
-    the loop reports, INDEPENDENT of whether the persisting `record_status` +
-    `write()` below succeeds (this callback runs through the loop's best-effort
-    `_fire_status_change`, which swallows write errors). `run()` reconciles this
-    set against the persisted file at the end so a silently-dropped write can't
-    let the run declare success with a batch the loop knew had failed.
+    Args:
+        batches_file: The cohort batches file to mirror transitions into.
+        batches_by_name: Map of batch name → `IcaBatch` for the targets in this loop.
+        failed_final_sink: Receives the `batch_index` of every FAILED_FINAL
+            transition the loop reports, INDEPENDENT of whether the persisting
+            `record_status` + `write()` below succeeds (this callback runs through
+            the loop's best-effort `_fire_status_change`, which swallows write
+            errors). `run()` reconciles this set against the persisted file at the
+            end so a silently-dropped write can't let the run declare success with
+            a batch the loop knew had failed.
+
+    Returns:
+        The `on_status_change` callback for `manage_ica_pipeline_loop`.
     """
 
     def _on_status_change(monitored: MonitoredTarget, new_status: PipelineStatus) -> None:
@@ -353,48 +408,131 @@ def _on_status_change_factory(
     return _on_status_change
 
 
+def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> None:
+    """`force_retry`: overwrite each submitted batch's GCS status with ICA reality.
+
+    For every batch that reached ICA (has a `pipeline_id`), query the live analysis
+    status and — for a SUCCEEDED analysis — its `passfail.json`, then rewrite the
+    batches file to match. This corrects a stale GCS status (e.g. a batch marked
+    FAILED on disk that ICA actually completed with all-Success passfail) so only
+    genuinely-failed work reruns. A batch whose analysis is gone (404) is marked
+    FAILED to resubmit fresh; an INPROGRESS analysis is left for the normal resume
+    to monitor. Batches with no `pipeline_id` never reached ICA and ride the normal
+    PENDING resume, so they are skipped here. Writes the batches file.
+
+    Args:
+        cohort_name: The cohort being reconciled (for building ICA paths + logs).
+        batches_file: The cohort batches file to reconcile in place (read from disk,
+            already loaded; mutated + written here).
+
+    Raises:
+        icasdk.ApiException: On any non-404 ICA error querying an analysis status
+            (a 404 is handled as "analysis gone", not re-raised).
+    """
+    counts = {'succeeded': 0, 'failed': 0, 'gone': 0, 'in_progress': 0}
+    for entry in batches_file.batches:
+        pipeline_id = entry['pipeline_id']
+        if not pipeline_id:
+            continue
+        batch = IcaBatch(cohort_name=cohort_name, batch_index=entry['batch_index'], sg_names=entry['sg_names'])
+        try:
+            ica_status = monitor_dragen_pipeline.run(ica_pipeline_id=pipeline_id, is_mlr=False)
+        except icasdk.ApiException as e:
+            if e.status != HTTP_NOT_FOUND:
+                raise
+            logger.warning(
+                f'Batch {batch.name}: ICA analysis {pipeline_id} not found (gone); '
+                f'marking {BATCH_STATUS_FAILED} to resubmit fresh.',
+            )
+            batches_file.record_status(batch.batch_index, BATCH_STATUS_FAILED)
+            counts['gone'] += 1
+            continue
+
+        if ica_status == ICA_STATUS_SUCCEEDED:
+            passfail, folder_fid = _fetch_batch_passfail_and_folder(batch, entry['user_reference'], pipeline_id)
+            _record_succeeded_batch(batches_file, batch, pipeline_id, passfail, folder_fid)
+            counts['succeeded'] += 1
+        elif ica_status in ICA_TERMINAL_FAILURE_STATUSES:
+            batches_file.record_status(batch.batch_index, BATCH_STATUS_FAILED)
+            counts['failed'] += 1
+        else:
+            # REQUESTED / AWAITINGINPUT / INPROGRESS — still running; let the resume monitor it.
+            batches_file.record_status(batch.batch_index, BATCH_STATUS_INPROGRESS)
+            counts['in_progress'] += 1
+
+    batches_file.write()
+    logger.info(
+        f'force_retry reconciliation for {cohort_name}: {counts["succeeded"]} succeeded, '
+        f'{counts["failed"]} failed, {counts["gone"]} gone (resubmit fresh), '
+        f'{counts["in_progress"]} still running.',
+    )
+
+
 def _build_retry_batches(
     cohort_name: str,
     batches_file: BatchesFile,
     batch_size: int,
+    *,
+    force: bool = False,
 ) -> list[IcaBatch]:
     """Form retry batches from per-sample failures across batches.
 
-    Only retries batches with `retry_generation == 0` (the initial cohort batches).
-    Uses `BatchesFile.add_retry_batch` to append retry entries and
-    `BatchesFile.mark_sgs_retried` to record the per-SG audit trail on the
-    source batches. Retry batches are created with `has_been_retried=True` and
-    `error_strategy` defaulting to `continue` for single-sample batches, so a
-    hypothetical second retry pass short-circuits — enforcing the single-retry
-    invariant.
+    Normal mode: only retries batches with `retry_generation == 0` (the initial
+    cohort batches) that have not `has_been_retried`. Uses `BatchesFile.add_retry_batch`
+    to append retry entries and `BatchesFile.mark_sgs_retried` to record the per-SG
+    audit trail on the source batches. Retry batches are created with
+    `has_been_retried=True` and `error_strategy` defaulting to `continue` for
+    single-sample batches, so a second retry pass short-circuits — enforcing the
+    single-retry invariant.
+
+    `force=True` (operator `force_retry`): ignores the single-retry gate and
+    considers failures across ALL generations, so an already-retried failure can be
+    resubmitted again. Still-succeeded SGs (in `successful_sg_names()`) are excluded
+    so a harvested sample is never rerun — this pairs with `_reconcile_batches_with_ica`,
+    which first rewrites each batch's status to ICA reality.
 
     `CANCELLED` is treated as a **terminal** state — `cancel_cohort_run=true` is
     a user-initiated abort and the spec (§4 line 214) does not allow it to spawn
-    retries. Only `FAILED` (ICA-level infrastructure failure) feeds the retry
-    path when no `passfail.json` was produced.
+    retries (in both modes: a CANCELLED batch has empty `passfail` and status
+    CANCELLED, so neither branch below selects it). Only `FAILED` (ICA-level
+    infrastructure failure) feeds the retry path when no `passfail.json` was produced.
 
     Resume uses `retry_generation` + `status` (NOT `has_been_retried`) so in-flight
     retry batches that crashed mid-submission can still be re-monitored.
+
+    Args:
+        cohort_name: The cohort the retry batches belong to.
+        batches_file: The cohort batches file to read failures from and append
+            retry batches to (mutated + written when any retry is formed).
+        batch_size: Max sequencing groups per retry batch.
+        force: If True, run in operator `force_retry` mode (ignore the single-retry
+            gate, span all generations, exclude already-succeeded SGs).
+
+    Returns:
+        The newly-appended retry batches (empty if there is nothing to retry).
     """
     # Map each failed SG to the source batch it came from, so we can record
     # `retried_sgs` per source batch (not just batch-level `has_been_retried`).
     # Precedence note: `passfail` populated implies a SUCCEEDED batch (the only
-    # writer is `_on_succeeded`). A CANCELLED batch's `passfail` is empty by
-    # construction, so the `if b['passfail']:` branch can never re-enable a
-    # cancelled batch for retry — preserving CANCELLED's terminal status.
+    # writer is `_on_succeeded` / reconciliation). A CANCELLED batch's `passfail`
+    # is empty by construction, so the `if b['passfail']:` branch can never
+    # re-enable a cancelled batch for retry — preserving CANCELLED's terminal status.
+    # In force mode, an SG already succeeded in some batch is never rerun.
+    already_succeeded = set(batches_file.successful_sg_names()) if force else set()
     sg_to_source: dict[str, int] = {}
     for b in batches_file.batches:
-        if b['has_been_retried'] or b['retry_generation'] != 0:
+        if not force and (b['has_been_retried'] or b['retry_generation'] != 0):
             continue
         if b['passfail']:
             for sg, status in b['passfail'].items():
-                if status == CANONICAL_PASSFAIL_FAIL:
+                if status == CANONICAL_PASSFAIL_FAIL and sg not in already_succeeded:
                     sg_to_source[sg] = b['batch_index']
         elif b['status'] == BATCH_STATUS_FAILED:
             # CANCELLED is terminal — only FAILED (infrastructure failure) is
             # retried at the batch level when no passfail.json was produced.
             for sg in b['sg_names']:
-                sg_to_source[sg] = b['batch_index']
+                if sg not in already_succeeded:
+                    sg_to_source[sg] = b['batch_index']
 
     if not sg_to_source:
         return []
@@ -450,8 +588,8 @@ def _handle_management_flags(
     outputs: dict[str, cpg_utils.Path],
     sg_names: list[str],
 ) -> None:
-    """Apply `force_resubmit` / `monitor_previous` / `cancel_cohort_run` BEFORE
-    constructing the BatchesFile.
+    """Apply `force_resubmit` / `monitor_previous` / `cancel_cohort_run` /
+    `force_retry` BEFORE constructing the BatchesFile.
 
     Raises `CohortCancelled` (terminal) if `cancel_cohort_run=true` —
     short-circuits `run()` so it doesn't fall into retry-building.
@@ -471,32 +609,66 @@ def _handle_management_flags(
       what was running when the cancel fired (the files become stale
       pointers to aborted ICA analyses, which the resubmit path deletes
       wholesale). The function raises `CohortCancelled` to terminate cleanly.
+    - `force_retry=true`: recovery for a run whose GCS state drifted from ICA
+      (e.g. batches persisted FAILED that ICA actually completed). Requires an
+      existing batches file; this function only validates (raises if missing).
+      The reconciliation + rerun itself happens in `run()`
+      (`_reconcile_batches_with_ica` then `_build_retry_batches(force=True)`),
+      because it needs the loaded BatchesFile and drives the monitor loop.
 
-    Conflicts: `force_resubmit` + any other management flag raises
-    `ValueError`. The three flags express orthogonal user intents and the
-    safer behaviour is to make the user pick one.
+    Conflicts: the four flags express orthogonal intents; setting more than one
+    raises `ValueError`. Pick exactly one.
+
+    Args:
+        cohort_name: The cohort being managed (for messages + per-SG state keys).
+        batches_file_path: Path to `{cohort}_batches.json`.
+        outputs: The stage's declared outputs (per-SG state files + completion marker),
+            used to locate/delete state on `force_resubmit`.
+        sg_names: The cohort's sequencing-group names (to resolve per-SG state keys).
+
+    Raises:
+        ValueError: If more than one management flag is set.
+        FileNotFoundError: If `monitor_previous` or `force_retry` is set but no
+            batches file exists.
+        RuntimeError: If `force_resubmit` is set but no prior state exists.
+        CohortCancelled: If `cancel_cohort_run` is set (terminates the run).
     """
     force_resubmit = config_retrieve(['ica', 'management', 'force_resubmit'], default=False)
     monitor_previous = config_retrieve(['ica', 'management', 'monitor_previous'], default=False)
     cancel_cohort_run = config_retrieve(['ica', 'management', 'cancel_cohort_run'], default=False)
+    force_retry = config_retrieve(['ica', 'management', 'force_retry'], default=False)
 
-    if force_resubmit and cancel_cohort_run:
-        raise ValueError(
-            'force_resubmit and cancel_cohort_run are mutually exclusive. '
-            'To cancel then resubmit: run with cancel_cohort_run=true alone, '
-            'wait for ICA aborts to settle, then rerun with force_resubmit=true.',
+    # force_retry reconciles the existing run against ICA and reruns genuine
+    # failures; it is mutually exclusive with the other three (fresh-submit /
+    # cancel / plain-resume are distinct intents). Only one management flag at a time.
+    active_flags = [
+        name
+        for name, value in (
+            ('force_resubmit', force_resubmit),
+            ('monitor_previous', monitor_previous),
+            ('cancel_cohort_run', cancel_cohort_run),
+            ('force_retry', force_retry),
         )
-    if force_resubmit and monitor_previous:
+        if value
+    ]
+    if len(active_flags) > 1:
         raise ValueError(
-            f'Cohort {cohort_name}: force_resubmit and monitor_previous are mutually '
-            f'exclusive. Pick one: force_resubmit deletes existing state and starts '
-            f'a fresh submission; monitor_previous resumes monitoring an in-flight '
-            f'run. Unset whichever flag does not match your intent and retry.',
+            f'Cohort {cohort_name}: management flags {active_flags} are mutually exclusive — '
+            f'set at most one of force_resubmit / monitor_previous / cancel_cohort_run / force_retry. '
+            f'force_resubmit starts a fresh submission; monitor_previous resumes monitoring; '
+            f'cancel_cohort_run aborts in-flight batches; force_retry reconciles against ICA and '
+            f'reruns genuine failures.',
         )
 
     if monitor_previous and not batches_file_path.exists():
         raise FileNotFoundError(
             f'monitor_previous=true but {batches_file_path} does not exist — nothing to resume.',
+        )
+
+    if force_retry and not batches_file_path.exists():
+        raise FileNotFoundError(
+            f'force_retry=true but {batches_file_path} does not exist — there is no prior run to '
+            f'reconcile against ICA. Submit the cohort normally first.',
         )
 
     if force_resubmit:
@@ -597,11 +769,32 @@ def run(
     per_sg_fastq_list_paths: dict[str, cpg_utils.Path] | None,
     analysis_output_fid_path: cpg_utils.Path,
 ) -> None:
-    """Build batches, submit them, retry per-sample failures once, and raise if any SG still failed."""
+    """Build batches, submit them, retry per-sample failures once, and raise if any SG still failed.
+
+    Args:
+        cohort: The cohort to process; its sequencing groups are chunked into batches.
+        outputs: The stage's declared outputs (per-SG state files, batches file,
+            completion marker) keyed as `ManageDragenPipeline.expected_outputs` builds them.
+        cram_state_paths: CRAM-mode per-SG state paths, or `None` in FASTQ mode.
+        fastq_ids_path: FASTQ-mode combined ICA file-ID list path, or `None` in CRAM mode.
+        per_sg_fastq_list_paths: FASTQ-mode per-SG fastq-list paths, or `None` in CRAM mode.
+        analysis_output_fid_path: Path holding the ICA output parent-folder id.
+
+    Raises:
+        ValueError: If the cohort has no sequencing groups.
+        KeyError: If `expected_outputs` is missing a required per-SG state entry.
+        CohortCancelled: If `cancel_cohort_run=true`, or a prior run left CANCELLED batches.
+        RuntimeError: If any SG is still failed after the retry pass, or the loop's
+            reported FAILED_FINAL set diverges from the persisted batches file.
+    """
     batch_size: int = config_retrieve(
         ['dragen_align_pa', 'manage_dragen_pipeline', 'batch_size'],
         default=DEFAULT_BATCH_SIZE,
     )
+    # Operator recovery flag: reconcile the persisted state against ICA, then rerun
+    # only what genuinely failed (see `_reconcile_batches_with_ica` +
+    # `_build_retry_batches(force=True)`). Validated in `_handle_management_flags`.
+    force_retry: bool = config_retrieve(['ica', 'management', 'force_retry'], default=False)
     sg_names = [sg.name for sg in cohort.get_sequencing_groups()]
     if not sg_names:
         raise ValueError(f'Cohort {cohort.name} has no sequencing groups.')
@@ -647,6 +840,16 @@ def run(
     if batches_file_path.exists():
         logger.info(f'Resuming from existing batches file {batches_file_path}')
         batches_file.read()
+        if force_retry:
+            # Rewrite each submitted batch's status to ICA reality FIRST, so the
+            # initial_batches filter and _build_retry_batches(force=True) below act
+            # on the truth (a stale GCS-FAILED that ICA succeeded becomes SUCCEEDED
+            # and is harvested; a still-running one becomes INPROGRESS and is
+            # re-monitored). This is the whole point of force_retry.
+            logger.warning(
+                f'force_retry=true for cohort {cohort.name}: reconciling persisted state against ICA.',
+            )
+            _reconcile_batches_with_ica(cohort.name, batches_file)
         # Resume uses `retry_generation == 0` (initial batches only) + status to decide
         # what to re-monitor on the first pass. Retry-batch resumption is handled in the
         # second loop call below — see retry section.
@@ -731,6 +934,7 @@ def run(
         cohort_name=cohort.name,
         batches_file=batches_file,
         batch_size=batch_size,
+        force=force_retry,
     )
     # Resume scenario: a previous orchestrator pass already created retry batches but
     # crashed before they completed. Pick them back up here.
