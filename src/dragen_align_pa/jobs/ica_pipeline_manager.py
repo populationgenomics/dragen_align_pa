@@ -439,7 +439,8 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
         # DRAGEN opts out: its initial-pass batch failures must survive to the
         # orchestrator's per-sample retry, and the orchestrator raises on any
         # SG still failed after that pass.
-        status_counts = Counter(target.status for target in monitored_targets)
+        # `status_counts` from above is still current — no target status changes
+        # between there and here (the CANCELLED branch raises).
         failed_pipelines = _failed_final_target_names(monitored_targets)
         if raise_on_failed_final and failed_pipelines:
             logger.error(

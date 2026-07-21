@@ -80,9 +80,9 @@ def test_retry_batches_from_dragen_failed_status(tmp_path: Path):
 
     A batch of 5 where one sample fails records e.g. `{"CPG_A": "Success", ...,
     "CPG_B": "Failed"}`. Before normalisation at `record_passfail`, the raw
-    `"Failed"` matched neither `== 'Fail'` (retry / threshold) nor
-    `== 'Success'`, so the failed sample was silently dropped — never retried,
-    never counted against the 5% threshold. `record_passfail` now normalises
+    `"Failed"` matched neither `== 'Fail'` (the retry selection) nor
+    `== 'Success'`, so the failed sample was silently dropped — never retried
+    and never surfaced by `failed_sg_names`. `record_passfail` now normalises
     `"Failed"` to the canonical `"Fail"`, so the sample enters the retry path.
     """
     bf = _make_file(

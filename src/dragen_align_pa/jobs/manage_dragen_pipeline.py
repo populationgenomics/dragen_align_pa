@@ -302,6 +302,7 @@ def _on_succeeded_factory(
 def _on_status_change_factory(
     batches_file: BatchesFile,
     batches_by_name: dict[str, IcaBatch],
+    failed_final_sink: set[int],
 ) -> Callable[[MonitoredTarget, PipelineStatus], None]:
     """Mirror the loop's terminal non-success transitions into `{cohort}_batches.json`.
 
@@ -317,6 +318,13 @@ def _on_status_change_factory(
     `SUCCEEDED` is intentionally NOT routed through this callback — the
     transactional `_on_succeeded_factory` already records SUCCEEDED via
     `batches_file.record_status(idx, BATCH_STATUS_SUCCEEDED)`.
+
+    `failed_final_sink` receives the batch_index of every FAILED_FINAL transition
+    the loop reports, INDEPENDENT of whether the persisting `record_status` +
+    `write()` below succeeds (this callback runs through the loop's best-effort
+    `_fire_status_change`, which swallows write errors). `run()` reconciles this
+    set against the persisted file at the end so a silently-dropped write can't
+    let the run declare success with a batch the loop knew had failed.
     """
 
     def _on_status_change(monitored: MonitoredTarget, new_status: PipelineStatus) -> None:
@@ -328,6 +336,7 @@ def _on_status_change_factory(
             )
             return
         if new_status == PipelineStatus.FAILED_FINAL:
+            failed_final_sink.add(batch.batch_index)
             batches_file.record_status(batch.batch_index, BATCH_STATUS_FAILED)
         elif new_status == PipelineStatus.CANCELLED:
             batches_file.record_status(batch.batch_index, BATCH_STATUS_CANCELLED)
@@ -673,9 +682,14 @@ def run(
         batches_file.initialise(batch_size=batch_size, batches=initial_batches)
         batches_file.write()
 
+    # Every FAILED_FINAL the loop reports lands here regardless of whether its
+    # (best-effort) persist succeeded; reconciled against the persisted file
+    # before the completion marker.
+    loop_failed_final: set[int] = set()
+
     batches_by_name = {b.name: b for b in initial_batches}
     on_succeeded = _on_succeeded_factory(batches_file, batches_by_name)
-    on_status_change = _on_status_change_factory(batches_file, batches_by_name)
+    on_status_change = _on_status_change_factory(batches_file, batches_by_name, loop_failed_final)
 
     def submit_factory(batch_name: str) -> Callable[[], str]:
         return _build_submit_callable(
@@ -733,7 +747,7 @@ def run(
         logger.info(f'Retry batches to monitor: {[b.name for b in retry_batches]}')
         retry_batches_by_name = {b.name: b for b in retry_batches}
         retry_on_succeeded = _on_succeeded_factory(batches_file, retry_batches_by_name)
-        retry_on_status_change = _on_status_change_factory(batches_file, retry_batches_by_name)
+        retry_on_status_change = _on_status_change_factory(batches_file, retry_batches_by_name, loop_failed_final)
 
         def retry_submit_factory(batch_name: str) -> Callable[[], str]:
             return _build_submit_callable(
@@ -760,8 +774,33 @@ def run(
             sleep_time_seconds=600,
             on_succeeded=retry_on_succeeded,
             on_status_change=retry_on_status_change,
+            # Same rationale as the initial pass: the orchestrator's post-retry
+            # check below owns the abort decision, so the loop must not raise here.
             raise_on_failed_final=False,
         )
+
+    # Reconcile the loop's reported FAILED_FINAL transitions against the
+    # PERSISTED batches file. `on_status_change` persists each via the loop's
+    # best-effort `_fire_status_change`, which swallows write errors — so a
+    # dropped GCS write could leave a batch INPROGRESS on disk even though the
+    # loop knew it failed. With DRAGEN opting out of the loop's own abort
+    # (raise_on_failed_final=False), this file is the single source of truth for
+    # `failed_sg_names()` below; a stale INPROGRESS would silently drop the
+    # failure (false success now, or a re-poll of a dead analysis on resume).
+    # Re-read from disk (not the in-memory copy) so we validate what persisted.
+    if loop_failed_final:
+        persisted = BatchesFile(path=batches_file_path)
+        persisted.read()
+        unrecorded = sorted(
+            idx for idx in loop_failed_final if persisted.batches[idx]['status'] != BATCH_STATUS_FAILED
+        )
+        if unrecorded:
+            raise RuntimeError(
+                f'Cohort {cohort.name}: the monitor loop reported batch(es) {unrecorded} as '
+                f'FAILED_FINAL, but {batches_file_path} does not record them as '
+                f'{BATCH_STATUS_FAILED!r} (a status write was likely dropped). Refusing to '
+                f'declare the cohort complete — re-run to reconcile the batches file.',
+            )
 
     # Resume-after-cancel guard: if any batch is CANCELLED, this rerun must
     # not proceed. CANCELLED is terminal (user-initiated abort); the only
@@ -799,9 +838,12 @@ def run(
     n_failed = len(failed)
     if n_failed > 0:
         # Persist errors.log before raising so the cohort run leaves a durable
-        # failure artefact. `errors_path` is internal scratch — not a declared
-        # expected_output, so its absence on a clean run doesn't force a re-run.
-        with errors_path.open('w') as fh:
+        # failure artefact. Append (don't truncate): the monitor loop already
+        # flushed the ICA-level error detail to this same path on exit, and we
+        # want the failed-SG summary to sit alongside it, not overwrite it.
+        # `errors_path` is internal scratch — not a declared expected_output, so
+        # its absence on a clean run doesn't force a re-run.
+        with errors_path.open('a') as fh:
             fh.write(
                 f'Cohort {cohort.name}: {n_failed}/{n_total} SG(s) failed the DRAGEN '
                 f'pipeline after the retry pass.\n'
