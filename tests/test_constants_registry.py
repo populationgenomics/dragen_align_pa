@@ -233,3 +233,15 @@ def test_resolve_cnv_normals_panel_rejects_non_string_count_file_id(monkeypatch)
     )
     with pytest.raises(ValueError, match=r'count_file_ids'):
         constants_registry.resolve_cnv_normals_panel('panel-g')
+
+
+def test_resolve_cnv_normals_panel_rejects_empty_count_file_id(monkeypatch):
+    """An empty-string count ID must fail loud too — `''.startswith(...)` is False,
+    so without this guard it would slip through into ICA data inputs and surface
+    as an opaque 'no such file' mid-run (matching the list-file guard's rejection)."""
+    monkeypatch.setattr(
+        'dragen_align_pa.constants.ICA_PON_FILE_IDS',
+        {'panel-h': {'pon_list_file': 'fil.list', 'count_file_ids': ['fil.c1', '']}},
+    )
+    with pytest.raises(ValueError, match=r'count_file_ids'):
+        constants_registry.resolve_cnv_normals_panel('panel-h')

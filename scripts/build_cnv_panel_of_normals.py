@@ -19,11 +19,13 @@ So this script's whole job is data management, in five steps, per panel:
                   data persists run-to-run. Each upload yields a `fil.…` ID.
     4. LIST     — write `<panel>.normals.txt`, one renamed BASENAME per line
                   (see note below), and upload it to ICA too (its own file ID).
-    5. REGISTER — print a ready-to-paste JSON block, `{<panel-name>: {pon_list_file
-                  -> list `fil.…` ID, basename -> count `fil.…` ID, …}}`, to merge
-                  into `ICA_PON_FILE_IDS` in `dragen_align_pa.constants`. A run then
-                  selects the panel by name (`[presets.exome].cnv_normals_panel`)
-                  instead of listing IDs.
+    5. REGISTER — print a ready-to-paste JSON block, `{<panel-name>:
+                  {"pon_list_file": <list `fil.…` ID>, "count_file_ids":
+                  [<count `fil.…` ID>, …]}}`, to merge into `ICA_PON_FILE_IDS` in
+                  `dragen_align_pa.constants`. Only file IDs are stored — the
+                  renamed count basenames (which embed CPG sample IDs) are
+                  intentionally dropped. A run then selects the panel by name
+                  (`[presets.exome].cnv_normals_panel`) instead of listing IDs.
 
 WHY THE RENAME (`--rename-suffix`, default `_pon`):
     DRAGEN aborts CNV calling if a case sample is detected as a member of its
@@ -40,12 +42,13 @@ WHY BASENAMES IN THE LIST (not ICA paths or file IDs):
     count files are passed to the analysis as data inputs (by file ID), land
     next to the list in cwd, and the list refers to them by bare basename.
 
-WIRING STILL TO DO (downstream of this script, the part the test exercises):
-    The submitter (`jobs/submit_dragen_batch.py`) has no `cnv_normals_list` /
-    `cnv_normals_files` parameterCode yet. Passing the list + the count files
-    into the DRAGEN ICA analysis (and adding `--cnv-normals-list` /
-    `--cnv-input` to the DRAGEN args) is a separate pipeline change. This
-    script only produces and registers the artifacts that change will consume.
+HOW A RUN CONSUMES THE PANEL (downstream of this script):
+    The submitter (`jobs/submit_dragen_batch.py`) resolves the selected panel via
+    `constants_registry.resolve_cnv_normals_panel`, sends every registered file ID
+    (the normals list + the count files) as `additional_files` data inputs, and
+    derives `--cnv-normals-list <panel>.normals.txt` in the DRAGEN args. The count
+    files land next to the list in cwd, and DRAGEN reads them by the basenames the
+    list references.
 
 Example (bioheart WGS wiring panel from 4 of the 5 COH2308 SGs; 5th is the case):
 

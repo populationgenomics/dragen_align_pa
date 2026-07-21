@@ -37,6 +37,9 @@ def test_registration_snippet_round_trips_through_resolver(capsys, monkeypatch):
     }
     builder._print_registration_snippet('panel-z', file_ids)
 
+    # The builder's status line goes through loguru (stderr), so capsys stdout holds
+    # only the `# --- CNV PON: … ---` comment (no brace) then the JSON block — the
+    # first '{' is therefore the start of the JSON object.
     out = capsys.readouterr().out
     parsed = json.loads(out[out.index('{') :])
     assert parsed == {
