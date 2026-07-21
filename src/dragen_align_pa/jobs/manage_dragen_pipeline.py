@@ -325,7 +325,7 @@ def _on_status_change_factory(
 
     `SUCCEEDED` is intentionally NOT routed through this callback — the
     transactional `_on_succeeded_factory` already records SUCCEEDED via
-    `batches_file.record_status(idx, 'SUCCEEDED')`.
+    `batches_file.record_status(idx, BATCH_STATUS_SUCCEEDED)`.
     """
 
     def _on_status_change(monitored: MonitoredTarget, new_status: PipelineStatus) -> None:

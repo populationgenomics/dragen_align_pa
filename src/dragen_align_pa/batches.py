@@ -42,9 +42,11 @@ ALLOWED_BATCH_STATUSES = frozenset(
 # the resume paths to decide which batches to re-monitor.
 ACTIVE_BATCH_STATUSES = frozenset({BATCH_STATUS_PENDING, BATCH_STATUS_INPROGRESS})
 
-# Per-sample passfail status vocabulary.
-# DRAGEN's `passfail.json` writes `"Success"` / `"Failed"`.
-# Adding a normalisation here to not have to change all downstream code.
+# Per-sample passfail status vocabulary. DRAGEN's `passfail.json` writes
+# `"Success"` / `"Failed"`; we normalise at the persistence boundary
+# (`record_passfail`) so downstream code only ever compares against the two
+# canonical values below. `"Fail"` (not `"Failed"`) is canonical because every
+# existing consumer already compared `== 'Fail'`.
 CANONICAL_PASSFAIL_SUCCESS = 'Success'
 CANONICAL_PASSFAIL_FAIL = 'Fail'
 _PASSFAIL_STATUS_NORMALISATION = {
@@ -288,6 +290,19 @@ class BatchesFile:
                 )
         self.batch_size = data['batch_size']
         self.batches = data['batches']
+        # Migrate the passfail vocabulary on read. A batches.json written by an
+        # earlier build stored DRAGEN's raw "Failed" verbatim (record_passfail did
+        # not normalise yet). Re-normalising here means resuming an already-SUCCEEDED
+        # batch does not silently drop a "Failed" sample from the retry path — the
+        # write-time fix, applied to state persisted before it existed. Idempotent
+        # for already-canonical values; an unrecognised status fails loud, matching
+        # the write path.
+        for i, b in enumerate(self.batches):
+            if b['passfail'] is not None:
+                b['passfail'] = {
+                    sg: normalise_passfail_status(status, context=f'read {self.path} batch {i} sg={sg!r}')
+                    for sg, status in b['passfail'].items()
+                }
 
     def write(self) -> None:
         """Single-PUT atomic write — GCS object PUTs are atomic per object.

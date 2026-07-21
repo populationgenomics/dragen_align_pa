@@ -415,8 +415,9 @@ def _print_registration_snippet(panel_name: str, file_ids: dict[str, str]) -> No
         'count_file_ids': [file_id for name, file_id in file_ids.items() if name != list_basename],
     }
     logger.info(
-        f'Panel "{panel_name}" built ({len(file_ids)} entries). Merge this block into '
-        f'ICA_PON_FILE_IDS in dragen_align_pa.constants:',
+        f'Panel "{panel_name}" built (1 normals list + {len(entry["count_file_ids"])} count files). '
+        f'Merge this block into ICA_PON_FILE_IDS in dragen_align_pa.constants '
+        f'(reformat to the repo code style — the block below is JSON, not Python):',
     )
     print(f'\n# --- CNV PON: {panel_name} ---')
     print(json.dumps({panel_name: entry}, indent=4))

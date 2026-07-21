@@ -305,10 +305,10 @@ def resolve_cnv_normals_panel(panel_name: str) -> tuple[str, list[str]]:
         )
 
     count_ids = panel.get(_PON_COUNT_KEY, [])
-    if not isinstance(count_ids, list):
+    if not isinstance(count_ids, list) or not all(isinstance(fid, str) for fid in count_ids):
         raise ValueError(
-            f'CNV panel {panel_name!r} {_PON_COUNT_KEY!r} must be a list of ICA file IDs, '
-            f'got {type(count_ids).__name__}. Rebuild it with scripts/build_cnv_panel_of_normals.py.',
+            f'CNV panel {panel_name!r} {_PON_COUNT_KEY!r} must be a list of ICA file ID strings, '
+            f'got {count_ids!r}. Rebuild it with scripts/build_cnv_panel_of_normals.py.',
         )
 
     file_ids = [_reject_placeholder_file_id(_PON_LIST_KEY, list_id)]

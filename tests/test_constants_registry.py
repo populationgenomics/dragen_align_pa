@@ -222,3 +222,14 @@ def test_resolve_cnv_normals_panel_rejects_non_list_count_file_ids(monkeypatch):
     )
     with pytest.raises(ValueError, match=r'count_file_ids'):
         constants_registry.resolve_cnv_normals_panel('panel-f')
+
+
+def test_resolve_cnv_normals_panel_rejects_non_string_count_file_id(monkeypatch):
+    """A non-string element (e.g. a hand-edit typo) fails with a clean ValueError,
+    not the AttributeError that a bare `.startswith` on None/int would raise."""
+    monkeypatch.setattr(
+        'dragen_align_pa.constants.ICA_PON_FILE_IDS',
+        {'panel-g': {'pon_list_file': 'fil.list', 'count_file_ids': ['fil.c1', None]}},
+    )
+    with pytest.raises(ValueError, match=r'count_file_ids'):
+        constants_registry.resolve_cnv_normals_panel('panel-g')
