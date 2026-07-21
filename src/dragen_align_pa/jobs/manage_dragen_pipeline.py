@@ -8,10 +8,9 @@ Responsibilities:
 - After the first pass completes, read passfail across all batches; if any SGs
   are marked Fail and have not been retried, form retry batches and run the
   loop a second time. Single retry only.
-- After the retry pass, raise if any SG is still failed. There is no
-  failure-rate tolerance (the old 5% threshold is gone) — a single unrecovered
-  failure halts the cohort. The completion marker records the failure count on
-  a clean run.
+- After the retry pass, raise if any SG is still failed: there is no
+  failure-rate tolerance, so a single unrecovered failure halts the cohort.
+  The completion marker records the failure count on a clean run.
 """
 
 import json
@@ -268,8 +267,7 @@ def _record_succeeded_batch(
         batch: The batch being recorded.
         pipeline_id: The batch's ICA analysis id (for log context).
         passfail: The parsed `{sg: status}` mapping, or `None`. `None` means the
-            analysis produced no passfail.json (catastrophic) → all SGs are recorded
-            Fail so the retry pass resubmits them.
+            analysis produced no passfail.json; all SGs are then recorded Fail.
         folder_fid: The analysis output-folder id, or `None` if unresolved.
     """
     if passfail is None:
@@ -370,13 +368,8 @@ def _on_status_change_factory(
     Args:
         batches_file: The cohort batches file to mirror transitions into.
         batches_by_name: Map of batch name → `IcaBatch` for the targets in this loop.
-        failed_final_sink: Receives the `batch_index` of every FAILED_FINAL
-            transition the loop reports, INDEPENDENT of whether the persisting
-            `record_status` + `write()` below succeeds (this callback runs through
-            the loop's best-effort `_fire_status_change`, which swallows write
-            errors). `run()` reconciles this set against the persisted file at the
-            end so a silently-dropped write can't let the run declare success with
-            a batch the loop knew had failed.
+        failed_final_sink: A set that receives the `batch_index` of every
+            FAILED_FINAL transition the loop reports.
 
     Returns:
         The `on_status_change` callback for `manage_ica_pipeline_loop`.
@@ -413,12 +406,9 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
 
     For every batch that reached ICA (has a `pipeline_id`), query the live analysis
     status and — for a SUCCEEDED analysis — its `passfail.json`, then rewrite the
-    batches file to match. This corrects a stale GCS status (e.g. a batch marked
-    FAILED on disk that ICA actually completed with all-Success passfail) so only
-    genuinely-failed work reruns. A batch whose analysis is gone (404) is marked
-    FAILED to resubmit fresh; an INPROGRESS analysis is left for the normal resume
-    to monitor. Batches with no `pipeline_id` never reached ICA and ride the normal
-    PENDING resume, so they are skipped here. Writes the batches file.
+    batches file to match. A batch whose analysis is gone (404) is marked FAILED;
+    an INPROGRESS analysis is set INPROGRESS for the normal resume to monitor.
+    Batches with no `pipeline_id` are skipped. Writes the batches file.
 
     Args:
         cohort_name: The cohort being reconciled (for building ICA paths + logs).

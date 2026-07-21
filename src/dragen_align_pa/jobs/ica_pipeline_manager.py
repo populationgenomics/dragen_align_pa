@@ -117,11 +117,6 @@ def _process_succeeded_transition(
 def _failed_final_target_names(monitored_targets: Sequence['MonitoredTarget']) -> list[str]:
     """Names of targets that ended unrecoverably (FAILED_FINAL).
 
-    Extracted so the loop's abort decision is testable without driving the full
-    polling loop. `manage_ica_pipeline_loop` raises on a non-empty result unless
-    the caller passed `raise_on_failed_final=False` (DRAGEN, which defers the
-    decision to its orchestrator).
-
     Args:
         monitored_targets: The loop's monitored targets to inspect.
 
@@ -214,12 +209,8 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
 
         raise_on_failed_final: When True (default), the loop raises as soon as
                       any target reaches `FAILED_FINAL` (after its retry, if
-                      `allow_retry`). MLR and MD5 rely on this. DRAGEN passes
-                      False: a batch's `FAILED_FINAL` must survive to the
-                      orchestrator's per-sample retry pass, and the orchestrator
-                      raises there on any SG still failed. This replaces the old
-                      5%-rate abort — with no fractional tolerance, one
-                      unrecoverable failure halts.
+                      `allow_retry`). When False, FAILED_FINAL targets are
+                      returned to the caller without raising.
     """
     if not targets_to_process:
         raise ValueError(f'Cannot run {pipeline_name} pipeline management loop with an empty list of targets.')

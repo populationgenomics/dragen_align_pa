@@ -340,6 +340,54 @@ def test_failed_sg_names_dedupes_across_retry_generations(tmp_path: Path):
     assert bf.failed_sg_names() == ['CPG_A'], f'CPG_A should appear once; got {bf.failed_sg_names()}'
 
 
+def test_failed_sg_names_excludes_sg_recovered_by_retry(tmp_path: Path):
+    """An SG that fails in gen=0 but SUCCEEDS in its gen=1 retry must NOT count
+    as failed: `failed_sg_names()` resolves each SG to its latest generation.
+    The orchestrator raises when `failed_sg_names()` is non-empty after the
+    retry pass, so a recovered SG lingering here would abort a run the retry
+    actually saved."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(
+        batch_size=5,
+        batches=[
+            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
+        ],
+    )
+    # Gen 0: CPG_B fails, CPG_A succeeds.
+    bf.record_passfail(0, {'CPG_A': 'Success', 'CPG_B': 'Fail'})
+    bf.record_status(0, 'SUCCEEDED')
+    # Gen 1 retry re-runs CPG_B and it succeeds.
+    bf.add_retry_batch(sg_names=['CPG_B'])
+    bf.record_passfail(1, {'CPG_B': 'Success'})
+    bf.record_status(1, 'SUCCEEDED')
+
+    assert bf.failed_sg_names() == [], f'CPG_B recovered on retry; got {bf.failed_sg_names()}'
+    assert sorted(bf.successful_sg_names()) == ['CPG_A', 'CPG_B']
+
+
+def test_failed_sg_names_whole_batch_failure_recovered_by_retry(tmp_path: Path):
+    """A batch-level FAILED (no passfail) marks every SG Fail, but a later retry
+    that succeeds those SGs wins: whole-batch infrastructure failure recovered on
+    retry must not count as failed."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(
+        batch_size=5,
+        batches=[
+            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
+        ],
+    )
+    # Gen 0: whole batch fails at ICA level (no passfail produced).
+    bf.record_status(0, 'FAILED')
+    # Gen 1 retry re-runs both and they succeed.
+    bf.add_retry_batch(sg_names=['CPG_A', 'CPG_B'])
+    bf.record_passfail(1, {'CPG_A': 'Success', 'CPG_B': 'Success'})
+    bf.record_status(1, 'SUCCEEDED')
+
+    assert bf.failed_sg_names() == [], f'both SGs recovered on retry; got {bf.failed_sg_names()}'
+
+
 def test_record_status_rejects_invalid_status(tmp_path: Path):
     """`failed_sg_names`, `cancelled_sg_names`, `successful_sg_names` compare
     against literal status strings. A typo from a future caller (e.g. the
