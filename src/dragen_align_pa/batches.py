@@ -422,12 +422,12 @@ class BatchesFile:
         """SGs marked Fail across all batches (via passfail.json or batch-level FAILED).
 
         CANCELLED is NOT a failure — `cancel_cohort_run=true` is user-initiated
-        and should not count against the 5% threshold or any "failure" report.
+        and should not count against any "failure" report.
         Call `cancelled_sg_names()` for cancellation reporting.
 
         Deduplicated across batches so an SG that fails in both gen=0 and
-        gen=1 counts once. The 5%-threshold check uses `len(failed_sg_names())`
-        and must not be artificially tripped by retried failures.
+        gen=1 counts once — the orchestrator's completion-marker failure count
+        uses `len(failed_sg_names())` and must not be inflated by retried failures.
         """
         seen: set[str] = set()
         failed: list[str] = []

@@ -281,12 +281,12 @@ class ManageDragenPipeline(CohortStage):
         # can't find when re-evaluating this stage triggers a re-run, so the
         # set must be exactly the files a successful `run()` always writes.
         # Variable-existence files (per-batch success/pipeline_id, errors.log
-        # written only on threshold breach) are internal orchestrator scratch
+        # written by the monitor loop) are internal orchestrator scratch
         # and the orchestrator computes their paths inline via
         # `get_pipeline_path()` rather than going through expected_outputs.
         # `_pipeline_complete` is the canonical "stage completed without raising"
         # signal — written ONLY as the final action of a successful run(). Any
-        # earlier raise (threshold breach, cancel, ICA error) skips it and the
+        # earlier raise (residual SG failure, cancel, ICA error) skips it and the
         # stage is correctly seen as failed.
         return {
             f'{cohort.name}_{config_retrieve(["workflow", "sequencing_type"])}_'

@@ -8,13 +8,16 @@ Responsibilities:
 - After the first pass completes, read passfail across all batches; if any SGs
   are marked Fail and have not been retried, form retry batches and run the
   loop a second time. Single retry only.
-- Apply the 5% threshold over sequencing groups (not over batches).
+- After the retry pass, raise if any SG is still failed. There is no
+  failure-rate tolerance (the old 5% threshold is gone) — a single unrecovered
+  failure halts the cohort. The completion marker records the failure count on
+  a clean run.
 """
 
 import json
 from collections.abc import Callable
 
-import cpg_utils.config
+import cpg_utils
 from cpg_flow.targets import Cohort
 from cpg_utils.config import config_retrieve
 from loguru import logger
@@ -54,8 +57,9 @@ class CohortCancelled(RuntimeError):  # noqa: N818
     """Raised when `cancel_cohort_run=true` has terminated the cohort.
 
     Distinct exception type so cpg-flow / operators can distinguish a
-    user-initiated cancellation from a true pipeline failure (e.g. the
-    threshold-breach `RuntimeError`). Both halt the stage and skip downstream
+    user-initiated cancellation from a true pipeline failure (the
+    residual-failure `RuntimeError` raised after the retry pass, or an ICA
+    exception out of the monitor loop). Both halt the stage and skip downstream
     work via cpg-flow's required-stage propagation; only the message differs.
 
     Named for the *event*, not the failure category — `…Cancelled` reads more
@@ -183,19 +187,6 @@ def _persist_per_sg_state_for_batch(
                 },
                 fh,
             )
-
-
-# Spec §6 line 312: strict `>` — the threshold is breached only when more
-# than 5% of SGs failed. Extracted to a tiny pure function so the production
-# code in `run()` and the boundary tests in `test_manage_dragen_pipeline.py`
-# share the comparison, preventing drift if the threshold ever changes.
-THRESHOLD_FAILURE_FRACTION = 0.05
-
-
-def _threshold_breached(n_failed: int, n_total: int) -> bool:
-    if n_total == 0:
-        return False
-    return n_failed / n_total > THRESHOLD_FAILURE_FRACTION
 
 
 def _on_succeeded_factory(
@@ -454,8 +445,7 @@ def _handle_management_flags(
     constructing the BatchesFile.
 
     Raises `CohortCancelled` (terminal) if `cancel_cohort_run=true` —
-    short-circuits `run()` so it doesn't fall into retry-building or
-    threshold-checking.
+    short-circuits `run()` so it doesn't fall into retry-building.
 
     Semantics:
     - `monitor_previous=true`: raises if the batches file is missing.
@@ -598,7 +588,7 @@ def run(
     per_sg_fastq_list_paths: dict[str, cpg_utils.Path] | None,
     analysis_output_fid_path: cpg_utils.Path,
 ) -> None:
-    """Build batches, submit them, retry per-sample failures once, enforce 5% threshold."""
+    """Build batches, submit them, retry per-sample failures once, and raise if any SG still failed."""
     batch_size: int = config_retrieve(
         ['dragen_align_pa', 'manage_dragen_pipeline', 'batch_size'],
         default=DEFAULT_BATCH_SIZE,
@@ -625,9 +615,11 @@ def run(
         f'{cohort.name}_{config_retrieve(["workflow", "sequencing_type"])}_'
         f'{config_retrieve(["workflow", "reads_type"])}_batches'
     ]
-    # `errors_path` is internal scratch — written only on threshold breach.
-    # Computed via `get_pipeline_path` rather than declared in expected_outputs
-    # because variable-existence outputs trigger spurious cpg-flow re-runs.
+    # `errors_path` is the error-log sink: the monitor loop flushes tmp_errors.log
+    # to it, and run() writes the failed-SG list to it before raising on residual
+    # failures. Internal scratch — computed via `get_pipeline_path` rather than
+    # declared in expected_outputs because variable-existence outputs trigger
+    # spurious cpg-flow re-runs.
     errors_path = get_pipeline_path(filename=f'{cohort.name}_errors.log')
 
     # `_handle_management_flags` raises CohortCancelled on `cancel_cohort_run=true`
@@ -698,10 +690,13 @@ def run(
 
     if initial_batches:
         loop_outputs = _build_loop_outputs_for_batches(initial_batches)
-        # allow_retry=False: the shared loop's whole-target retry plus its 5%-of-targets
-        # threshold are bypassed for DRAGEN. Retry + threshold logic is owned by this
-        # orchestrator (per-sample retry over the cohort), not by the loop (which would
-        # over-trigger on small batch counts).
+        # allow_retry=False: the shared loop's whole-target retry is bypassed for
+        # DRAGEN. Per-sample retry over the cohort is owned by this orchestrator,
+        # not by the loop.
+        # raise_on_failed_final=False: a batch's FAILED_FINAL must NOT abort the
+        # loop here — it has to survive to `_build_retry_batches` so the batch is
+        # retried. The orchestrator raises after the retry pass on any SG still
+        # failed (see the failure check at the end of run()).
         manage_ica_pipeline_loop(
             targets_to_process=initial_batches,
             outputs=loop_outputs | {f'{cohort.name}_errors': errors_path},
@@ -715,6 +710,7 @@ def run(
             sleep_time_seconds=600,
             on_succeeded=on_succeeded,
             on_status_change=on_status_change,
+            raise_on_failed_final=False,
         )
 
     retry_batches = _build_retry_batches(
@@ -764,6 +760,7 @@ def run(
             sleep_time_seconds=600,
             on_succeeded=retry_on_succeeded,
             on_status_change=retry_on_status_change,
+            raise_on_failed_final=False,
         )
 
     # Resume-after-cancel guard: if any batch is CANCELLED, this rerun must
@@ -772,10 +769,9 @@ def run(
     # bad paths open up:
     #   1. All-CANCELLED rerun: `initial_batches` filters out CANCELLED →
     #      empty loop → `_build_retry_batches` returns [] (terminal) →
-    #      threshold check passes (failed_sg_names excludes CANCELLED) →
-    #      run() exits success-side → downstream Download* stages run with
-    #      preserved per-SG state pointing at aborted ICA analyses → all
-    #      explode with cryptic "analysis not found" errors.
+    #      run() reaches the completion marker → downstream Download* stages
+    #      run with preserved per-SG state pointing at aborted ICA analyses →
+    #      all explode with cryptic "analysis not found" errors.
     #   2. Partial-cancel-with-success: same as (1) but only the CANCELLED
     #      SGs' downstream stages explode. Still bad UX — cancelled SGs
     #      surface as per-SG ICA failures rather than a clean cohort halt.
@@ -793,31 +789,32 @@ def run(
             f'the preserved per-SG state will be reused).',
         )
 
-    # `failed_sg_names()` excludes CANCELLED by design (cancellation ≠ failure;
-    # see BatchesFile.failed_sg_names docstring). The threshold check thus
-    # measures pipeline-failure rate, not user-action rate.
+    # Per-SG failures are recorded in batches.json (`failed_sg_names()` excludes
+    # CANCELLED by design — cancellation ≠ failure). Any SG still failed after
+    # the retry pass aborts the run: the old 5%-rate tolerance is gone, so a
+    # single unrecovered failure halts (matching the loop's FAILED_FINAL abort
+    # for MLR/MD5, which DRAGEN opts out of so this check owns the decision).
     n_total = len(sg_names)
     failed = batches_file.failed_sg_names()
     n_failed = len(failed)
-    if _threshold_breached(n_failed=n_failed, n_total=n_total):
-        # Persist errors.log to disk before raising, so the cohort run
-        # produces a durable error artefact. `errors_path` is internal
-        # scratch — not declared as a stage expected_output, so absence of
-        # the file on a successful run does not trigger a re-run.
+    if n_failed > 0:
+        # Persist errors.log before raising so the cohort run leaves a durable
+        # failure artefact. `errors_path` is internal scratch — not a declared
+        # expected_output, so its absence on a clean run doesn't force a re-run.
         with errors_path.open('w') as fh:
             fh.write(
-                f'Cohort {cohort.name}: {n_failed}/{n_total} SGs failed the DRAGEN '
-                f'pipeline ({n_failed / n_total:.1%} > 5% threshold).\n'
+                f'Cohort {cohort.name}: {n_failed}/{n_total} SG(s) failed the DRAGEN '
+                f'pipeline after the retry pass.\n'
                 f'Failed SGs: {", ".join(failed)}\n',
             )
         raise RuntimeError(
-            f'More than 5% of SGs failed the DRAGEN pipeline: {n_failed}/{n_total}. '
+            f'{n_failed}/{n_total} SG(s) failed the DRAGEN pipeline after retry. '
             f'See {errors_path} for the failure list.',
         )
 
     # Completion marker: writes the canonical "stage completed without raising"
     # signal that cpg-flow checks via expected_outputs. The marker is the LAST
-    # write of the orchestrator — any earlier raise (threshold breach, cancel,
+    # write of the orchestrator — any earlier raise (residual failure, cancel,
     # ICA exception) skips this and leaves cpg-flow seeing the stage as failed,
     # so the stage will retry. Marker payload records the cohort's outcome
     # summary so operators can audit completed runs without re-reading

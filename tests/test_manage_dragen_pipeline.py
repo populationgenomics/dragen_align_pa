@@ -3,7 +3,7 @@
 Covers the algorithmic helpers: _build_retry_batches (per-sample retry
 discipline + single-retry invariant + CANCELLED-as-terminal),
 _handle_management_flags (force_resubmit clean-slate delete, cancel
-preserves per-SG state), _threshold_breached (5% boundary semantics).
+preserves per-SG state).
 
 Integration glue around the shared monitor loop (_on_succeeded_factory,
 _on_status_change_factory, _build_submit_callable) is left for end-to-end
@@ -21,7 +21,6 @@ from dragen_align_pa.jobs.manage_dragen_pipeline import (
     CohortCancelled,
     _build_retry_batches,
     _handle_management_flags,
-    _threshold_breached,
 )
 
 
@@ -275,7 +274,7 @@ def test_force_resubmit_deletes_completion_marker(tmp_path: Path, monkeypatch):
 
 def test_cancel_cohort_run_raises_cohort_cancelled(tmp_path: Path, monkeypatch):
     """`cancel_cohort_run=true` is terminal — raises CohortCancelled so run()
-    short-circuits past retry-building and threshold-checking."""
+    short-circuits past retry-building."""
     # No batches file → "no in-flight state" branch still raises CohortCancelled.
     _set_management_flags(monkeypatch, cancel_cohort_run=True)
     with pytest.raises(CohortCancelled):
@@ -349,35 +348,12 @@ def test_cancel_cohort_run_preserves_per_sg_state(tmp_path: Path, monkeypatch):
     assert sg_state.exists(), 'cancel_cohort_run must not delete per-SG state files'
 
 
-def test_threshold_breached_just_above_5pct(tmp_path: Path):
-    """20 SGs, 2 Fail → 10% → above threshold."""
+def test_failed_sg_names_reports_single_failure_no_rate_tolerance(tmp_path: Path):
+    """The orchestrator raises after the retry pass on ANY residual failure
+    (no 5%-rate tolerance). failed_sg_names() is the signal it checks: even a
+    single failed SG in a large cohort surfaces, so run() would raise."""
     sg_names = [f'SYN{i:05d}' for i in range(20)]
     bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, sg_names)])
-    bf.record_passfail(
-        0,
-        {**dict.fromkeys(sg_names[:18], 'Success'), sg_names[18]: 'Fail', sg_names[19]: 'Fail'},
-    )
-    n_failed = len(bf.failed_sg_names())
-    assert n_failed == 2
-    assert _threshold_breached(n_failed=n_failed, n_total=len(sg_names))
-
-
-def test_threshold_breached_exactly_at_5pct(tmp_path: Path):
-    """Spec §6 line 312 uses strict `>`: 20 SGs / 1 Fail = 5.0% → NOT raise.
-    Boundary semantics matter when N is small."""
-    sg_names = [f'SYN{i:05d}' for i in range(20)]
-    bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, sg_names)])
+    # 1/20 = 5% — under the OLD gate this passed; now it's a reported failure.
     bf.record_passfail(0, {**dict.fromkeys(sg_names[:19], 'Success'), sg_names[19]: 'Fail'})
-    n_failed = len(bf.failed_sg_names())
-    assert n_failed == 1
-    assert not _threshold_breached(n_failed=n_failed, n_total=len(sg_names))
-
-
-def test_threshold_breached_just_above_5pct_small_n(tmp_path: Path):
-    """19 SGs, 1 Fail = 5.26% → above threshold."""
-    sg_names = [f'SYN{i:05d}' for i in range(19)]
-    bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, sg_names)])
-    bf.record_passfail(0, {**dict.fromkeys(sg_names[:18], 'Success'), sg_names[18]: 'Fail'})
-    n_failed = len(bf.failed_sg_names())
-    assert n_failed == 1
-    assert _threshold_breached(n_failed=n_failed, n_total=len(sg_names))
+    assert bf.failed_sg_names() == [sg_names[19]]

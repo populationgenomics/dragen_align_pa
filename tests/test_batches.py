@@ -318,9 +318,9 @@ def test_record_error_strategy_rejects_invalid_value(tmp_path: Path):
 
 def test_failed_sg_names_dedupes_across_retry_generations(tmp_path: Path):
     """An SG that fails in gen=0 (initial) AND gen=1 (retry) must appear
-    once in failed_sg_names(). The 5%-threshold check in the orchestrator
-    uses `len(failed_sg_names())`; double-counting would artificially trip
-    the threshold on cohorts with retries."""
+    once in failed_sg_names(). The orchestrator's completion-marker failure
+    count uses `len(failed_sg_names())`; double-counting would inflate the
+    reported failure count on cohorts with retries."""
     path = tmp_path / 'COH0001_batches.json'
     bf = BatchesFile(path=path)
     bf.initialise(
@@ -345,7 +345,7 @@ def test_record_status_rejects_invalid_status(tmp_path: Path):
     against literal status strings. A typo from a future caller (e.g. the
     orchestrator's `FAILED_FINAL` leaking through unmapped) would silently
     produce a batch that is neither successful, failed, nor cancelled —
-    breaking the 5%-threshold check and the resume-after-cancel guard."""
+    breaking the failure/success counts and the resume-after-cancel guard."""
     path = tmp_path / 'COH0001_batches.json'
     bf = BatchesFile(path=path)
     bf.initialise(
@@ -378,7 +378,7 @@ def test_mark_sgs_retried_tracks_per_sg(tmp_path: Path):
 
 def test_failed_excludes_cancelled_and_cancelled_helper_returns_them(tmp_path: Path):
     """Round-4 policy: `cancel_cohort_run` is user-initiated and must NOT
-    inflate the 5% threshold. `failed_sg_names` excludes CANCELLED; a
+    be counted as a failure. `failed_sg_names` excludes CANCELLED; a
     sibling `cancelled_sg_names` reports them separately."""
     path = tmp_path / 'COH0001_batches.json'
     bf = BatchesFile(path=path)
@@ -417,7 +417,7 @@ def test_cancelled_helper_mixed_with_succeeded(tmp_path: Path):
     assert sorted(bf.cancelled_sg_names()) == ['CPG_C', 'CPG_D']
     assert sorted(bf.successful_sg_names()) == ['CPG_A', 'CPG_B']
     # Failed list excludes CANCELLED — guard logic at run()'s tail relies on this
-    # being the failure-only signal so the 5% threshold doesn't conflate user
+    # being the failure-only signal so the failure count doesn't conflate user
     # cancellations with pipeline failures.
     assert bf.failed_sg_names() == []
 

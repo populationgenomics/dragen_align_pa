@@ -11,6 +11,7 @@ from dragen_align_pa.jobs.ica_pipeline_manager import (
     MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES,
     MonitoredTarget,
     PipelineStatus,
+    _failed_final_target_names,
     _process_succeeded_transition,
 )
 
@@ -118,3 +119,31 @@ def test_on_succeeded_swallows_status_change_callback_failure_during_escalation(
 def test_max_consecutive_on_succeeded_failures_constant_is_sane():
     """Sanity bound on the cap — must be > 0 and not absurd."""
     assert 1 <= MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES <= 20
+
+
+def _target_with_status(name_index: int, status: PipelineStatus) -> MonitoredTarget:
+    batch = IcaBatch(cohort_name='COH0001', batch_index=name_index, sg_names=['CPG_A'])
+    t = MonitoredTarget(target=batch, allow_retry=False)
+    t.status = status
+    return t
+
+
+def test_failed_final_target_names_selects_only_failed_final():
+    """The loop's abort decision: only FAILED_FINAL targets count as
+    unrecoverable failures — SUCCEEDED / INPROGRESS / CANCELLED are excluded.
+    A single FAILED_FINAL is enough (no failure-rate tolerance)."""
+    targets = [
+        _target_with_status(0, PipelineStatus.SUCCEEDED),
+        _target_with_status(1, PipelineStatus.INPROGRESS),
+        _target_with_status(2, PipelineStatus.CANCELLED),
+        _target_with_status(3, PipelineStatus.FAILED_FINAL),
+    ]
+    assert _failed_final_target_names(targets) == ['COH0001-batch0003']
+
+
+def test_failed_final_target_names_empty_when_none_failed():
+    targets = [
+        _target_with_status(0, PipelineStatus.SUCCEEDED),
+        _target_with_status(1, PipelineStatus.SUCCEEDED),
+    ]
+    assert _failed_final_target_names(targets) == []
