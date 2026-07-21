@@ -41,6 +41,10 @@ cancel_cohort_run = false
 monitor_previous = false
 # For testing purposes, set to true to force a new pipeline submission even if a previous run succeeded.
 force_resubmit = false
+# Recovery: reconcile the persisted batch state against ICA and rerun only genuine
+# failures (preserving completed CRAMs). Requires an existing batches file; mutually
+# exclusive with the other three flags. See README "Recovering a Desynced Run".
+force_retry = false
 
 # How many times to try ICA API requests before giving up.
 [ica.retry]

@@ -67,8 +67,8 @@ dragen_align_pa
 ## Configuring the pipeline
 The default [`config file`](config/dragen_align_pa_defaults.toml) should be used as a base to configure the cohort that you are running.
 
-Config files should be reviewed and merged into the `production-pipelines-configuration` repository prior to running on production data. Registered ICA project families (valid `ica.projects.project_root` values) are the top-level keys of `ICA_PROJECT_SETUP` in [`constants.py`](src/dragen_align_pa/constants.py).
-Valid entries for config settings such as `dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names` can be found in [`constants.py`](src/dragen_align_pa/constants.py).
+Config files should be reviewed and merged into the `production-pipelines-configuration` repository prior to running on production data. Registered ICA project families (valid `ica.projects.project_root` values) are the top-level keys of `ICA_PROJECT_SETUP` in [`constants.py`](src/dragen_align_pa/constants/constants.py).
+Valid entries for config settings such as `dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names` can be found in [`constants.py`](src/dragen_align_pa/constants/constants.py).
 
 ### Sections that must be edited
 
@@ -86,16 +86,16 @@ Your TOML configuration file must specify the following key options:
    * **If `reads_type = "cram"`:**
 
       * `[ica.cram_references]`:
-          * `reference`: Must be set to one of the defined references in [`constants.py`](src/dragen_align_pa/constants.py). Current valid options are `hg38_masked.fasta` and `hg38_unmasked.fasta` e.g. `reference = 'hg38_masked.fasta'`.
+          * `reference`: Must be set to one of the defined references in [`constants.py`](src/dragen_align_pa/constants/constants.py). Current valid options are `hg38_masked.fasta` and `hg38_unmasked.fasta` e.g. `reference = 'hg38_masked.fasta'`.
    * **If `reads_type = "fastq"`:**
       * `[manifest]`: Check that the values in the config match the values in the manifest. Even a single mismatch (e.g. `filenames` vs `Filenames`) will cause a pipeline crash.
-   * `[ica.projects]`: Set `project_root` to the dataset family (e.g. `ourdna`). Everything ICA needs for the run is derived from that family's `ICA_PROJECT_SETUP` block in [`constants.py`](src/dragen_align_pa/constants.py) — the DRAGEN-align, DRAGEN-MLR and FASTQ-upload projects, the API-key secret field, the MLR config file id, and the `can_delete_fastq` flag — so only the family is named here. Must be a registered family. **Onboarding a new family** means adding one `ICA_PROJECT_SETUP` block and setting the matching API-key value in the `illumina_cpg_workbench_api` Secret Manager secret; the submitter's validator then fails fast if anything in the block is missing or a placeholder. Note that a *registered* family can still be non-runnable until its MLR config file id is minted (a `fil.TODO_…` placeholder is rejected at submit).
+   * `[ica.projects]`: Set `project_root` to the dataset family (e.g. `ourdna`). Everything ICA needs for the run is derived from that family's `ICA_PROJECT_SETUP` block in [`constants.py`](src/dragen_align_pa/constants/constants.py) — the DRAGEN-align, DRAGEN-MLR and FASTQ-upload projects, the API-key secret field, the MLR config file id, and the `can_delete_fastq` flag — so only the family is named here. Must be a registered family. **Onboarding a new family** means adding one `ICA_PROJECT_SETUP` block and setting the matching API-key value in the `illumina_cpg_workbench_api` Secret Manager secret; the submitter's validator then fails fast if anything in the block is missing or a placeholder. Note that a *registered* family can still be non-runnable until its MLR config file id is minted (a `fil.TODO_…` placeholder is rejected at submit).
    * `[ica.management]`:
       * `monitor_previous`: Set to `false` for new runs, set to `true` if the pipeline in GCS crashes, but the pipelines in ICA are still running fine.
       * `force_resubmit`: This should almost always be set to `false`. Set to `true` to start a fresh run: it deletes the GCS state (batches file, completion marker, per-SG state) and re-submits every batch from scratch, even ones that had completed. Use this only when you want to discard prior work entirely.
       * `force_retry`: The non-destructive recovery counterpart to `force_resubmit`. Set to `true` when the GCS state has drifted from ICA (e.g. batches recorded `FAILED` in GCS that actually completed in ICA) and you want to *keep* the successful work. It first reconciles every submitted batch's recorded status against its real ICA analysis status + `passfail.json` — harvesting anything ICA shows succeeded — then reruns only what genuinely failed (overriding the one-shot retry gate, and re-chunking still-failed SGs; a batch whose ICA analysis is gone is resubmitted fresh). Requires an existing state file. Mutually exclusive with the other `[ica.management]` flags.
   * `[ica.tags]`: Set these to sensible values. It is recommended to set reads type and sequencing type in the technical tags, project name in the user tags, correct reference in the reference tags at a minimum.
-  * `[dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names]`: Set these to the names of the BED files to use for exome alignment. These must match the name(s) of BED files defined in [`constants.py`](src/dragen_align_pa/constants.py).
+  * `[dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names]`: Set these to the names of the BED files to use for exome alignment. These must match the name(s) of BED files defined in [`constants.py`](src/dragen_align_pa/constants/constants.py).
   * `[ica.data_prep]`:
       * `upload_folder`: The folder name to create in ICA for uploading data (e.g., `"my-cram-uploads"`).
       * `output_folder`: The base folder name to create in ICA for pipeline outputs (e.g., `"my-dragen-results"`).
@@ -162,7 +162,7 @@ When successful, the pipeline downloads all results to your dataset's GCS bucket
         --provenance-prefix gs://<bucket>/ica/<...>/pon_provenance
     ```
 **Usage**
-- Register the panel: merge the emitted block into `ICA_PON_FILE_IDS` in `src/dragen_align_pa/constants.py` (reformat to the repo code style — the emitted block is JSON, not Python).
+- Register the panel: merge the emitted block into `ICA_PON_FILE_IDS` in `src/dragen_align_pa/constants/constants.py` (reformat to the repo code style — the emitted block is JSON, not Python).
 - Select it for a run by name via `[dragen_align_pa.manage_dragen_pipeline.presets.exome].cnv_normals_panel = "<panel-name>"`. The submitter resolves the panel (`constants_registry.resolve_cnv_normals_panel`), sends every file ID as `additional_files`, and derives `--cnv-normals-list <panel-name>.normals.txt` automatically — no need to list `fil.…` IDs by hand. The exome preset already runs `--cnv-enable-self-normalization false`.
 
 
