@@ -320,12 +320,12 @@ def _on_succeeded_factory(
             logger.warning(f'on_succeeded called for unknown target {monitored.name}; ignoring.')
             return
 
-        batch_entry = batches_file.batches[batch.batch_index]
+        entry = batches_file.batch_entry(batch.batch_index)
         try:
             passfail, folder_fid = _fetch_batch_passfail_and_folder(
                 batch,
-                batch_entry['user_reference'],
-                batch_entry['pipeline_id'],
+                entry['user_reference'],
+                entry['pipeline_id'],
             )
         except _PASSFAIL_FETCH_ERRORS as e:
             # RAISE (don't `return`): the shared loop's transactional callback
@@ -340,7 +340,7 @@ def _on_succeeded_factory(
                 f'leaving status INPROGRESS so the next poll can re-fetch.',
             ) from e
 
-        _record_succeeded_batch(batches_file, batch, batch_entry['pipeline_id'], passfail, folder_fid)
+        _record_succeeded_batch(batches_file, batch, entry['pipeline_id'], passfail, folder_fid)
 
     return _on_succeeded
 
@@ -626,9 +626,8 @@ def _project_pipeline_id_files(
         batches_file: The authoritative cohort batches file (already loaded).
         loop_outputs: The loop's outputs dict, keyed `{name}_pipeline_id`.
     """
-    entries_by_index = {b['batch_index']: b for b in batches_file.batches}
     for batch in batches:
-        entry = entries_by_index[batch.batch_index]
+        entry = batches_file.batch_entry(batch.batch_index)
         pipeline_id = entry['pipeline_id']
         if not pipeline_id:
             continue
@@ -1070,10 +1069,9 @@ def run(
         persisted = BatchesFile(path=batches_file_path)
         persisted.read()
         # Resolve by `batch_index`, not list position — `read()` does not enforce
-        # that the list is ordered by batch_index (see `find_batch_for_sg`).
-        persisted_by_index = {b['batch_index']: b for b in persisted.batches}
+        # that the list is ordered by batch_index (see `BatchesFile.batch_entry`).
         unrecorded = sorted(
-            idx for idx in loop_failed_final if persisted_by_index[idx]['status'] != BATCH_STATUS_FAILED
+            idx for idx in loop_failed_final if persisted.batch_entry(idx)['status'] != BATCH_STATUS_FAILED
         )
         if unrecorded:
             raise RuntimeError(

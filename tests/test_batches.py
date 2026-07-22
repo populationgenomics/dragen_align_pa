@@ -408,6 +408,29 @@ def test_failed_sg_names_whole_batch_failure_recovered_by_retry(tmp_path: Path):
     assert bf.failed_sg_names() == [], f'both SGs recovered on retry; got {bf.failed_sg_names()}'
 
 
+def test_batch_entry_resolves_by_index_not_position(tmp_path: Path):
+    """record_* / clear_passfail resolve by batch_index via `batch_entry`, not list
+    position — so a batches list stored out of order (hand-edit / future reorder)
+    mutates the right entry rather than a positional neighbour."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(
+        batch_size=5,
+        batches=[
+            IcaBatch('COH0001', 0, ['CPG_A']),
+            IcaBatch('COH0001', 1, ['CPG_B']),
+        ],
+    )
+    bf.batches.reverse()  # position 0 now holds batch_index 1, and vice versa
+
+    bf.record_status(0, 'FAILED')
+
+    assert bf.batch_entry(0)['status'] == 'FAILED'  # batch_index 0 mutated
+    assert bf.batch_entry(1)['status'] == 'PENDING'  # batch_index 1 untouched
+    with pytest.raises(KeyError, match='batch_index=2'):
+        bf.batch_entry(2)
+
+
 def test_successful_sg_names_resolves_latest_generation(tmp_path: Path):
     """`successful_sg_names` is latest-generation-aware and symmetric with
     `failed_sg_names`: an SG whose gen-0 outcome was Fail but whose gen-1 retry

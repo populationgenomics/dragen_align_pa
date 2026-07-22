@@ -311,6 +311,18 @@ class BatchesFile:
         with self.path.open('w') as fh:
             json.dump(payload, fh, indent=2, sort_keys=True)
 
+    def batch_entry(self, batch_index: int) -> dict[str, Any]:
+        """Return the batch entry with the given `batch_index`.
+
+        Looks up by `batch_index`, not list position — `read()` does not guarantee
+        the list is stored in index order, so positional access could mutate the
+        wrong entry after a hand-edit or future reorder.
+        """
+        for b in self.batches:
+            if b['batch_index'] == batch_index:
+                return b
+        raise KeyError(f'No batch with batch_index={batch_index} in {self.path}')
+
     def record_pipeline_submission(
         self,
         batch_index: int,
@@ -318,7 +330,7 @@ class BatchesFile:
         ar_guid: str,
         user_reference: str,
     ) -> None:
-        b = self.batches[batch_index]
+        b = self.batch_entry(batch_index)
         b['pipeline_id'] = pipeline_id
         b['ar_guid'] = ar_guid
         b['user_reference'] = user_reference
@@ -332,32 +344,34 @@ class BatchesFile:
                 f'The orchestrator enum is finer-grained — collapse FAILED_RETRYING/'
                 f"FAILED_FINAL to 'FAILED' at the persistence boundary.",
             )
-        self.batches[batch_index]['status'] = status
+        self.batch_entry(batch_index)['status'] = status
 
     def record_passfail(self, batch_index: int, passfail: dict[str, str]) -> None:
-        self.batches[batch_index]['passfail'] = {
+        b = self.batch_entry(batch_index)
+        b['passfail'] = {
             sg: normalise_passfail_status(status, context=f'record_passfail(batch_index={batch_index}, sg={sg!r})')
             for sg, status in passfail.items()
         }
-        self.batches[batch_index]['passfail_seen'] = True
+        b['passfail_seen'] = True
 
     def clear_passfail(self, batch_index: int) -> None:
         """Reset a batch's passfail result to unset (`passfail=None`, `passfail_seen=False`)."""
-        self.batches[batch_index]['passfail'] = None
-        self.batches[batch_index]['passfail_seen'] = False
+        b = self.batch_entry(batch_index)
+        b['passfail'] = None
+        b['passfail_seen'] = False
 
     def record_analysis_output_folder_fid(self, batch_index: int, fid: str) -> None:
-        self.batches[batch_index]['analysis_output_folder_fid'] = fid
+        self.batch_entry(batch_index)['analysis_output_folder_fid'] = fid
 
     def record_fastq_list_fid(self, batch_index: int, fid: str) -> None:
-        self.batches[batch_index]['fastq_list_fid'] = fid
+        self.batch_entry(batch_index)['fastq_list_fid'] = fid
 
     def record_cram_fids(self, batch_index: int, fids: list[str]) -> None:
-        self.batches[batch_index]['cram_fids'] = list(fids)
+        self.batch_entry(batch_index)['cram_fids'] = list(fids)
 
     def record_error_strategy(self, batch_index: int, error_strategy: str) -> None:
         validate_error_strategy(error_strategy, context=f'record_error_strategy(batch_index={batch_index})')
-        self.batches[batch_index]['error_strategy'] = error_strategy
+        self.batch_entry(batch_index)['error_strategy'] = error_strategy
 
     def mark_sgs_retried(self, source_batch_idx: int, sg_names: list[str]) -> None:
         """Record that these SGs from `source_batch_idx` have been pulled into a retry batch.
@@ -369,7 +383,7 @@ class BatchesFile:
         has used up its retry allowance regardless of how many SGs were
         involved).
         """
-        b = self.batches[source_batch_idx]
+        b = self.batch_entry(source_batch_idx)
         if not sg_names:
             return
         for sg in sg_names:
