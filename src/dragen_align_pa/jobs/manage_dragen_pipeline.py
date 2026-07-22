@@ -604,6 +604,39 @@ def _build_loop_outputs_for_batches(batches: list[IcaBatch]) -> dict[str, cpg_ut
     return keys
 
 
+def _project_pipeline_id_files(
+    batches: list[IcaBatch],
+    batches_file: BatchesFile,
+    loop_outputs: dict[str, cpg_utils.Path],
+) -> None:
+    """Reconstruct each monitored batch's loop-resume file from the batches file.
+
+    The shared loop decides submit-vs-monitor solely from its per-target
+    `{name}_pipeline_id.json`. A submission writes `batches.json` (INPROGRESS +
+    pipeline_id) inside the submit callable, and the loop writes its own file only
+    afterwards — so a crash in between leaves `batches.json` INPROGRESS but the loop
+    file missing, and the next run would resubmit an already-running batch (a
+    duplicate ICA analysis). `batches.json` is authoritative (the per-target files
+    are derived projections), so materialise the loop file from it before the loop
+    runs. A batch with no recorded `pipeline_id` (never submitted) is left alone for
+    the loop to submit normally.
+
+    Args:
+        batches: The batches about to be handed to the loop.
+        batches_file: The authoritative cohort batches file (already loaded).
+        loop_outputs: The loop's outputs dict, keyed `{name}_pipeline_id`.
+    """
+    entries_by_index = {b['batch_index']: b for b in batches_file.batches}
+    for batch in batches:
+        entry = entries_by_index[batch.batch_index]
+        pipeline_id = entry['pipeline_id']
+        if not pipeline_id:
+            continue
+        path = loop_outputs[f'{batch.name}_pipeline_id']
+        with path.open('w') as f:
+            f.write(json.dumps({'pipeline_id': pipeline_id, 'ar_guid': entry['ar_guid']}))
+
+
 def _handle_management_flags(
     cohort_name: str,
     batches_file_path: cpg_utils.Path,
@@ -941,6 +974,10 @@ def run(
 
     if initial_batches:
         loop_outputs = _build_loop_outputs_for_batches(initial_batches)
+        # Materialise loop-resume files from the authoritative batches file so a
+        # crash between the batches.json submission write and the loop's own write
+        # can't resubmit an already-running batch (duplicate ICA analysis).
+        _project_pipeline_id_files(initial_batches, batches_file, loop_outputs)
         # allow_retry=False: the shared loop's whole-target retry is bypassed for
         # DRAGEN. Per-sample retry over the cohort is owned by this orchestrator,
         # not by the loop.
@@ -999,6 +1036,9 @@ def run(
             )
 
         retry_loop_outputs = _build_loop_outputs_for_batches(retry_batches)
+        # Same resume-safety projection for in-flight retry batches (see the
+        # initial-pass call above).
+        _project_pipeline_id_files(retry_batches, batches_file, retry_loop_outputs)
         manage_ica_pipeline_loop(
             targets_to_process=retry_batches,
             outputs=retry_loop_outputs | {f'{cohort.name}_errors': errors_path},

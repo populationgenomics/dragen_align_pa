@@ -22,6 +22,7 @@ from dragen_align_pa.jobs.manage_dragen_pipeline import (
     CohortCancelled,
     _build_retry_batches,
     _handle_management_flags,
+    _project_pipeline_id_files,
     _reconcile_batches_with_ica,
 )
 
@@ -521,6 +522,34 @@ def test_reconcile_reraises_non_404_ica_error(tmp_path: Path, monkeypatch):
     )
     with pytest.raises(icasdk.ApiException):
         _reconcile_batches_with_ica('COH0001', bf)
+
+
+def test_project_pipeline_id_files_rebuilds_loop_file_for_in_flight_batch(tmp_path: Path):
+    """Resume safety: a batch that recorded a submission in batches.json but whose
+    loop-resume file was lost to a crash gets that file rebuilt from batches.json, so
+    the loop monitors it instead of resubmitting (which would be a duplicate ICA
+    analysis)."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A'], status='INPROGRESS')
+    batch = IcaBatch('COH0001', 0, ['SYN_A'])
+    loop_file = tmp_path / f'{batch.name}_pipeline_id.json'
+    loop_outputs = {f'{batch.name}_pipeline_id': loop_file}
+
+    _project_pipeline_id_files([batch], bf, loop_outputs)
+
+    assert loop_file.exists()
+    assert json.loads(loop_file.read_text()) == {'pipeline_id': 'pid-0', 'ar_guid': 'guid-0'}
+
+
+def test_project_pipeline_id_files_skips_unsubmitted_batch(tmp_path: Path):
+    """A batch with no recorded pipeline_id (never submitted) is left alone so the
+    loop submits it normally — no stale/empty loop file is written."""
+    bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, ['SYN_A'])])
+    batch = IcaBatch('COH0001', 0, ['SYN_A'])
+    loop_file = tmp_path / f'{batch.name}_pipeline_id.json'
+
+    _project_pipeline_id_files([batch], bf, {f'{batch.name}_pipeline_id': loop_file})
+
+    assert not loop_file.exists()
 
 
 def test_force_retry_requires_existing_batches_file(tmp_path: Path, monkeypatch):
