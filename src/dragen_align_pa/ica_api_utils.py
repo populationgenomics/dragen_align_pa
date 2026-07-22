@@ -238,21 +238,17 @@ def ica_project_analysis_api(role: str) -> Generator[tuple[project_analysis_api.
 
 
 def _is_retryable_ica_error(exc: BaseException) -> bool:
-    """Tenacity predicate: retry only on transient ICA-side errors.
-
-    `icasdk.exceptions.ApiException` is a single class with `.status: int`, so we
-    cannot use `retry_if_exception_type` with a subclass — we check `.status`
-    directly against `_RETRYABLE_ICA_STATUSES`.
-    """
+    """Tenacity predicate: True for a transient ICA error (status in `_RETRYABLE_ICA_STATUSES`)."""
+    # ApiException is a single class carrying `.status`, so match on status rather
+    # than exception type.
     return isinstance(exc, ApiException) and exc.status in _RETRYABLE_ICA_STATUSES  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def _log_ica_retry(retry_state: RetryCallState) -> None:
-    """tenacity ``before_sleep`` hook: surface every transient-error retry.
+    """tenacity ``before_sleep`` hook: log every scheduled transient-error retry.
 
-    Without this, a retried 429/503/409 is silent — making the retry machinery
-    "appear to do nothing" in the logs even when it is working. Fires only when
-    a retry is actually scheduled (i.e. on a retryable error with attempts left).
+    Fires only when a retry is actually scheduled (a retryable error with retry
+    attempts remaining).
     """
     exc = retry_state.outcome.exception() if retry_state.outcome else None
     status = getattr(exc, 'status', '?')

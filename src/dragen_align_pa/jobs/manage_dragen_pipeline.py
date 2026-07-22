@@ -609,23 +609,19 @@ def _project_pipeline_id_files(
     batches_file: BatchesFile,
     loop_outputs: dict[str, cpg_utils.Path],
 ) -> None:
-    """Reconstruct each monitored batch's loop-resume file from the batches file.
+    """Write each monitored batch's loop-resume `{name}_pipeline_id.json` from the batches file.
 
-    The shared loop decides submit-vs-monitor solely from its per-target
-    `{name}_pipeline_id.json`. A submission writes `batches.json` (INPROGRESS +
-    pipeline_id) inside the submit callable, and the loop writes its own file only
-    afterwards — so a crash in between leaves `batches.json` INPROGRESS but the loop
-    file missing, and the next run would resubmit an already-running batch (a
-    duplicate ICA analysis). `batches.json` is authoritative (the per-target files
-    are derived projections), so materialise the loop file from it before the loop
-    runs. A batch with no recorded `pipeline_id` (never submitted) is left alone for
-    the loop to submit normally.
+    Writes the loop's per-target resume file for every batch that has a recorded
+    `pipeline_id`; a batch with no `pipeline_id` (never submitted) is skipped.
 
     Args:
         batches: The batches about to be handed to the loop.
-        batches_file: The authoritative cohort batches file (already loaded).
+        batches_file: The cohort batches file (already loaded).
         loop_outputs: The loop's outputs dict, keyed `{name}_pipeline_id`.
     """
+    # batches.json is authoritative; materialise the loop's resume files from it so
+    # a crash between the batches.json submission write and the loop's own file
+    # write cannot resubmit an already-running batch.
     for batch in batches:
         entry = batches_file.batch_entry(batch.batch_index)
         pipeline_id = entry['pipeline_id']

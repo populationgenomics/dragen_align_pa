@@ -23,10 +23,7 @@ if TYPE_CHECKING:
 
 
 class PassfailStatusError(ValueError):
-    """A passfail.json status value outside the recognised input set.
-
-    Subclasses `ValueError` so callers catching `ValueError` still match.
-    """
+    """A passfail.json status value outside the recognised input set."""
 
 
 def validate_error_strategy(value: str, *, context: str) -> None:
@@ -314,10 +311,17 @@ class BatchesFile:
     def batch_entry(self, batch_index: int) -> dict[str, Any]:
         """Return the batch entry with the given `batch_index`.
 
-        Looks up by `batch_index`, not list position — `read()` does not guarantee
-        the list is stored in index order, so positional access could mutate the
-        wrong entry after a hand-edit or future reorder.
+        Args:
+            batch_index: The batch's `batch_index`.
+
+        Returns:
+            The matching batch entry dict.
+
+        Raises:
+            KeyError: If no batch has that `batch_index`.
         """
+        # Match by batch_index, not list position: read() does not guarantee the
+        # list is stored in index order.
         for b in self.batches:
             if b['batch_index'] == batch_index:
                 return b
@@ -467,26 +471,24 @@ class BatchesFile:
     def failed_sg_names(self) -> list[str]:
         """SGs whose latest-generation outcome is Fail, across all batches.
 
-        Each SG is resolved to the outcome of its highest-`batch_index`
-        determinate batch, so a gen=0 Fail that a retry batch later records as
-        Success does not count. A batch-level FAILED with no passfail marks every
-        SG in the batch Fail. CANCELLED batches (empty passfail) contribute no
-        outcome; call `cancelled_sg_names()` for those.
+        Each SG resolves to the outcome of its highest-`batch_index` determinate
+        batch. A batch-level FAILED with no passfail marks every SG in the batch
+        Fail. CANCELLED batches contribute no outcome (see `cancelled_sg_names`).
 
         Returns:
-            The failed SG names (first-seen order); latest generation wins.
+            The failed SG names, in first-seen order.
         """
         first_seen, is_fail = self._resolve_latest_outcomes()
         return [sg for sg in first_seen if is_fail[sg]]
 
     def cancelled_sg_names(self) -> list[str]:
-        """SGs in batches marked CANCELLED (by user `cancel_cohort_run`).
+        """SGs in batches marked CANCELLED (by `cancel_cohort_run`).
 
-        Like `failed_sg_names`, may double-count an SG that appears in both
-        an initial (gen=0) and a retry (gen=1) batch if BOTH were cancelled —
-        a degenerate scenario in practice (retries are spawned only from
-        failures, and cancel only fires on PENDING/INPROGRESS batches).
-        Callers that need unique SGs should wrap in `set(...)`.
+        May list an SG twice if it appears in both an initial (gen=0) and a retry
+        (gen=1) batch that were both cancelled; wrap in `set(...)` for uniqueness.
+
+        Returns:
+            The SG names across all CANCELLED batches.
         """
         return [sg for b in self.batches if b['status'] == BATCH_STATUS_CANCELLED for sg in b['sg_names']]
 
@@ -494,11 +496,12 @@ class BatchesFile:
         """SGs whose latest-generation outcome is Success, across all batches.
 
         Symmetric with `failed_sg_names`: each SG resolves to its highest-
-        `batch_index` determinate outcome, so an SG that failed a retry after an
-        earlier Success does not appear here (and vice versa). Success requires
-        positive confirmation from `passfail.json`; a batch-level FAILED with no
-        passfail is a Fail, not a Success. CANCELLED batches (empty passfail)
-        contribute no outcome.
+        `batch_index` determinate outcome. Success requires positive confirmation
+        from `passfail.json`; a batch-level FAILED with no passfail is a Fail, not
+        a Success. CANCELLED batches contribute no outcome.
+
+        Returns:
+            The succeeded SG names, in first-seen order.
         """
         first_seen, is_fail = self._resolve_latest_outcomes()
         return [sg for sg in first_seen if not is_fail[sg]]
