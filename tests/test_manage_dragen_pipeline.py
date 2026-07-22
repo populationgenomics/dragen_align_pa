@@ -19,10 +19,12 @@ import pytest
 
 from dragen_align_pa.batches import BatchesFile, IcaBatch
 from dragen_align_pa.ica_utils import get_ica_sample_folder
+from dragen_align_pa.jobs.ica_pipeline_manager import MonitoredTarget, PipelineStatus
 from dragen_align_pa.jobs.manage_dragen_pipeline import (
     CohortCancelled,
     _build_retry_batches,
     _handle_management_flags,
+    _on_status_change_factory,
     _project_pipeline_id_files,
     _reconcile_batches_with_ica,
     _repoint_per_sg_state_to_winning_generation,
@@ -516,6 +518,47 @@ def test_reconcile_succeeded_fetch_error_leaves_inprogress(tmp_path: Path, monke
     assert bf.batches[0]['status'] == 'INPROGRESS'
 
 
+def test_reconcile_succeeded_fetch_error_clears_stale_passfail(tmp_path: Path, monkeypatch):
+    """MF1: a batch demoted to INPROGRESS on a passfail-fetch blip must have its stale
+    passfail cleared, so `_build_retry_batches`'s `in_flight_sgs` guard excludes it
+    instead of resubmitting its Fail SGs while the resume loop re-monitors the same
+    analysis (double submit)."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A', 'SYN_B'], status='INPROGRESS')
+    bf.record_passfail(0, {'SYN_A': 'Success', 'SYN_B': 'Fail'})  # stale prior-run passfail
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        lambda **_kwargs: 'SUCCEEDED',
+    )
+
+    def _raise_fetch_error(*_args: object):
+        raise json.JSONDecodeError('boom', '', 0)
+
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline._fetch_batch_passfail_and_folder',
+        _raise_fetch_error,
+    )
+    _reconcile_batches_with_ica('COH0001', bf)
+    assert bf.batches[0]['status'] == 'INPROGRESS'
+    assert bf.batches[0]['passfail'] is None
+    # Excluded as in-flight, not resubmitted, by force-mode retry building.
+    assert _build_retry_batches('COH0001', bf, 5, force=True) == []
+
+
+def test_reconcile_still_running_clears_stale_passfail(tmp_path: Path, monkeypatch):
+    """MF1: the still-running (REQUESTED/INPROGRESS) demotion branch clears a stale
+    passfail too, for the same in_flight_sgs invariant."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A', 'SYN_B'], status='FAILED')
+    bf.record_passfail(0, {'SYN_A': 'Success', 'SYN_B': 'Fail'})  # stale prior-run passfail
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        lambda **_kwargs: 'INPROGRESS',
+    )
+    _reconcile_batches_with_ica('COH0001', bf)
+    assert bf.batches[0]['status'] == 'INPROGRESS'
+    assert bf.batches[0]['passfail'] is None
+    assert _build_retry_batches('COH0001', bf, 5, force=True) == []
+
+
 def test_reconcile_skips_cancelled_batch(tmp_path: Path, monkeypatch):
     """CANCELLED is terminal: reconcile must not query or relabel a cancelled batch,
     even though it still carries a pipeline_id (else its ABORTED status would map to
@@ -582,6 +625,23 @@ def test_repoint_per_sg_state_skips_sg_dropped_from_cohort(tmp_path: Path):
     bf = _submitted_batch_file(tmp_path, ['SYN_A'], status='SUCCEEDED')
     bf.record_passfail(0, {'SYN_A': 'Success'})
     _repoint_per_sg_state_to_winning_generation({}, bf)  # no output for SYN_A; does not raise
+
+
+def test_on_status_change_failed_final_clears_passfail(tmp_path: Path):
+    """SF4: a FAILED_FINAL escalation clears any stale passfail so the batch is an
+    unambiguous whole-batch failure, not a self-contradictory FAILED + non-empty
+    passfail that `_resolve_latest_outcomes` would read via its per-SG branch."""
+    batch = IcaBatch('COH0001', 0, ['SYN_A', 'SYN_B'])
+    bf = _make_file(tmp_path, [batch])
+    bf.record_passfail(0, {'SYN_A': 'Success', 'SYN_B': 'Fail'})  # stale passfail
+    sink: set[int] = set()
+    on_status_change = _on_status_change_factory(bf, {batch.name: batch}, sink)
+
+    on_status_change(MonitoredTarget(batch, allow_retry=False), PipelineStatus.FAILED_FINAL)
+
+    assert bf.batches[0]['status'] == 'FAILED'
+    assert bf.batches[0]['passfail'] is None
+    assert sink == {0}
 
 
 def test_reconcile_reraises_non_404_ica_error(tmp_path: Path, monkeypatch):

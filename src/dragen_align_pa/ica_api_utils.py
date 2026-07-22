@@ -58,20 +58,21 @@ SECRET_VERSION: Final = 'latest'
 # data-plane call. Override per-run via [ica.retry] max_retries.
 _DEFAULT_ICA_MAX_RETRIES: Final = 10
 
-# Transient ICA data-plane HTTP statuses worth retrying:
+# Transient ICA data-plane HTTP statuses worth retrying on ANY call:
 #   429 — rate-limit (well-known production failure mode)
 #   503 — ICA backend unavailable
-#   409 — ICA_DATA_105 "Conflict while updating file/folder. Please try again
-#         later." — a concurrency conflict ICA itself advises retrying. This set
-#         is shared by every `ica_retry` caller, but the 409 rationale is
-#         create-specific: `create_upload_object_id` re-checks for an existing
-#         object inside the retry boundary, so its retried 409 is the transient
-#         update conflict, never a permanent "already exists". The read-style
-#         calls routed through `ica_retry` (status polls, data listing) don't
-#         return 409 in practice.
 # Any other status (404/500/…) propagates immediately — retrying a permanent
 # error just delays the real signal.
-_RETRYABLE_ICA_STATUSES: Final = frozenset({409, 429, 503})
+_RETRYABLE_ICA_STATUSES: Final = frozenset({429, 503})
+
+# Create-data only adds 409 — ICA_DATA_105 "Conflict while updating file/folder.
+# Please try again later." A retried 409 is only safe when the caller re-checks
+# for the landed object inside the retry boundary, which only
+# `ica_utils.create_upload_object_id._find_or_create` does. 409 is deliberately
+# NOT in the global set: a non-idempotent write like the DRAGEN analysis submit
+# (`submit_nextflow_analysis`) has no such re-check, so a retried 409 there would
+# risk a duplicate analysis.
+_RETRYABLE_ICA_CREATE_STATUSES: Final = _RETRYABLE_ICA_STATUSES | {409}
 
 
 # --- Secret Management & Auth ---
@@ -241,11 +242,16 @@ def ica_project_analysis_api(role: str) -> Generator[tuple[project_analysis_api.
 # --- API Wrappers ---
 
 
-def _is_retryable_ica_error(exc: BaseException) -> bool:
-    """Tenacity predicate: True for a transient ICA error (status in `_RETRYABLE_ICA_STATUSES`)."""
+def _is_retryable_ica_error(exc: BaseException, retryable_statuses: frozenset[int]) -> bool:
+    """Tenacity predicate: True for a transient ICA error whose status is retryable.
+
+    Args:
+        exc: The exception raised by the wrapped ICA call.
+        retryable_statuses: The HTTP statuses treated as transient for this call.
+    """
     # ApiException is a single class carrying `.status`, so match on status rather
     # than exception type.
-    return isinstance(exc, ApiException) and exc.status in _RETRYABLE_ICA_STATUSES  # pyright: ignore[reportAttributeAccessIssue]
+    return isinstance(exc, ApiException) and exc.status in retryable_statuses  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def _log_ica_retry(retry_state: RetryCallState) -> None:
@@ -263,8 +269,8 @@ def _log_ica_retry(retry_state: RetryCallState) -> None:
     )
 
 
-def _ica_retrying() -> Retrying:
-    """Build the shared tenacity controller for transient ICA errors (`_RETRYABLE_ICA_STATUSES`).
+def _ica_retrying(retryable_statuses: frozenset[int] = _RETRYABLE_ICA_STATUSES) -> Retrying:
+    """Build the shared tenacity controller for transient ICA errors.
 
     Read at call time (not at import) so the retry count can be tuned via
     `[ica.retry] max_retries` in config without rebuilding the image, and to
@@ -273,12 +279,17 @@ def _ica_retrying() -> Retrying:
 
     `max_retries` is retries *after* the initial attempt, so total attempts is
     `max_retries + 1`. Defaults to 10 retries.
+
+    Args:
+        retryable_statuses: The HTTP statuses treated as transient. Defaults to
+            `_RETRYABLE_ICA_STATUSES` (429/503); create-data passes the wider
+            `_RETRYABLE_ICA_CREATE_STATUSES` (adds 409).
     """
     max_retries = int(
         config_retrieve(['ica', 'retry', 'max_retries'], default=_DEFAULT_ICA_MAX_RETRIES),
     )
     return Retrying(
-        retry=retry_if_exception(_is_retryable_ica_error),
+        retry=retry_if_exception(lambda exc: _is_retryable_ica_error(exc, retryable_statuses)),
         stop=stop_after_attempt(max_retries + 1),
         # wait_random_exponential gives a fully-randomised exponential backoff
         # (each wait is random in [0, min(2^attempt, max)]), which desynchronises
@@ -300,10 +311,9 @@ def ica_retry(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
 
     Wraps `fn(*args, **kwargs)` in the shared jittered-backoff controller (see
     `_ica_retrying`). Only the transient statuses in `_RETRYABLE_ICA_STATUSES`
-    (429 rate-limit, 503 backend-unavailable, 409 folder-update conflict) are
-    retried; every other error propagates on the first occurrence. The
-    controller is rebuilt per call so `[ica.retry] max_retries` is read from
-    config at call time.
+    (429 rate-limit, 503 backend-unavailable) are retried; every other error
+    propagates on the first occurrence. The controller is rebuilt per call so
+    `[ica.retry] max_retries` is read from config at call time.
 
     Wrap only the SDK call itself, inside any existing try/except, so the
     caller's error logging still fires on the *final* failure while
@@ -312,13 +322,32 @@ def ica_retry(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
     return _ica_retrying()(fn, *args, **kwargs)
 
 
+# Only safe when `fn` re-checks for the already-landed object inside the retry
+# boundary (as `create_upload_object_id._find_or_create` does), so a retried 409
+# returns the existing object instead of minting a duplicate.
+def ica_retry_create(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
+    """Invoke a create-data ICA SDK call with transient-error retry, including 409.
+
+    Retries the wider `_RETRYABLE_ICA_CREATE_STATUSES` (429/503 plus 409).
+
+    Args:
+        fn: The ICA SDK create-data call to invoke.
+        *args: Positional arguments forwarded to `fn`.
+        **kwargs: Keyword arguments forwarded to `fn`.
+
+    Returns:
+        The result of `fn(*args, **kwargs)`.
+    """
+    return _ica_retrying(_RETRYABLE_ICA_CREATE_STATUSES)(fn, *args, **kwargs)
+
+
 def check_ica_pipeline_status(
     api_instance: project_analysis_api.ProjectAnalysisApi,
     path_params: dict[str, str],
 ) -> str:
     """Check the status of an ICA pipeline via a pipeline ID
 
-    Transient ICA errors (`_RETRYABLE_ICA_STATUSES`: 429/503/409) are retried with
+    Transient ICA errors (`_RETRYABLE_ICA_STATUSES`: 429/503) are retried with
     jittered exponential backoff (see `ica_retry`); other errors propagate on the
     first occurrence.
 
@@ -391,13 +420,22 @@ def check_object_already_exists(
         object_id = object_data['id']  # pyright: ignore[reportUnknownVariableType]
         status: str = object_data['details'].get('status', 'UNKNOWN')  # pyright: ignore[reportUnknownVariableType]
 
+        # Statuses are ["PARTIAL", "AVAILABLE", "ARCHIVING", "ARCHIVED", "UNARCHIVING", "DELETING"].
+        # Only an AVAILABLE object is safe to reuse. A transitional status
+        # (notably DELETING — ICA delete is async, so the folder is about to
+        # vanish) must not be handed back as "exists": a create-path 409 retry
+        # would otherwise re-check, get this id, and point an upload / analysis
+        # output at a doomed folder. Raise loudly instead, matching the FILE branch.
         if object_type == 'FOLDER':
-            return object_id, status  # Folders have status, e.g., 'AVAILABLE'
+            if status == 'AVAILABLE':
+                return object_id, status
+            raise NotImplementedError(
+                f'Folder {file_name!r} exists in ICA with status "{status}"; only AVAILABLE folders can be reused.',
+            )
 
         if status in ('PARTIAL', 'AVAILABLE'):
             return object_id, status
 
-        # Statuses are ["PARTIAL", "AVAILABLE", "ARCHIVING", "ARCHIVED", "UNARCHIVING", "DELETING", ]
         raise NotImplementedError(f'Checking for file status "{status}" is not implemented yet.')
     except icasdk.ApiException as e:
         logger.error(

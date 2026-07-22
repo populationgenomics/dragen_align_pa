@@ -16,6 +16,7 @@ Responsibilities:
 import json
 from collections import Counter
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 import cpg_utils
 import icasdk
@@ -417,7 +418,10 @@ def _on_status_change_factory(
             return
         if new_status == PipelineStatus.FAILED_FINAL:
             failed_final_sink.add(batch.batch_index)
-            batches_file.record_status(batch.batch_index, BATCH_STATUS_FAILED)
+            # Clear any stale passfail so the batch is an unambiguous whole-batch
+            # failure — a FAILED entry with a non-empty passfail would be read via
+            # `_resolve_latest_outcomes`'s per-SG branch, a self-contradictory state.
+            _mark_failed_and_clear(batches_file, batch.batch_index)
         elif new_status == PipelineStatus.CANCELLED:
             batches_file.record_status(batch.batch_index, BATCH_STATUS_CANCELLED)
         else:
@@ -443,6 +447,21 @@ def _mark_failed_and_clear(batches_file: BatchesFile, batch_index: int) -> None:
     # Clearing the stale passfail turns the batch into a whole-batch failure so
     # every SG resubmits rather than being harvested from a gone/failed analysis.
     batches_file.record_status(batch_index, BATCH_STATUS_FAILED)
+    batches_file.clear_passfail(batch_index)
+
+
+def _mark_inprogress_and_clear(batches_file: BatchesFile, batch_index: int) -> None:
+    """Mark a batch INPROGRESS and clear its passfail.
+
+    Args:
+        batches_file: The cohort batches file (mutated in place).
+        batch_index: The batch to mark.
+    """
+    # Clearing the stale passfail preserves the "INPROGRESS batch has empty
+    # passfail" invariant, so `_build_retry_batches`'s `in_flight_sgs` guard
+    # excludes the re-monitored batch instead of pulling its SGs into a fresh
+    # retry while the resume loop re-monitors the same analysis (double submit).
+    batches_file.record_status(batch_index, BATCH_STATUS_INPROGRESS)
     batches_file.clear_passfail(batch_index)
 
 
@@ -501,7 +520,7 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
                     f'Batch {batch.name}: passfail fetch failed during reconciliation ({e}); '
                     f'leaving {BATCH_STATUS_INPROGRESS} for the resume loop to re-fetch.',
                 )
-                batches_file.record_status(batch.batch_index, BATCH_STATUS_INPROGRESS)
+                _mark_inprogress_and_clear(batches_file, batch.batch_index)
                 counts['in_progress'] += 1
                 continue
             _record_succeeded_batch(batches_file, batch, pipeline_id, passfail, folder_fid)
@@ -511,7 +530,7 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
             counts['failed'] += 1
         else:
             # REQUESTED / AWAITINGINPUT / INPROGRESS — still running; let the resume monitor it.
-            batches_file.record_status(batch.batch_index, BATCH_STATUS_INPROGRESS)
+            _mark_inprogress_and_clear(batches_file, batch.batch_index)
             counts['in_progress'] += 1
 
     batches_file.write()
@@ -1243,11 +1262,14 @@ def run(
         # flushed the ICA-level error detail to this same path on exit, and we
         # want the failed-SG summary to sit alongside it, not overwrite it.
         # `errors_path` is internal scratch — not a declared expected_output, so
-        # its absence on a clean run doesn't force a re-run.
+        # its absence on a clean run doesn't force a re-run. A timestamped header
+        # delimits each stage invocation, so a cpg-flow stage retry appends a
+        # fresh, attributable block instead of a run-mixing blob.
+        run_marker = datetime.now(tz=UTC).isoformat()
         with errors_path.open('a') as fh:
             fh.write(
-                f'Cohort {cohort.name}: {n_failed}/{n_total} SG(s) failed the DRAGEN '
-                f'pipeline after the retry pass.\n'
+                f'\n===== {cohort.name} DRAGEN failure summary @ {run_marker} =====\n'
+                f'{n_failed}/{n_total} SG(s) failed the DRAGEN pipeline after the retry pass.\n'
                 f'Failed SGs: {", ".join(failed)}\n',
             )
         raise RuntimeError(

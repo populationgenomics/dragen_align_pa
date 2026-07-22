@@ -184,7 +184,10 @@ def create_upload_object_id(
         return new_object_id, new_status
 
     try:
-        return ica_api_utils.ica_retry(_find_or_create)
+        # ica_retry_create (not ica_retry): create_data_in_project is not
+        # idempotent, so 409 is only retried here where _find_or_create re-checks
+        # for the landed object first.
+        return ica_api_utils.ica_retry_create(_find_or_create)
     except icasdk.ApiException as e:
         raise icasdk.ApiException(
             f'Exception when calling ProjectDataApi -> create_data_in_project: {e}',
@@ -246,7 +249,7 @@ def batch_create_download_urls(
     match URLs back to the file IDs they already hold. An empty `file_ids`
     short-circuits without an API call.
 
-    Goes through `ica_retry`, so a transient 429/503/409 on the batch mint is
+    Goes through `ica_retry`, so a transient 429/503 on the batch mint is
     absorbed like every other data-plane call.
     """
     if not file_ids:

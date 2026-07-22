@@ -295,26 +295,22 @@ def test_check_ica_pipeline_status_retries_on_503_then_succeeds():
     assert api.get_analysis.call_count == 2
 
 
-def test_check_ica_pipeline_status_retries_on_409_then_succeeds():
-    """409 (ICA_DATA_105 'Conflict while updating file/folder. Please try again
-    later.') is a transient concurrency conflict ICA itself advises retrying —
-    observed on create_data_in_project during upload. It must be retried through
-    the shared predicate, not propagated on the first occurrence."""
+def test_check_ica_pipeline_status_does_not_retry_409():
+    """409 is retryable only for create-data (via `ica_retry_create`, behind an
+    existence re-check). A status poll goes through the base `ica_retry`, which
+    must propagate 409 on the first occurrence rather than retry a non-idempotent
+    conflict it cannot recover."""
     api = MagicMock()
-    succeeding_response = MagicMock()
-    succeeding_response.body = {'status': 'INPROGRESS'}
-    api.get_analysis.side_effect = [
-        ApiException(status=409, reason='Conflict'),
-        succeeding_response,
-    ]
+    api.get_analysis.side_effect = ApiException(status=409, reason='Conflict')
 
-    result = ica_api_utils.check_ica_pipeline_status(
-        api_instance=api,
-        path_params={'projectId': 'p', 'analysisId': 'a'},
-    )
+    with pytest.raises(ApiException) as exc_info:
+        ica_api_utils.check_ica_pipeline_status(
+            api_instance=api,
+            path_params={'projectId': 'p', 'analysisId': 'a'},
+        )
 
-    assert result == 'INPROGRESS'
-    assert api.get_analysis.call_count == 2
+    assert exc_info.value.status == 409
+    assert api.get_analysis.call_count == 1
 
 
 def test_check_ica_pipeline_status_does_not_retry_non_transient_status():
@@ -469,3 +465,58 @@ def test_create_upload_object_id_recovers_object_on_conflict_retry():
     assert (object_id, status) == ('fid_recovered', 'AVAILABLE')
     assert api.create_data_in_project.call_count == 1  # not re-created after recovery
     assert api.get_project_data_list.call_count == 2  # re-checked on the retry
+
+
+def test_submit_nextflow_analysis_does_not_retry_409():
+    """MF2: the DRAGEN analysis submit is non-idempotent and has no existence
+    re-check, so a 409 must propagate on the first occurrence — retrying it would
+    risk a duplicate analysis. Only create-data (via `ica_retry_create`) retries 409."""
+    api = MagicMock()
+    api.create_nextflow_analysis.side_effect = ApiException(status=409, reason='Conflict')
+
+    with pytest.raises(ApiException) as exc_info:
+        ica_api_utils.submit_nextflow_analysis(
+            api_instance=api,
+            path_params={'projectId': 'p'},
+            body=MagicMock(),
+        )
+
+    assert exc_info.value.status == 409
+    assert api.create_nextflow_analysis.call_count == 1
+
+
+def test_check_object_already_exists_folder_available_is_returned():
+    """An AVAILABLE folder is safe to reuse and is returned as (id, status)."""
+    api = MagicMock()
+    api.get_project_data_list.return_value = MagicMock(
+        body={'items': [{'data': {'id': 'fol.ok', 'details': {'status': 'AVAILABLE'}}}]},
+    )
+
+    result = ica_api_utils.check_object_already_exists(
+        api_instance=api,
+        path_params={'projectId': 'p'},
+        file_name='myfolder',
+        folder_path='/bucket/parent',
+        object_type='FOLDER',
+    )
+
+    assert result == ('fol.ok', 'AVAILABLE')
+
+
+def test_check_object_already_exists_folder_deleting_raises():
+    """SF3: a folder in async-DELETING state must not be handed back as 'exists'.
+    ICA delete is async, so returning its id would point an upload / analysis
+    output at a folder about to vanish — raise loudly instead."""
+    api = MagicMock()
+    api.get_project_data_list.return_value = MagicMock(
+        body={'items': [{'data': {'id': 'fol.doomed', 'details': {'status': 'DELETING'}}}]},
+    )
+
+    with pytest.raises(NotImplementedError, match='DELETING'):
+        ica_api_utils.check_object_already_exists(
+            api_instance=api,
+            path_params={'projectId': 'p'},
+            file_name='myfolder',
+            folder_path='/bucket/parent',
+            object_type='FOLDER',
+        )
