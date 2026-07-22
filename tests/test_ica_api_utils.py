@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 from google.api_core import exceptions as gax_exceptions
 
-from dragen_align_pa import ica_api_utils
+from dragen_align_pa import ica_api_utils, ica_utils
 from icasdk.exceptions import ApiException
 
 
@@ -445,3 +445,27 @@ def test_check_object_already_exists_retries_on_503_then_succeeds():
 
     assert result is None
     assert api.get_project_data_list.call_count == 2
+
+
+def test_create_upload_object_id_recovers_object_on_conflict_retry():
+    """A 409 on create is retried; because the existence check now sits inside the
+    retry boundary, the retry finds the object the conflicting write already landed
+    and returns it rather than creating a duplicate."""
+    api = MagicMock()
+    not_found = MagicMock(body={'items': []})
+    now_exists = MagicMock(body={'items': [{'data': {'id': 'fid_recovered', 'details': {'status': 'AVAILABLE'}}}]})
+    api.get_project_data_list.side_effect = [not_found, now_exists]
+    api.create_data_in_project.side_effect = ApiException(status=409, reason='Conflict')
+
+    object_id, status = ica_utils.create_upload_object_id(
+        api_instance=api,
+        path_params={'projectId': 'p'},
+        folder_name='myfolder',
+        file_name='SYN1.cram',
+        folder_path='/bucket/folder',
+        object_type='FILE',
+    )
+
+    assert (object_id, status) == ('fid_recovered', 'AVAILABLE')
+    assert api.create_data_in_project.call_count == 1  # not re-created after recovery
+    assert api.get_project_data_list.call_count == 2  # re-checked on the retry

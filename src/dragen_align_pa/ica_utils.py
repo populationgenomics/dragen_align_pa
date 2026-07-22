@@ -152,34 +152,29 @@ def create_upload_object_id(
     # trailing slash of their own.
     folder_path = IcaPath.from_relpath(folder_path).as_folder()
 
-    existing_object_details: tuple[str, str] | None = ica_api_utils.check_object_already_exists(
-        api_instance=api_instance,
-        path_params=path_params,
-        file_name=file_name,
-        folder_path=folder_path,
-        object_type=object_type,
-    )
+    if object_type == 'FILE':
+        body = CreateData(name=file_name, folderPath=folder_path, dataType=object_type)
+    else:
+        body = CreateData(name=folder_name, folderPath=folder_path, dataType=object_type)
 
-    if existing_object_details:
-        object_id, status = existing_object_details
-        logger.info(f'Found existing {object_type} with ID {object_id} and status {status}')
-        return object_id, status
+    def _find_or_create() -> tuple[str, str]:
+        # The existence check sits inside the retry boundary: create_data_in_project
+        # is not idempotent, and its 409 (ICA_DATA_105) is a retryable conflict, so a
+        # retry must re-check first — if the conflicting write already landed the
+        # object, we return it instead of minting a duplicate.
+        existing_object_details = ica_api_utils.check_object_already_exists(
+            api_instance=api_instance,
+            path_params=path_params,
+            file_name=file_name,
+            folder_path=folder_path,
+            object_type=object_type,
+        )
+        if existing_object_details:
+            object_id, status = existing_object_details
+            logger.info(f'Found existing {object_type} with ID {object_id} and status {status}')
+            return object_id, status
 
-    try:
-        if object_type == 'FILE':
-            body = CreateData(
-                name=file_name,
-                folderPath=folder_path,
-                dataType=object_type,
-            )
-        else:
-            body = CreateData(
-                name=folder_name,
-                folderPath=folder_path,
-                dataType=object_type,
-            )
-        api_response = ica_api_utils.ica_retry(
-            api_instance.create_data_in_project,  # type: ignore[ReportUnknownVariableType]
+        api_response = api_instance.create_data_in_project(  # type: ignore[ReportUnknownVariableType]
             path_params=path_params,  # type: ignore[ReportUnknownVariableType]
             body=body,
         )
@@ -187,6 +182,9 @@ def create_upload_object_id(
         new_status = api_response.body['data']['details']['status']  # type: ignore[ReportUnknownVariableType]
         logger.info(f'Created new {object_type} with ID {new_object_id} and status {new_status}')
         return new_object_id, new_status
+
+    try:
+        return ica_api_utils.ica_retry(_find_or_create)
     except icasdk.ApiException as e:
         raise icasdk.ApiException(
             f'Exception when calling ProjectDataApi -> create_data_in_project: {e}',
