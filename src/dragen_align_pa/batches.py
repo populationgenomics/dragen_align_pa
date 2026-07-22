@@ -449,17 +449,17 @@ class BatchesFile:
         """Resolve each SG to its definitive Success/Fail outcome.
 
         An SG's outcome is Success if any generation produced an ICA-confirmed
-        Success for it; otherwise it is the outcome of its highest-`batch_index`
-        determinate batch: per-sample passfail (Success/Fail), or a batch-level
-        FAILED with falsy passfail (every SG in the batch Fail). CANCELLED batches
-        contribute no outcome.
+        Success for it; otherwise it is Fail. Determinate outcomes come from
+        per-sample passfail (Success/Fail) or a batch-level FAILED with falsy
+        passfail (every SG in the batch Fail). CANCELLED batches contribute no
+        outcome.
 
         Returns:
             A `(first_seen_order, is_fail)` tuple: the SG names in first-seen order
             and a map of SG name to whether its outcome is Fail.
         """
         succeeded: set[str] = set()
-        latest_fail_idx: dict[str, int] = {}
+        seen: set[str] = set()
         first_seen: list[str] = []
         for b in self.batches:
             if b['status'] == BATCH_STATUS_CANCELLED:
@@ -472,13 +472,11 @@ class BatchesFile:
                 outcomes = [(sg, status == CANONICAL_PASSFAIL_FAIL) for sg, status in b['passfail'].items()]
             else:
                 continue
-            idx = b['batch_index']
             for sg, fail in outcomes:
-                if sg not in succeeded and sg not in latest_fail_idx:
+                if sg not in seen:
+                    seen.add(sg)
                     first_seen.append(sg)
-                if fail:
-                    latest_fail_idx[sg] = max(idx, latest_fail_idx.get(sg, -1))
-                else:
+                if not fail:
                     succeeded.add(sg)
         # A Success at any generation beats a later Fail: force_retry can reconcile
         # an original batch to SUCCEEDED after a superseding retry already failed,
@@ -490,9 +488,9 @@ class BatchesFile:
         """SGs whose definitive outcome is Fail, across all batches.
 
         Each SG resolves via `_resolve_latest_outcomes`: a Success at any
-        generation wins, otherwise its highest-`batch_index` determinate batch. A
-        batch-level FAILED with falsy passfail marks every SG in the batch Fail.
-        CANCELLED batches contribute no outcome (see `cancelled_sg_names`).
+        generation wins, otherwise Fail. A batch-level FAILED with falsy
+        passfail marks every SG in the batch Fail. CANCELLED batches contribute
+        no outcome (see `cancelled_sg_names`).
 
         Returns:
             The failed SG names, in first-seen order.

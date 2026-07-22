@@ -18,13 +18,17 @@ import icasdk
 import pytest
 
 from dragen_align_pa.batches import BatchesFile, IcaBatch
+from dragen_align_pa.ica_utils import get_ica_sample_folder
 from dragen_align_pa.jobs.manage_dragen_pipeline import (
     CohortCancelled,
     _build_retry_batches,
     _handle_management_flags,
     _project_pipeline_id_files,
     _reconcile_batches_with_ica,
+    _repoint_per_sg_state_to_winning_generation,
+    _write_per_sg_state,
 )
+from dragen_align_pa.utils import load_per_sg_state
 
 
 def _make_file(tmp_path: Path, batches: list[IcaBatch]) -> BatchesFile:
@@ -527,6 +531,57 @@ def test_reconcile_skips_cancelled_batch(tmp_path: Path, monkeypatch):
     )
     _reconcile_batches_with_ica('COH0001', bf)
     assert bf.batches[0]['status'] == 'CANCELLED'
+
+
+def test_repoint_per_sg_state_points_download_at_succeeded_generation(tmp_path: Path):
+    """After a two-generation force_retry (gen-0 reconciled SUCCEEDED, gen-1 failed
+    and last wrote the per-SG state file), the per-SG state — the sole input the
+    download path uses — must be repointed at gen-0 so the CRAM can be found."""
+    bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, ['SYN_A'])])
+    bf.record_pipeline_submission(
+        batch_index=0,
+        pipeline_id='pid-0',
+        ar_guid='guid-0',
+        user_reference='COH0001-batch0000_guid-0_',
+    )
+    bf.record_status(0, 'SUCCEEDED')
+    bf.record_passfail(0, {'SYN_A': 'Success'})
+    # gen-1 automatic retry that failed and last overwrote the per-SG state file.
+    bf.add_retry_batch(sg_names=['SYN_A'])
+    bf.record_pipeline_submission(
+        batch_index=1,
+        pipeline_id='pid-1',
+        ar_guid='guid-1',
+        user_reference='COH0001-batch0001_guid-1_',
+    )
+    bf.record_status(1, 'FAILED')
+
+    state_path = tmp_path / 'SYN_A_pipeline_id_and_arguid.json'
+    _write_per_sg_state(
+        state_path,
+        pipeline_id='pid-1',
+        ar_guid='guid-1',
+        user_reference='COH0001-batch0001_guid-1_',
+        batch_index=1,
+    )
+    outputs = {'SYN_A_pipeline_id_and_arguid': state_path}
+
+    _repoint_per_sg_state_to_winning_generation(outputs, bf)
+
+    state = load_per_sg_state(state_path, required_keys=('pipeline_id', 'user_reference', 'batch_index'))
+    assert state['batch_index'] == 0
+    assert state['pipeline_id'] == 'pid-0'
+    folder = get_ica_sample_folder(state_path, sg_name='SYN_A', cohort_name='COH0001')
+    assert 'pid-0' in folder
+    assert 'pid-1' not in folder
+
+
+def test_repoint_per_sg_state_skips_sg_dropped_from_cohort(tmp_path: Path):
+    """A succeeded SG with no declared per-SG output (dropped from the cohort) is
+    skipped, not raised on — no download stage runs for it."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A'], status='SUCCEEDED')
+    bf.record_passfail(0, {'SYN_A': 'Success'})
+    _repoint_per_sg_state_to_winning_generation({}, bf)  # no output for SYN_A; does not raise
 
 
 def test_reconcile_reraises_non_404_ica_error(tmp_path: Path, monkeypatch):

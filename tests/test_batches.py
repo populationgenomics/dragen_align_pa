@@ -15,7 +15,12 @@ def test_batches_module_imports_without_a_loaded_config():
     `ica_constants.py` (which reads the analysis config at import time). Run in a fresh
     subprocess with `CPG_CONFIG_PATH` cleared so no config is available — the
     in-process `conftest` monkeypatch does not reach it."""
+    # pyproject's `pythonpath=['src']` only applies to the pytest process, not
+    # this child, so put `src` on the child's PYTHONPATH to match — otherwise the
+    # test would need the package installed and fail with ModuleNotFoundError.
+    src_dir = Path(__file__).resolve().parent.parent / 'src'
     env = {k: v for k, v in os.environ.items() if k != 'CPG_CONFIG_PATH'}
+    env['PYTHONPATH'] = os.pathsep.join(p for p in (str(src_dir), env.get('PYTHONPATH', '')) if p)
     result = subprocess.run(
         [sys.executable, '-c', 'import dragen_align_pa.batches'],
         capture_output=True,

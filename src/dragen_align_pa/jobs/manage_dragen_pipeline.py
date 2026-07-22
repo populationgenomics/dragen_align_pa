@@ -47,7 +47,7 @@ from dragen_align_pa.jobs.ica_pipeline_manager import (
 )
 from dragen_align_pa.jobs.parse_passfail import fetch_passfail_from_ica
 from dragen_align_pa.ica_utils import ica_cohort_path, ica_run_path
-from dragen_align_pa.utils import get_pipeline_path
+from dragen_align_pa.utils import PER_SG_STATE_SCHEMA_VERSION, get_pipeline_path, load_per_sg_state
 
 
 class CohortCancelled(RuntimeError):  # noqa: N818
@@ -139,6 +139,41 @@ def _build_submit_callable(
     return _submit
 
 
+# Single writer for the per-SG state schema, shared by submit-time
+# `_persist_per_sg_state_for_batch` and the `force_retry`
+# `_repoint_per_sg_state_to_winning_generation` correction, so the two writers
+# can't drift. The schema must match what `utils.load_per_sg_state` /
+# `ica_utils.get_ica_sample_folder` validate on read.
+def _write_per_sg_state(
+    path: cpg_utils.Path,
+    *,
+    pipeline_id: str,
+    ar_guid: str,
+    user_reference: str,
+    batch_index: int,
+) -> None:
+    """Write one SG's per-SG state file.
+
+    Args:
+        path: Destination per-SG state file.
+        pipeline_id: The SG's ICA analysis (pipeline) id.
+        ar_guid: The submission's analysis-runner GUID.
+        user_reference: The batch's ICA `user_reference` (names the folder).
+        batch_index: The batch the SG's output belongs to.
+    """
+    with path.open('w') as fh:
+        json.dump(
+            {
+                'schema_version': PER_SG_STATE_SCHEMA_VERSION,
+                'pipeline_id': pipeline_id,
+                'ar_guid': ar_guid,
+                'user_reference': user_reference,
+                'batch_index': batch_index,
+            },
+            fh,
+        )
+
+
 def _persist_per_sg_state_for_batch(
     outputs: dict[str, cpg_utils.Path],
     batch: IcaBatch,
@@ -173,17 +208,13 @@ def _persist_per_sg_state_for_batch(
                 f'cohort SG list likely changed mid-run, or ManageDragenPipeline.'
                 f'expected_outputs is undercounting.',
             )
-        with outputs[key].open('w') as fh:
-            json.dump(
-                {
-                    'schema_version': 1,
-                    'pipeline_id': submission_result['pipeline_id'],
-                    'ar_guid': submission_result['ar_guid'],
-                    'user_reference': submission_result['user_reference'],
-                    'batch_index': batch.batch_index,
-                },
-                fh,
-            )
+        _write_per_sg_state(
+            outputs[key],
+            pipeline_id=submission_result['pipeline_id'],
+            ar_guid=submission_result['ar_guid'],
+            user_reference=submission_result['user_reference'],
+            batch_index=batch.batch_index,
+        )
 
 
 # Errors that a passfail/folder ICA fetch can surface: the ICA SDK's API error,
@@ -489,6 +520,66 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
         f'{counts["failed"]} failed, {counts["gone"]} gone (resubmit fresh), '
         f'{counts["in_progress"]} still running.',
     )
+
+
+# The per-SG state file is the sole input the Download* stages use to locate an
+# SG's ICA output folder (`ica_utils.get_ica_sample_folder`). It is written at
+# submit time and overwritten whenever an SG is resubmitted in a later
+# generation. `force_retry` reconciliation can restore an earlier generation to
+# SUCCEEDED after a superseding retry already failed and overwrote the pointer,
+# leaving the file aimed at the failed generation's absent output folder. This
+# corrects that before the run is declared complete.
+def _repoint_per_sg_state_to_winning_generation(
+    outputs: dict[str, cpg_utils.Path],
+    batches_file: BatchesFile,
+) -> None:
+    """Repoint each succeeded SG's per-SG state file at its winning generation.
+
+    A file is rewritten only when its recorded `batch_index` differs from the
+    generation `find_batch_for_sg` resolves as the SG's winner.
+
+    Args:
+        outputs: The stage's declared outputs, holding per-SG state file paths.
+        batches_file: The reconciled cohort batches file (read from memory).
+    """
+    for sg_name in batches_file.successful_sg_names():
+        # successful_sg_names() derives from the same batches, so a winner exists.
+        winner = batches_file.find_batch_for_sg(sg_name)
+        assert winner is not None, f'No batch found for succeeded SG {sg_name}'
+        key = f'{sg_name}_pipeline_id_and_arguid'
+        if key not in outputs:
+            # The SG succeeded in a prior run but is no longer in the current
+            # cohort, so no Download* stage will run for it and there is nothing
+            # to correct.
+            logger.warning(
+                f'Succeeded SG {sg_name} has no per-SG state output declared '
+                f'(likely dropped from the cohort); skipping state correction.',
+            )
+            continue
+        state_path = outputs[key]
+        try:
+            current = load_per_sg_state(state_path, required_keys=('batch_index',))
+        except (FileNotFoundError, ValueError, KeyError) as e:
+            # A missing / old-schema / truncated file still needs repointing at
+            # the winner so the download can find the CRAM: rewrite, don't skip.
+            logger.warning(
+                f'SG {sg_name}: per-SG state at {state_path} unreadable ({e}); '
+                f'rewriting to winning generation batch {winner["batch_index"]}.',
+            )
+            current = None
+        if current is not None and current['batch_index'] == winner['batch_index']:
+            continue
+        _write_per_sg_state(
+            state_path,
+            pipeline_id=winner['pipeline_id'],
+            ar_guid=winner['ar_guid'],
+            user_reference=winner['user_reference'],
+            batch_index=winner['batch_index'],
+        )
+        logger.info(
+            f'SG {sg_name}: repointed per-SG state to winning generation '
+            f'(batch {winner["batch_index"]}, analysis {winner["pipeline_id"]}).',
+        )
 
 
 def _build_retry_batches(
@@ -1130,6 +1221,13 @@ def run(
             f'force_resubmit=true to start a fresh submission (AR GUIDs from '
             f'the preserved per-SG state will be reused).',
         )
+
+    # force_retry can reconcile an earlier generation back to SUCCEEDED after a
+    # superseding retry already failed and overwrote the SG's per-SG state file.
+    # The Download* stages resolve the ICA folder solely from that file, so
+    # repoint each succeeded SG at its winning generation before completing.
+    if force_retry:
+        _repoint_per_sg_state_to_winning_generation(outputs, batches_file)
 
     # Per-SG failures are recorded in batches.json (`failed_sg_names()` excludes
     # CANCELLED by design — cancellation ≠ failure). Any SG still failed after

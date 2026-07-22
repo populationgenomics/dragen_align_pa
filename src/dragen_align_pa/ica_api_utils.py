@@ -62,9 +62,13 @@ _DEFAULT_ICA_MAX_RETRIES: Final = 10
 #   429 — rate-limit (well-known production failure mode)
 #   503 — ICA backend unavailable
 #   409 — ICA_DATA_105 "Conflict while updating file/folder. Please try again
-#         later." — a concurrency conflict ICA itself advises retrying. Callers
-#         that create data pre-check for an existing object, so a 409 here is the
-#         transient update conflict, never a permanent "already exists".
+#         later." — a concurrency conflict ICA itself advises retrying. This set
+#         is shared by every `ica_retry` caller, but the 409 rationale is
+#         create-specific: `create_upload_object_id` re-checks for an existing
+#         object inside the retry boundary, so its retried 409 is the transient
+#         update conflict, never a permanent "already exists". The read-style
+#         calls routed through `ica_retry` (status polls, data listing) don't
+#         return 409 in practice.
 # Any other status (404/500/…) propagates immediately — retrying a permanent
 # error just delays the real signal.
 _RETRYABLE_ICA_STATUSES: Final = frozenset({409, 429, 503})
