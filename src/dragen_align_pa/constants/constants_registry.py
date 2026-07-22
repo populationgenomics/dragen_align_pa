@@ -1,9 +1,9 @@
 """Resolvers over the ICA registry tables in `dragen_align_pa.constants.ica_constants`.
 
-`constants` holds only data (the `ICA_PROJECT_SETUP` and `ICA_FILE_IDS` tables and the
+`ica_constants` holds only data (the `ICA_PROJECT_SETUP` and `ICA_FILE_IDS` tables and the
 placeholder marker). The functions here are the logic that reads those tables: project /
 API-key / MLR-config lookups and reference-file-ID resolution. They reference the tables via
-the `constants` module (not `from constants import …`) so a test that patches
+the `ica_constants` module (not `from ica_constants import …`) so a test that patches
 `dragen_align_pa.constants.ica_constants.<TABLE>` is seen here at call time.
 
 A run operates within one dataset *family*, named by `[ica.projects].project_root`.
