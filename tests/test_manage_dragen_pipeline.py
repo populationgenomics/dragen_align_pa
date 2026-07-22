@@ -492,6 +492,26 @@ def test_reconcile_terminal_failure_clears_stale_passfail(tmp_path: Path, monkey
     assert bf.successful_sg_names() == []  # SYN_A not harvested from a failed analysis
 
 
+def test_reconcile_succeeded_fetch_error_leaves_inprogress(tmp_path: Path, monkeypatch):
+    """A transient passfail-fetch blip on one SUCCEEDED batch must not abort the whole
+    recovery: the batch is left INPROGRESS for the resume loop to re-fetch."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A'], status='FAILED')
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        lambda **_kwargs: 'SUCCEEDED',
+    )
+
+    def _raise_fetch_error(*_args: object):
+        raise json.JSONDecodeError('boom', '', 0)
+
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline._fetch_batch_passfail_and_folder',
+        _raise_fetch_error,
+    )
+    _reconcile_batches_with_ica('COH0001', bf)  # does not raise
+    assert bf.batches[0]['status'] == 'INPROGRESS'
+
+
 def test_reconcile_skips_cancelled_batch(tmp_path: Path, monkeypatch):
     """CANCELLED is terminal: reconcile must not query or relabel a cancelled batch,
     even though it still carries a pipeline_id (else its ABORTED status would map to

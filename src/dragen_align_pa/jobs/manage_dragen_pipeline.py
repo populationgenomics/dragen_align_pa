@@ -421,8 +421,9 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
     For every batch that reached ICA (has a `pipeline_id`), query the live analysis
     status and — for a SUCCEEDED analysis — its `passfail.json`, then rewrite the
     batches file to match. A batch whose analysis is gone (404) or terminally failed
-    is marked FAILED with its stale passfail cleared; an INPROGRESS analysis is set
-    INPROGRESS for the normal resume to monitor.
+    is marked FAILED with its stale passfail cleared; an INPROGRESS analysis, or a
+    SUCCEEDED one whose passfail fetch transiently fails, is set INPROGRESS for the
+    normal resume to monitor.
     Batches with no `pipeline_id` are skipped. Writes the batches file.
 
     Args:
@@ -433,9 +434,6 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
     Raises:
         icasdk.ApiException: On any non-404 ICA error querying an analysis status
             (a 404 is handled as "analysis gone", not re-raised).
-        requests.RequestException: On a network error fetching a SUCCEEDED batch's
-            passfail presigned URL.
-        json.JSONDecodeError: If a SUCCEEDED batch's passfail URL serves non-JSON.
     """
     counts: Counter[str] = Counter()
     for entry in batches_file.batches:
@@ -463,7 +461,18 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
             continue
 
         if ica_status == ICA_STATUS_SUCCEEDED:
-            passfail, folder_fid = _fetch_batch_passfail_and_folder(batch, entry['user_reference'], pipeline_id)
+            try:
+                passfail, folder_fid = _fetch_batch_passfail_and_folder(batch, entry['user_reference'], pipeline_id)
+            except _PASSFAIL_FETCH_ERRORS as e:
+                # A transient fetch blip on one succeeded batch must not abort the
+                # whole recovery: leave it INPROGRESS so the resume loop re-fetches.
+                logger.warning(
+                    f'Batch {batch.name}: passfail fetch failed during reconciliation ({e}); '
+                    f'leaving {BATCH_STATUS_INPROGRESS} for the resume loop to re-fetch.',
+                )
+                batches_file.record_status(batch.batch_index, BATCH_STATUS_INPROGRESS)
+                counts['in_progress'] += 1
+                continue
             _record_succeeded_batch(batches_file, batch, pipeline_id, passfail, folder_fid)
             counts['succeeded'] += 1
         elif ica_status in ICA_TERMINAL_FAILURE_STATUSES:
