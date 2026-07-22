@@ -248,7 +248,7 @@ def batch_create_download_urls(
     match URLs back to the file IDs they already hold. An empty `file_ids`
     short-circuits without an API call.
 
-    Goes through `ica_retry`, so a transient 429/503 on the batch mint is
+    Goes through `ica_retry`, so a transient 429/503/409 on the batch mint is
     absorbed like every other data-plane call.
     """
     if not file_ids:

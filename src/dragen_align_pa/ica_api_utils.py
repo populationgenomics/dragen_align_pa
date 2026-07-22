@@ -250,7 +250,7 @@ def _is_retryable_ica_error(exc: BaseException) -> bool:
 def _log_ica_retry(retry_state: RetryCallState) -> None:
     """tenacity ``before_sleep`` hook: surface every transient-error retry.
 
-    Without this, a retried 429/503 is silent — making the retry machinery
+    Without this, a retried 429/503/409 is silent — making the retry machinery
     "appear to do nothing" in the logs even when it is working. Fires only when
     a retry is actually scheduled (i.e. on a retryable error with attempts left).
     """
@@ -318,8 +318,9 @@ def check_ica_pipeline_status(
 ) -> str:
     """Check the status of an ICA pipeline via a pipeline ID
 
-    Transient ICA 429/503 errors are retried with jittered exponential backoff
-    (see `ica_retry`); other errors propagate on the first occurrence.
+    Transient ICA errors (`_RETRYABLE_ICA_STATUSES`: 429/503/409) are retried with
+    jittered exponential backoff (see `ica_retry`); other errors propagate on the
+    first occurrence.
 
     Args:
         api_instance (project_analysis_api.ProjectAnalysisApi): An instance of the ProjectAnalysisApi

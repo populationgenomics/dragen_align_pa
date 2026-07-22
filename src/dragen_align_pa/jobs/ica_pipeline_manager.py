@@ -373,6 +373,11 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                         )
 
                 elif pipeline_status in ['ABORTING', 'ABORTED']:
+                    # Treated as a user-initiated cancellation: by workflow policy an
+                    # ICA analysis is only ever aborted via our own `cancel_cohort_run`
+                    # flow, never externally through the ICA GUI. If that ever changed,
+                    # an involuntary ABORTED would land here (CANCELLED → cohort halt)
+                    # rather than the retryable FAILED path.
                     logger.info(f'{pipeline_name} pipeline {target.pipeline_id} has been cancelled for {target_name}.')
                     target.set_status(new_status=PipelineStatus.CANCELLED)
                     target.pipeline_id = None
