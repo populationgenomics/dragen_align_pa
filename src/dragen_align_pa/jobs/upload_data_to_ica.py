@@ -15,7 +15,7 @@ from cpg_flow.targets import SequencingGroup
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
-from dragen_align_pa.constants.constants import DRAGEN_VERSION
+from dragen_align_pa.constants.ica_constants import DRAGEN_VERSION
 from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
 from dragen_align_pa.paths import IcaPath
 from dragen_align_pa.utils import validate_cli_path_input

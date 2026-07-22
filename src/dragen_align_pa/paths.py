@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import cpg_utils
 from cpg_utils.config import config_retrieve
 
-from dragen_align_pa.constants.constants import BUCKET_NAME
+from dragen_align_pa.constants.ica_constants import BUCKET_NAME
 from dragen_align_pa.constants.constants_registry import ica_project_name
 
 

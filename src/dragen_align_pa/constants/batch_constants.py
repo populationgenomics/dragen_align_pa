@@ -2,7 +2,7 @@
 
 These are pure literals (batch-file schema version, status vocabulary, passfail
 vocabulary, chunking width, ICA status vocabulary). They live here — not in
-`constants.py` — because `constants.py` reads the analysis config at import time
+`ica_constants.py` — because `ica_constants.py` reads the analysis config at import time
 (`config_retrieve` / `output_path`), so importing it requires a loaded config.
 Keeping this vocabulary in a side-effect-free module lets `batches.py` (the
 `{cohort}_batches.json` reader/writer) and the monitor loop import it without a

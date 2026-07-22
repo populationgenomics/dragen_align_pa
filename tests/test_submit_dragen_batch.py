@@ -362,9 +362,9 @@ def _stub_registry(monkeypatch, mapping: dict[str, str]) -> None:
     couple the test to the production registry's current contents.
 
     resolve_ica_file_id() reads ICA_FILE_IDS from its own module at call time,
-    so patching the name on `dragen_align_pa.constants.constants` is enough — no matter
+    so patching the name on `dragen_align_pa.constants.ica_constants` is enough — no matter
     how submit_dragen_batch imports the resolver."""
-    monkeypatch.setattr('dragen_align_pa.constants.constants.ICA_FILE_IDS', mapping)
+    monkeypatch.setattr('dragen_align_pa.constants.ica_constants.ICA_FILE_IDS', mapping)
 
 
 def test_build_common_data_inputs_rejects_too_many_coverage_beds(monkeypatch):
@@ -574,7 +574,7 @@ def test_build_fastq_data_inputs_handles_duplicate_fastq_rows(tmp_path, monkeypa
 
 def _stub_pon_registry(monkeypatch, panels: dict) -> None:
     """Replace constants.ICA_PON_FILE_IDS for one test (resolver reads it at call time)."""
-    monkeypatch.setattr('dragen_align_pa.constants.constants.ICA_PON_FILE_IDS', panels)
+    monkeypatch.setattr('dragen_align_pa.constants.ica_constants.ICA_PON_FILE_IDS', panels)
 
 
 _PANEL_X = {

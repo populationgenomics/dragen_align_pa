@@ -16,7 +16,7 @@ from hailtop.batch.job import PythonJob
 from loguru import logger
 from metamist.graphql import gql, query
 
-from dragen_align_pa.constants.constants import (
+from dragen_align_pa.constants.ica_constants import (
     DRAGEN_VERSION,
 )
 

@@ -47,7 +47,7 @@ def test_registration_snippet_round_trips_through_resolver(capsys, monkeypatch):
     }
 
     # Round-trip through the actual consumer.
-    monkeypatch.setattr('dragen_align_pa.constants.constants.ICA_PON_FILE_IDS', parsed)
+    monkeypatch.setattr('dragen_align_pa.constants.ica_constants.ICA_PON_FILE_IDS', parsed)
     list_basename, resolved_ids = constants_registry.resolve_cnv_normals_panel('panel-z')
     assert list_basename == 'panel-z.normals.txt'
     assert resolved_ids == ['fil.list', 'fil.c1', 'fil.c2']

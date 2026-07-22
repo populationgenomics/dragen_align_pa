@@ -207,7 +207,7 @@ def _build_cram_data_inputs(
             raise ValueError(f"Missing 'cram_fid' in {state_path}")
         cram_fids.append(sg_state['cram_fid'])
 
-    # Resolve the configured CRAM-reference folder ID from constants.py via file name in config
+    # Resolve the configured CRAM-reference folder ID from ica_constants.py via file name in config
     selected_ref: str = resolve_ica_file_id(config_retrieve(['ica', 'cram_references', 'reference']))
 
     return (

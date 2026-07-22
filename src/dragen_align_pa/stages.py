@@ -14,7 +14,7 @@ from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import config_retrieve, get_driver_image
 from loguru import logger
 
-from dragen_align_pa.constants.constants import (
+from dragen_align_pa.constants.ica_constants import (
     READS_TYPE,
 )
 from dragen_align_pa.file_types import FileTypeSpec
@@ -281,8 +281,8 @@ class ManageDragenPipeline(CohortStage):
         # can't find when re-evaluating this stage triggers a re-run, so the
         # set must be exactly the files a successful `run()` always writes.
         # Variable-existence files (per-batch success/pipeline_id, errors.log
-        # written by the monitor loop) are internal orchestrator scratch
-        # and the orchestrator computes their paths inline via
+        # written by the monitor loop) are internal `run()` scratch
+        # and `run()` computes their paths inline via
         # `get_pipeline_path()` rather than going through expected_outputs.
         # `_pipeline_complete` is the canonical "stage completed without raising"
         # signal — written ONLY as the final action of a successful run(). Any
