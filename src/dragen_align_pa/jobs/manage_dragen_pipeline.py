@@ -14,6 +14,7 @@ Responsibilities:
 """
 
 import json
+from collections import Counter
 from collections.abc import Callable
 
 import cpg_utils
@@ -83,8 +84,8 @@ def _build_submit_callable(
     def _submit() -> str:
         # Use the batch entry's recorded error_strategy (set on creation by either
         # `BatchesFile.initialise` or `BatchesFile.add_retry_batch`).
-        entry = batches_file.batches[batch.batch_index]
-        error_strategy = entry.get('error_strategy', 'auto')
+        entry = batches_file.batch_entry(batch.batch_index)
+        error_strategy = entry['error_strategy']
         result = submit_dragen_batch.run(
             batch=batch,
             analysis_output_fid_path=analysis_output_fid_path,
@@ -401,14 +402,27 @@ def _on_status_change_factory(
     return _on_status_change
 
 
+def _mark_failed_and_clear(batches_file: BatchesFile, batch_index: int) -> None:
+    """Mark a batch FAILED and clear its passfail.
+
+    Args:
+        batches_file: The cohort batches file (mutated in place).
+        batch_index: The batch to mark.
+    """
+    # Clearing the stale passfail turns the batch into a whole-batch failure so
+    # every SG resubmits rather than being harvested from a gone/failed analysis.
+    batches_file.record_status(batch_index, BATCH_STATUS_FAILED)
+    batches_file.clear_passfail(batch_index)
+
+
 def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> None:
     """`force_retry`: overwrite each submitted batch's GCS status with ICA reality.
 
     For every batch that reached ICA (has a `pipeline_id`), query the live analysis
     status and — for a SUCCEEDED analysis — its `passfail.json`, then rewrite the
-    batches file to match. A batch whose analysis is gone (404) is marked FAILED
-    with its stale passfail cleared (so every SG resubmits); an INPROGRESS analysis
-    is set INPROGRESS for the normal resume to monitor.
+    batches file to match. A batch whose analysis is gone (404) or terminally failed
+    is marked FAILED with its stale passfail cleared; an INPROGRESS analysis is set
+    INPROGRESS for the normal resume to monitor.
     Batches with no `pipeline_id` are skipped. Writes the batches file.
 
     Args:
@@ -419,8 +433,11 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
     Raises:
         icasdk.ApiException: On any non-404 ICA error querying an analysis status
             (a 404 is handled as "analysis gone", not re-raised).
+        requests.RequestException: On a network error fetching a SUCCEEDED batch's
+            passfail presigned URL.
+        json.JSONDecodeError: If a SUCCEEDED batch's passfail URL serves non-JSON.
     """
-    counts = {'succeeded': 0, 'failed': 0, 'gone': 0, 'in_progress': 0}
+    counts: Counter[str] = Counter()
     for entry in batches_file.batches:
         if entry['status'] == BATCH_STATUS_CANCELLED:
             # CANCELLED is terminal — never relabel it (its ICA analysis reports
@@ -431,7 +448,7 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
         pipeline_id = entry['pipeline_id']
         if not pipeline_id:
             continue
-        batch = IcaBatch(cohort_name=cohort_name, batch_index=entry['batch_index'], sg_names=entry['sg_names'])
+        batch = IcaBatch.from_entry(cohort_name, entry)
         try:
             ica_status = monitor_dragen_pipeline.run(ica_pipeline_id=pipeline_id, is_mlr=False)
         except icasdk.ApiException as e:
@@ -441,12 +458,7 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
                 f'Batch {batch.name}: ICA analysis {pipeline_id} not found (gone); '
                 f'marking {BATCH_STATUS_FAILED} to resubmit fresh.',
             )
-            batches_file.record_status(batch.batch_index, BATCH_STATUS_FAILED)
-            # Its outputs are gone, so any recorded passfail is stale. Clear it so
-            # the batch is a whole-batch failure again and EVERY SG resubmits;
-            # otherwise the Success SGs stay in `successful_sg_names()` and are
-            # harvested (skipped) despite their analysis output no longer existing.
-            batches_file.clear_passfail(batch.batch_index)
+            _mark_failed_and_clear(batches_file, batch.batch_index)
             counts['gone'] += 1
             continue
 
@@ -455,10 +467,7 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
             _record_succeeded_batch(batches_file, batch, pipeline_id, passfail, folder_fid)
             counts['succeeded'] += 1
         elif ica_status in ICA_TERMINAL_FAILURE_STATUSES:
-            batches_file.record_status(batch.batch_index, BATCH_STATUS_FAILED)
-            # Symmetric with the 404 branch: a terminal ICA failure means any
-            # recorded passfail is stale, so clear it and let every SG resubmit.
-            batches_file.clear_passfail(batch.batch_index)
+            _mark_failed_and_clear(batches_file, batch.batch_index)
             counts['failed'] += 1
         else:
             # REQUESTED / AWAITINGINPUT / INPROGRESS — still running; let the resume monitor it.
@@ -630,6 +639,24 @@ def _project_pipeline_id_files(
         path = loop_outputs[f'{batch.name}_pipeline_id']
         with path.open('w') as f:
             f.write(json.dumps({'pipeline_id': pipeline_id, 'ar_guid': entry['ar_guid']}))
+
+
+def _active_batches(batches_file: BatchesFile, cohort_name: str, generation: int) -> list[IcaBatch]:
+    """Batches of the given retry generation whose status is still active.
+
+    Args:
+        batches_file: The cohort batches file (already loaded).
+        cohort_name: The cohort the batches belong to.
+        generation: The `retry_generation` to select (0 = initial, 1 = retry).
+
+    Returns:
+        The `IcaBatch`es with that generation and a PENDING/INPROGRESS status.
+    """
+    return [
+        IcaBatch.from_entry(cohort_name, b)
+        for b in batches_file.batches
+        if b['retry_generation'] == generation and b['status'] in ACTIVE_BATCH_STATUSES
+    ]
 
 
 def _handle_management_flags(
@@ -915,11 +942,7 @@ def run(
         # Resume uses `retry_generation == 0` (initial batches only) + status to decide
         # what to re-monitor on the first pass. Retry-batch resumption is handled in the
         # second loop call below — see retry section.
-        initial_batches = [
-            IcaBatch(cohort_name=cohort.name, batch_index=b['batch_index'], sg_names=b['sg_names'])
-            for b in batches_file.batches
-            if b['retry_generation'] == 0 and b['status'] in ACTIVE_BATCH_STATUSES
-        ]
+        initial_batches = _active_batches(batches_file, cohort.name, generation=0)
     else:
         # Fresh cohort, or post-`force_resubmit` re-batching. Cohort membership may
         # have changed (SGs added/removed) since the original submission, so we
@@ -974,11 +997,11 @@ def run(
         # can't resubmit an already-running batch (duplicate ICA analysis).
         _project_pipeline_id_files(initial_batches, batches_file, loop_outputs)
         # allow_retry=False: the shared loop's whole-target retry is bypassed for
-        # DRAGEN. Per-sample retry over the cohort is owned by this orchestrator,
+        # DRAGEN. Per-sample retry over the cohort is owned by `run()`,
         # not by the loop.
         # raise_on_failed_final=False: a batch's FAILED_FINAL must NOT abort the
         # loop here — it has to survive to `_build_retry_batches` so the batch is
-        # retried. The orchestrator raises after the retry pass on any SG still
+        # retried. `run()` raises after the retry pass on any SG still
         # failed (see the failure check at the end of run()).
         manage_ica_pipeline_loop(
             targets_to_process=initial_batches,
@@ -1002,13 +1025,9 @@ def run(
         batch_size=batch_size,
         force=force_retry,
     )
-    # Resume scenario: a previous orchestrator pass already created retry batches but
-    # crashed before they completed. Pick them back up here.
-    existing_retry_in_flight = [
-        IcaBatch(cohort_name=cohort.name, batch_index=b['batch_index'], sg_names=b['sg_names'])
-        for b in batches_file.batches
-        if b['retry_generation'] == 1 and b['status'] in ACTIVE_BATCH_STATUSES
-    ]
+    # Resume scenario: a previous run already created retry batches but crashed
+    # before they completed. Pick them back up here.
+    existing_retry_in_flight = _active_batches(batches_file, cohort.name, generation=1)
     # `_build_retry_batches` may have appended the same batches we just resumed. Dedupe.
     seen_names = {b.name for b in retry_batches}
     retry_batches = retry_batches + [b for b in existing_retry_in_flight if b.name not in seen_names]
@@ -1047,7 +1066,7 @@ def run(
             sleep_time_seconds=600,
             on_succeeded=retry_on_succeeded,
             on_status_change=retry_on_status_change,
-            # Same rationale as the initial pass: the orchestrator's post-retry
+            # Same rationale as the initial pass: `run()`'s post-retry
             # check below owns the abort decision, so the loop must not raise here.
             raise_on_failed_final=False,
         )
@@ -1131,7 +1150,7 @@ def run(
 
     # Completion marker: writes the canonical "stage completed without raising"
     # signal that cpg-flow checks via expected_outputs. The marker is the LAST
-    # write of the orchestrator — any earlier raise (residual failure, cancel,
+    # write of `run()` — any earlier raise (residual failure, cancel,
     # ICA exception) skips this and leaves cpg-flow seeing the stage as failed,
     # so the stage will retry. Marker payload records the cohort's outcome
     # summary so operators can audit completed runs without re-reading
@@ -1142,7 +1161,6 @@ def run(
             {
                 'cohort_name': cohort.name,
                 'n_sgs_total': n_total,
-                'n_sgs_failed': n_failed,
                 'n_batches': len(batches_file.batches),
             },
             fh,

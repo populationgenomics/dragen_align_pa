@@ -82,6 +82,19 @@ class IcaBatch:
     def name(self) -> str:
         return f'{self.cohort_name}-batch{self.batch_index:04d}'
 
+    @classmethod
+    def from_entry(cls, cohort_name: str, entry: dict[str, Any]) -> IcaBatch:
+        """Hydrate an `IcaBatch` from a `{cohort}_batches.json` entry dict.
+
+        Args:
+            cohort_name: The cohort the batch belongs to.
+            entry: A batches-file entry (carries `batch_index` and `sg_names`).
+
+        Returns:
+            The reconstructed `IcaBatch`.
+        """
+        return cls(cohort_name=cohort_name, batch_index=entry['batch_index'], sg_names=entry['sg_names'])
+
 
 def chunk_sgs_into_batches(
     cohort_name: str,
