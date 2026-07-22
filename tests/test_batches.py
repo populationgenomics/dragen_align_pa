@@ -12,7 +12,7 @@ from dragen_align_pa.batches import BatchesFile, IcaBatch, chunk_sgs_into_batche
 def test_batches_module_imports_without_a_loaded_config():
     """M5 regression: `batches.py` must import without a CPG config present. It
     pulls its constants from the config-free `batch_constants` module, not from
-    `constants.py` (which reads the analysis config at import time). Run in a fresh
+    `ica_constants.py` (which reads the analysis config at import time). Run in a fresh
     subprocess with `CPG_CONFIG_PATH` cleared so no config is available — the
     in-process `conftest` monkeypatch does not reach it."""
     env = {k: v for k, v in os.environ.items() if k != 'CPG_CONFIG_PATH'}
