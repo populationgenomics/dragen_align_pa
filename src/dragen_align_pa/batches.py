@@ -464,7 +464,7 @@ class BatchesFile:
                 # Cancellation is not an outcome — a batch that recorded a passfail
                 # then got CANCELLED reports only through `cancelled_sg_names()`.
                 continue
-            if b['status'] == BATCH_STATUS_FAILED and b['passfail'] is None:
+            if b['status'] == BATCH_STATUS_FAILED and not b['passfail']:
                 outcomes: list[tuple[str, bool]] = [(sg, True) for sg in b['sg_names']]
             elif b['passfail']:
                 outcomes = [(sg, status == CANONICAL_PASSFAIL_FAIL) for sg, status in b['passfail'].items()]

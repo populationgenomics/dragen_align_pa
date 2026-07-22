@@ -408,6 +408,24 @@ def test_failed_sg_names_whole_batch_failure_recovered_by_retry(tmp_path: Path):
     assert bf.failed_sg_names() == [], f'both SGs recovered on retry; got {bf.failed_sg_names()}'
 
 
+def test_failed_sg_names_counts_failed_batch_with_empty_passfail(tmp_path: Path):
+    """A FAILED batch whose passfail is an empty dict (hand-edited/older file) counts
+    as a whole-batch failure — resolution keys on falsy passfail, not `is None`, so it
+    is never silently dropped."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(
+        batch_size=5,
+        batches=[
+            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
+        ],
+    )
+    bf.record_status(0, 'FAILED')
+    bf.batch_entry(0)['passfail'] = {}  # not the None the writers produce
+
+    assert bf.failed_sg_names() == ['CPG_A', 'CPG_B']
+
+
 def test_batch_entry_resolves_by_index_not_position(tmp_path: Path):
     """record_* / clear_passfail resolve by batch_index via `batch_entry`, not list
     position — so a batches list stored out of order (hand-edit / future reorder)
