@@ -420,22 +420,18 @@ def check_object_already_exists(
         object_id = object_data['id']  # pyright: ignore[reportUnknownVariableType]
         status: str = object_data['details'].get('status', 'UNKNOWN')  # pyright: ignore[reportUnknownVariableType]
 
-        # Statuses are ["PARTIAL", "AVAILABLE", "ARCHIVING", "ARCHIVED", "UNARCHIVING", "DELETING"].
-        # Only an AVAILABLE object is safe to reuse. A transitional status
-        # (notably DELETING — ICA delete is async, so the folder is about to
-        # vanish) must not be handed back as "exists": a create-path 409 retry
-        # would otherwise re-check, get this id, and point an upload / analysis
-        # output at a doomed folder. Raise loudly instead, matching the FILE branch.
+        # This is a faithful query: report the folder id and whatever status ICA
+        # holds, including a transitional one such as DELETING or ARCHIVED. The
+        # policy of whether such a folder is safe to reuse belongs to the caller —
+        # `prepare_ica_for_analysis.run` owns it for the cohort folder and fails
+        # loud there with an actionable message.
         if object_type == 'FOLDER':
-            if status == 'AVAILABLE':
-                return object_id, status
-            raise NotImplementedError(
-                f'Folder {file_name!r} exists in ICA with status "{status}"; only AVAILABLE folders can be reused.',
-            )
+            return object_id, status
 
         if status in ('PARTIAL', 'AVAILABLE'):
             return object_id, status
 
+        # Statuses are ["PARTIAL", "AVAILABLE", "ARCHIVING", "ARCHIVED", "UNARCHIVING", "DELETING"].
         raise NotImplementedError(f'Checking for file status "{status}" is not implemented yet.')
     except icasdk.ApiException as e:
         logger.error(

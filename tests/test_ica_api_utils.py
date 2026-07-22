@@ -485,6 +485,28 @@ def test_submit_nextflow_analysis_does_not_retry_409():
     assert api.create_nextflow_analysis.call_count == 1
 
 
+def test_create_upload_object_id_passes_transitional_folder_status_to_caller():
+    """An existing FOLDER in a transitional status is returned as (id, status) so
+    the caller can apply its own reuse policy — `create_upload_object_id` does not
+    swallow it or re-create."""
+    api = MagicMock()
+    api.get_project_data_list.return_value = MagicMock(
+        body={'items': [{'data': {'id': 'fol.deleting', 'details': {'status': 'DELETING'}}}]},
+    )
+
+    object_id, status = ica_utils.create_upload_object_id(
+        api_instance=api,
+        path_params={'projectId': 'p'},
+        folder_name='COH0001',
+        file_name='COH0001',
+        folder_path='/bucket/parent',
+        object_type='FOLDER',
+    )
+
+    assert (object_id, status) == ('fol.deleting', 'DELETING')
+    api.create_data_in_project.assert_not_called()
+
+
 def test_check_object_already_exists_folder_available_is_returned():
     """An AVAILABLE folder is safe to reuse and is returned as (id, status)."""
     api = MagicMock()
@@ -503,20 +525,22 @@ def test_check_object_already_exists_folder_available_is_returned():
     assert result == ('fol.ok', 'AVAILABLE')
 
 
-def test_check_object_already_exists_folder_deleting_raises():
-    """SF3: a folder in async-DELETING state must not be handed back as 'exists'.
-    ICA delete is async, so returning its id would point an upload / analysis
-    output at a folder about to vanish — raise loudly instead."""
+def test_check_object_already_exists_folder_reports_transitional_status():
+    """A faithful query: a folder in a transitional status (e.g. DELETING) is
+    reported as (id, status), not raised on. The reuse-safety policy for such a
+    folder belongs to the caller (`prepare_ica_for_analysis`), which fails loud
+    with an actionable message rather than a bare NotImplementedError."""
     api = MagicMock()
     api.get_project_data_list.return_value = MagicMock(
         body={'items': [{'data': {'id': 'fol.doomed', 'details': {'status': 'DELETING'}}}]},
     )
 
-    with pytest.raises(NotImplementedError, match='DELETING'):
-        ica_api_utils.check_object_already_exists(
-            api_instance=api,
-            path_params={'projectId': 'p'},
-            file_name='myfolder',
-            folder_path='/bucket/parent',
-            object_type='FOLDER',
-        )
+    result = ica_api_utils.check_object_already_exists(
+        api_instance=api,
+        path_params={'projectId': 'p'},
+        file_name='myfolder',
+        folder_path='/bucket/parent',
+        object_type='FOLDER',
+    )
+
+    assert result == ('fol.doomed', 'DELETING')
