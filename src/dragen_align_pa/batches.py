@@ -13,6 +13,7 @@ from dragen_align_pa.constants.batch_constants import (
     BATCH_STATUS_PENDING,
     BATCHES_SCHEMA_VERSION,
     CANONICAL_PASSFAIL_FAIL,
+    CANONICAL_PASSFAIL_SUCCESS,
     PASSFAIL_STATUS_NORMALISATION,
 )
 
@@ -445,19 +446,20 @@ class BatchesFile:
         return new_index
 
     def _resolve_latest_outcomes(self) -> tuple[list[str], dict[str, bool]]:
-        """Resolve each SG to its latest-generation determinate outcome.
+        """Resolve each SG to its definitive Success/Fail outcome.
 
-        An SG's outcome is taken from its highest-`batch_index` determinate
-        batch: per-sample passfail (Success/Fail), or a batch-level FAILED with
-        no passfail (every SG in the batch Fail). CANCELLED batches (empty
-        passfail) contribute no outcome.
+        An SG's outcome is Success if any generation produced an ICA-confirmed
+        Success for it; otherwise it is the outcome of its highest-`batch_index`
+        determinate batch: per-sample passfail (Success/Fail), or a batch-level
+        FAILED with falsy passfail (every SG in the batch Fail). CANCELLED batches
+        contribute no outcome.
 
         Returns:
-            A `(first_seen_order, is_fail)` tuple: the SG names in first-seen
-            order and a map of SG name to whether its latest outcome is Fail.
+            A `(first_seen_order, is_fail)` tuple: the SG names in first-seen order
+            and a map of SG name to whether its outcome is Fail.
         """
-        latest_idx: dict[str, int] = {}
-        is_fail: dict[str, bool] = {}
+        succeeded: set[str] = set()
+        latest_fail_idx: dict[str, int] = {}
         first_seen: list[str] = []
         for b in self.batches:
             if b['status'] == BATCH_STATUS_CANCELLED:
@@ -472,21 +474,25 @@ class BatchesFile:
                 continue
             idx = b['batch_index']
             for sg, fail in outcomes:
-                if sg not in latest_idx:
+                if sg not in succeeded and sg not in latest_fail_idx:
                     first_seen.append(sg)
-                    latest_idx[sg] = idx
-                    is_fail[sg] = fail
-                elif idx > latest_idx[sg]:
-                    latest_idx[sg] = idx
-                    is_fail[sg] = fail
+                if fail:
+                    latest_fail_idx[sg] = max(idx, latest_fail_idx.get(sg, -1))
+                else:
+                    succeeded.add(sg)
+        # A Success at any generation beats a later Fail: force_retry can reconcile
+        # an original batch to SUCCEEDED after a superseding retry already failed,
+        # and that earlier CRAM is the real output.
+        is_fail = {sg: sg not in succeeded for sg in first_seen}
         return first_seen, is_fail
 
     def failed_sg_names(self) -> list[str]:
-        """SGs whose latest-generation outcome is Fail, across all batches.
+        """SGs whose definitive outcome is Fail, across all batches.
 
-        Each SG resolves to the outcome of its highest-`batch_index` determinate
-        batch. A batch-level FAILED with no passfail marks every SG in the batch
-        Fail. CANCELLED batches contribute no outcome (see `cancelled_sg_names`).
+        Each SG resolves via `_resolve_latest_outcomes`: a Success at any
+        generation wins, otherwise its highest-`batch_index` determinate batch. A
+        batch-level FAILED with falsy passfail marks every SG in the batch Fail.
+        CANCELLED batches contribute no outcome (see `cancelled_sg_names`).
 
         Returns:
             The failed SG names, in first-seen order.
@@ -506,12 +512,12 @@ class BatchesFile:
         return [sg for b in self.batches if b['status'] == BATCH_STATUS_CANCELLED for sg in b['sg_names']]
 
     def successful_sg_names(self) -> list[str]:
-        """SGs whose latest-generation outcome is Success, across all batches.
+        """SGs whose definitive outcome is Success, across all batches.
 
-        Symmetric with `failed_sg_names`: each SG resolves to its highest-
-        `batch_index` determinate outcome. Success requires positive confirmation
-        from `passfail.json`; a batch-level FAILED with no passfail is a Fail, not
-        a Success. CANCELLED batches contribute no outcome.
+        Symmetric with `failed_sg_names`: each SG resolves via
+        `_resolve_latest_outcomes`. Success requires positive confirmation from
+        `passfail.json` at some generation; a batch-level FAILED with falsy
+        passfail is a Fail, not a Success. CANCELLED batches contribute no outcome.
 
         Returns:
             The succeeded SG names, in first-seen order.
@@ -520,19 +526,25 @@ class BatchesFile:
         return [sg for sg in first_seen if not is_fail[sg]]
 
     def find_batch_for_sg(self, sg_name: str) -> dict[str, Any] | None:
-        """Return the most recent (highest batch_index) batch containing `sg_name`.
+        """Return the batch holding `sg_name`'s outcome, or None if absent.
 
-        SGs may appear in both an initial batch (`retry_generation=0`) and a
-        retry batch (`retry_generation=1`). The retry batch is the source of
-        truth for path resolution because its `pipeline_id` / `user_reference`
-        are what the per-SG state file points at after the retry write.
-
-        Selects by explicit max(batch_index) rather than relying on
-        self.batches being stored in ascending order — that invariant is
-        not enforced by read() and a future refactor / hand-edit could
-        silently return the wrong entry.
+        Returns the batch that produced the winning outcome: the successful
+        generation if any generation succeeded, else the highest-`batch_index`
+        batch containing the SG. Selects by explicit `batch_index`, not
+        self.batches list order.
         """
         candidates = [b for b in self.batches if sg_name in b['sg_names']]
         if not candidates:
             return None
-        return max(candidates, key=lambda b: b['batch_index'])
+        # Prefer a generation that succeeded for this SG (force_retry can reconcile
+        # an earlier batch to SUCCEEDED after a later retry failed); otherwise the
+        # highest-index generation, which is the in-flight retry during a normal
+        # retry. read() does not enforce list order, so key on batch_index.
+        succeeded = [
+            b
+            for b in candidates
+            if b['status'] != BATCH_STATUS_CANCELLED
+            and b['passfail']
+            and b['passfail'].get(sg_name) == CANONICAL_PASSFAIL_SUCCESS
+        ]
+        return max(succeeded or candidates, key=lambda b: b['batch_index'])

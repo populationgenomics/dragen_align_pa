@@ -426,6 +426,30 @@ def test_failed_sg_names_counts_failed_batch_with_empty_passfail(tmp_path: Path)
     assert bf.failed_sg_names() == ['CPG_A', 'CPG_B']
 
 
+def test_success_at_any_generation_beats_later_failure(tmp_path: Path):
+    """force_retry can reconcile an original batch to SUCCEEDED after a superseding
+    retry has already failed (GCS-drift recovery). The confirmed Success must win:
+    the SG is not resubmitted, and path resolution points at the successful batch."""
+    path = tmp_path / 'COH0001_batches.json'
+    bf = BatchesFile(path=path)
+    bf.initialise(
+        batch_size=5,
+        batches=[IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])],
+    )
+    # Gen 1 retry, spawned while GCS thought batch 0 failed, genuinely failed.
+    bf.add_retry_batch(sg_names=['CPG_A'])
+    bf.record_status(1, 'FAILED')  # whole-batch fail, passfail stays None
+    # Reconcile then finds batch 0 actually SUCCEEDED at ICA.
+    bf.record_passfail(0, {'CPG_A': 'Success'})
+    bf.record_status(0, 'SUCCEEDED')
+
+    assert bf.successful_sg_names() == ['CPG_A']
+    assert bf.failed_sg_names() == []
+    found = bf.find_batch_for_sg('CPG_A')
+    assert found is not None
+    assert found['batch_index'] == 0  # the successful generation, not the failed retry
+
+
 def test_batch_entry_resolves_by_index_not_position(tmp_path: Path):
     """record_* / clear_passfail resolve by batch_index via `batch_entry`, not list
     position — so a batches list stored out of order (hand-edit / future reorder)
