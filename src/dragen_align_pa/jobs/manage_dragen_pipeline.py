@@ -84,7 +84,8 @@ def _build_submit_callable(
 
     def _submit() -> str:
         # Use the batch entry's recorded error_strategy (set on creation by either
-        # `BatchesFile.initialise` or `BatchesFile.add_retry_batch`).
+        # `BatchesFile.initialise` or `BatchesFile.add_retry_batch`). It is never
+        # changed here, so it is not written back below.
         entry = batches_file.batch_entry(batch.batch_index)
         error_strategy = entry['error_strategy']
         result = submit_dragen_batch.run(
@@ -133,7 +134,6 @@ def _build_submit_callable(
             fids = result['cram_fids']
             assert isinstance(fids, list)
             batches_file.record_cram_fids(batch.batch_index, fids)
-        batches_file.record_error_strategy(batch.batch_index, error_strategy)
         batches_file.write()
         return pipeline_id_v
 

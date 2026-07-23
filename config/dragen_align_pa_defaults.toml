@@ -30,7 +30,8 @@ control_manifest = false
 
 # Dataset family for this run's ICA projects. The DRAGEN-align, DRAGEN-MLR and FASTQ-upload
 # projects (plus the API-key field and MLR config id) are derived from this family in
-# `constants.ICA_PROJECT_SETUP` (resolved by `constants_registry.ica_project_name` et al.), so a
+# `dragen_align_pa.constants.ica_constants.ICA_PROJECT_SETUP` (resolved by
+# `dragen_align_pa.constants.constants_registry.ica_project_name` et al.), so a
 # run only needs to name the family here. Must be a registered family (e.g. "ourdna").
 [ica.projects]
 project_root = "REPLACE_WITH_DATASET_FAMILY"
@@ -118,7 +119,7 @@ additional_args = "--sv-exome true --sv-call-regions-bed {sv_call_regions} --vc-
 # Auto-populated from bed_names below; list extras here (e.g. PoN files) as basenames.
 additional_files = []
 # CNV panel-of-normals selector. Set to a panel name registered in
-# dragen_align_pa.constants.ICA_PON_FILE_IDS (built by
+# dragen_align_pa.constants.ica_constants.ICA_PON_FILE_IDS (built by
 # scripts/build_cnv_panel_of_normals.py) to run CNV calling against that panel:
 # the submitter passes all the panel's count files + normals list as data inputs
 # and adds --cnv-normals-list <panel>.normals.txt, so you don't list file IDs by
@@ -126,7 +127,7 @@ additional_files = []
 cnv_normals_panel = ""
 
 # BED basenames for each DRAGEN target slot. Set these in your run's config
-# TOML using names registered in dragen_align_pa.constants.ICA_FILE_IDS.
+# TOML using names registered in dragen_align_pa.constants.ica_constants.ICA_FILE_IDS.
 #
 # Registered BEDs today:
 #   Twist_VCGS_Exome_Covered_Targets_hg38.bed   -- Twist exome design.
@@ -160,19 +161,19 @@ additional_file_ids = []
 
 # Choice for which CRAM reference to use.
 # Current choices are 'hg38_masked.fasta' or 'hg38_unmasked.fasta'
-# Check constants.py for more
+# Check constants/ica_constants.py for more
 reference = 'hg38_masked.fasta'
 
 [ica.qc]
 # Cross-contamination SNP VCF basename — resolved to an ICA file ID at
-# submission time via `dragen_align_pa.constants.ICA_FILE_IDS`. Seqtype-agnostic,
+# submission time via `dragen_align_pa.constants.ica_constants.ICA_FILE_IDS`. Seqtype-agnostic,
 # so it lives at [ica.qc] (not under a per-seqtype block below).
 cross_cont_vcf = 'SNP_NCBI_GRCh38.vcf'
 
 # Coverage-region BED basenames, split by sequencing type. The submitter reads
 # the [ica.qc.<workflow.sequencing_type>] block matching the run, so WGS regions
 # never reach an exome run (or vice versa). Names are resolved to ICA file IDs
-# via `dragen_align_pa.constants.ICA_FILE_IDS`; an unregistered name raises at
+# via `dragen_align_pa.constants.ica_constants.ICA_FILE_IDS`; an unregistered name raises at
 # submitter startup. DRAGEN accepts at most 3 coverage-region BEDs per run.
 [ica.qc.genome]
 coverage_region_beds = [

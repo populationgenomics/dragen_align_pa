@@ -162,12 +162,16 @@ def create_upload_object_id(
         # is not idempotent, and its 409 (ICA_DATA_105) is a retryable conflict, so a
         # retry must re-check first — if the conflicting write already landed the
         # object, we return it instead of minting a duplicate.
+        # retry=False: the outer `ica_retry_create` already retries 429/503 for this
+        # whole callable, so letting the check retry too would multiply the budget
+        # (~11x11 attempts, ~1h) instead of the intended single ~11-attempt boundary.
         existing_object_details = ica_api_utils.check_object_already_exists(
             api_instance=api_instance,
             path_params=path_params,
             file_name=file_name,
             folder_path=folder_path,
             object_type=object_type,
+            retry=False,
         )
         if existing_object_details:
             object_id, status = existing_object_details

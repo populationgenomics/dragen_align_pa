@@ -485,6 +485,56 @@ def test_submit_nextflow_analysis_does_not_retry_409():
     assert api.create_nextflow_analysis.call_count == 1
 
 
+def test_check_object_already_exists_retry_false_does_not_retry():
+    """With retry=False the existence check makes a single SDK call and lets a
+    transient error propagate — the caller (`create_upload_object_id`) owns the
+    retry boundary, so retrying here too would multiply the attempt budget."""
+    api = MagicMock()
+    api.get_project_data_list.side_effect = ApiException(status=503, reason='Service Unavailable')
+
+    with pytest.raises(ApiException) as exc_info:
+        ica_api_utils.check_object_already_exists(
+            api_instance=api,
+            path_params={'projectId': 'p'},
+            file_name='SYN1.cram',
+            folder_path='/bucket/folder',
+            object_type='FILE',
+            retry=False,
+        )
+
+    assert exc_info.value.status == 503
+    assert api.get_project_data_list.call_count == 1
+
+
+def test_create_upload_object_id_retries_existence_check_once_via_outer_boundary():
+    """A 503 during the inside-boundary existence check is retried by the single
+    outer `ica_retry_create` boundary, not by a second inner layer: the whole
+    _find_or_create re-runs, so get_project_data_list is called once per outer
+    attempt (here: fail then succeed = 2), never the ~11x11 product."""
+    api = MagicMock()
+    now_missing = MagicMock(body={'items': []})
+    api.get_project_data_list.side_effect = [
+        ApiException(status=503, reason='Service Unavailable'),
+        now_missing,
+    ]
+    api.create_data_in_project.return_value = MagicMock(
+        body={'data': {'id': 'fid_new', 'details': {'status': 'PARTIAL'}}},
+    )
+
+    object_id, status = ica_utils.create_upload_object_id(
+        api_instance=api,
+        path_params={'projectId': 'p'},
+        folder_name='myfolder',
+        file_name='SYN1.cram',
+        folder_path='/bucket/folder',
+        object_type='FILE',
+    )
+
+    assert (object_id, status) == ('fid_new', 'PARTIAL')
+    assert api.get_project_data_list.call_count == 2  # one per outer attempt, not squared
+    assert api.create_data_in_project.call_count == 1
+
+
 def test_create_upload_object_id_passes_transitional_folder_status_to_caller():
     """An existing FOLDER in a transitional status is returned as (id, status) so
     the caller can apply its own reuse policy — `create_upload_object_id` does not

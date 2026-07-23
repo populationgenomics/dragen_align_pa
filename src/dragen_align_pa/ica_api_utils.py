@@ -341,6 +341,22 @@ def ica_retry_create(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
     return _ica_retrying(_RETRYABLE_ICA_CREATE_STATUSES)(fn, *args, **kwargs)
 
 
+def _call_without_retry(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
+    """Invoke an ICA SDK call once, with no retry.
+
+    Signature-compatible with `ica_retry` so a caller can select between them.
+
+    Args:
+        fn: The ICA SDK call to invoke.
+        *args: Positional arguments forwarded to `fn`.
+        **kwargs: Keyword arguments forwarded to `fn`.
+
+    Returns:
+        The result of `fn(*args, **kwargs)`.
+    """
+    return fn(*args, **kwargs)
+
+
 def check_ica_pipeline_status(
     api_instance: project_analysis_api.ProjectAnalysisApi,
     path_params: dict[str, str],
@@ -379,6 +395,7 @@ def check_object_already_exists(
     file_name: str,
     folder_path: str,
     object_type: str,
+    retry: bool = True,
 ) -> tuple[str, str] | None:
     """Check if an object already exists in ICA.
 
@@ -388,6 +405,9 @@ def check_object_already_exists(
         file_name (str): The name of the object that you want to check in ICA e.g.
         folder_path (str): The path to the object that you want to create in ICA.
         object_type (str): The type of the object to create in ICA. Must be one of ['FILE', 'FOLDER']
+        retry (bool): Retry transient errors (429/503) via `ica_retry`. Pass False
+            when the caller already wraps this in a retry boundary (e.g.
+            `create_upload_object_id`) to avoid a multiplicative retry budget.
 
     Raises:
         NotImplementedError: Only checks for files with the status 'PARTIAL' or 'AVAILABLE'
@@ -407,7 +427,11 @@ def check_object_already_exists(
             'filenameMatchMode': 'EXACT',
         } | query_params
     try:
-        api_response = ica_retry(
+        # When retry=False the caller owns the retry boundary; call the SDK
+        # directly so transient errors surface to that single boundary rather than
+        # being retried here as well.
+        list_data = ica_retry if retry else _call_without_retry
+        api_response = list_data(
             api_instance.get_project_data_list,  # type: ignore[ReportUnknownVariableType]
             path_params=path_params,  # type: ignore[ReportUnknownVariableType]
             query_params=query_params,  # type: ignore[ReportUnknownVariableType]
