@@ -19,7 +19,8 @@ from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import config_retrieve, try_get_ar_guid
 from loguru import logger
 
-from dragen_align_pa.batches import IcaBatch
+from dragen_align_pa.batches import IcaBatch, PassfailStatusError
+from dragen_align_pa.constants.batch_constants import MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES
 from dragen_align_pa.jobs import cancel_ica_pipeline_run, monitor_dragen_pipeline
 from dragen_align_pa.utils import delete_pipeline_id_file
 
@@ -35,15 +36,6 @@ class PipelineStatus(Enum):
     FAILED_RETRYING = auto()
     FAILED_FINAL = auto()
     CANCELLED = auto()
-
-
-# Cap on consecutive `on_succeeded` callback failures for a single target.
-# A persistently broken callback (e.g. permanent IAM error fetching passfail.json)
-# would otherwise spin the polling loop forever, hammering ICA on every pass
-# with no escalation. After the cap, the helper transitions the target to
-# FAILED_FINAL and fires on_status_change so the orchestrator surfaces it as
-# a real failure.
-MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES = 5
 
 
 class MonitoredTarget:
@@ -92,6 +84,12 @@ def _process_succeeded_transition(
         return True
     try:
         on_succeeded(target)
+    except PassfailStatusError:
+        # A malformed passfail value is deterministic, not transient: every retry
+        # re-reads the same file and re-raises. Propagate immediately so the cohort
+        # aborts with this error instead of spinning to the cap and condemning the
+        # whole batch to FAILED_FINAL.
+        raise
     except Exception as exc:  # noqa: BLE001
         target.on_succeeded_failure_count += 1
         if target.on_succeeded_failure_count >= max_failures:
@@ -122,6 +120,18 @@ def _process_succeeded_transition(
     return True
 
 
+def _failed_final_target_names(monitored_targets: Sequence['MonitoredTarget']) -> list[str]:
+    """Names of targets that ended unrecoverably (FAILED_FINAL).
+
+    Args:
+        monitored_targets: The loop's monitored targets to inspect.
+
+    Returns:
+        The `.name` of each target in `FAILED_FINAL` status (empty if none).
+    """
+    return [t.name for t in monitored_targets if t.status == PipelineStatus.FAILED_FINAL]
+
+
 def manage_ica_pipeline_loop(  # noqa: PLR0915
     targets_to_process: Sequence[ProcessingTarget],
     outputs: dict[str, cpg_utils.Path],
@@ -135,6 +145,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
     sleep_time_seconds: int,
     on_succeeded: Callable[[MonitoredTarget], None] | None = None,
     on_status_change: Callable[[MonitoredTarget, PipelineStatus], None] | None = None,
+    raise_on_failed_final: bool = True,
 ) -> None:
     """
     Generic loop to manage ICA pipeline execution for a cohort.
@@ -201,6 +212,11 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                       MLR omits this callback (default `None`); its in-memory
                       target state is sufficient because MLR has no equivalent
                       cohort-level state file.
+
+        raise_on_failed_final: When True (default), the loop raises as soon as
+                      any target reaches `FAILED_FINAL` (after its retry, if
+                      `allow_retry`). When False, FAILED_FINAL targets are
+                      returned to the caller without raising.
     """
     if not targets_to_process:
         raise ValueError(f'Cannot run {pipeline_name} pipeline management loop with an empty list of targets.')
@@ -215,7 +231,6 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
     monitored_targets: list[MonitoredTarget] = [
         MonitoredTarget(target=target, allow_retry=allow_retry) for target in targets_to_process
     ]
-    total_targets: int = len(monitored_targets)
     initial_ar_guid: str = try_get_ar_guid()  # Use a distinct name for the AR GUID from the environment
 
     # Get force_resubmit config
@@ -358,6 +373,11 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                         )
 
                 elif pipeline_status in ['ABORTING', 'ABORTED']:
+                    # Treated as a user-initiated cancellation: by workflow policy an
+                    # ICA analysis is only ever aborted via our own `cancel_cohort_run`
+                    # flow, never externally through the ICA GUI. If that ever changed,
+                    # an involuntary ABORTED would land here (CANCELLED → cohort halt)
+                    # rather than the retryable FAILED path.
                     logger.info(f'{pipeline_name} pipeline {target.pipeline_id} has been cancelled for {target_name}.')
                     target.set_status(new_status=PipelineStatus.CANCELLED)
                     target.pipeline_id = None
@@ -411,14 +431,20 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                 f'The following {pipeline_name} pipelines have been cancelled: {", ".join(cancelled_pipelines)}'
             )
 
-        n_failed: int = status_counts[PipelineStatus.FAILED_FINAL]
-        if n_failed > 0 and float(n_failed) / float(total_targets) > 0.05:  # noqa: PLR2004
-            failed_pipelines: list[str] = [
-                target.name for target in monitored_targets if target.status == PipelineStatus.FAILED_FINAL
-            ]
+        # A target reaches FAILED_FINAL only after its retry is exhausted (or
+        # immediately, when allow_retry=False). Unless the caller opts out
+        # (raise_on_failed_final=False), any such unrecoverable failure aborts
+        # the run — this is the old behaviour minus the 5%-rate gate, so a
+        # single failure halts rather than being tolerated up to a threshold.
+        # DRAGEN opts out: its initial-pass batch failures must survive to the
+        # orchestrator's per-sample retry, and the orchestrator raises on any
+        # SG still failed after that pass.
+        # `status_counts` from above is still current — no target status changes
+        # between there and here (the CANCELLED branch raises).
+        failed_pipelines = _failed_final_target_names(monitored_targets)
+        if raise_on_failed_final and failed_pipelines:
             logger.error(
-                f'More than 5% of {pipeline_name} pipelines have failed. '
-                f'Failing pipelines: {" ".join(failed_pipelines)}'
+                f'{pipeline_name} pipelines failed after retries: {" ".join(failed_pipelines)}'
             )
             try:
                 with open('tmp_errors.log') as tmp_log_handle:
@@ -426,12 +452,10 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                     with outputs[error_log_key].open('w') as gcp_error_log_file:
                         gcp_error_log_file.write('\n'.join(lines))
             except (OSError, gcs_exceptions.GoogleCloudError) as e:
-                logger.error(f'Failed to persist tmp_errors.log to {error_log_key} before 5% failure exit: {e}')
+                logger.error(f'Failed to persist tmp_errors.log to {error_log_key} before failure exit: {e}')
             raise Exception(
-                f'More than 5% of {pipeline_name} pipelines have failed. '
-                f'Failing pipelines: {" ".join(failed_pipelines)}'
+                f'{pipeline_name} pipelines have failed (FAILED_FINAL): {" ".join(failed_pipelines)}'
             )
-        status_counts = Counter(target.status for target in monitored_targets)
         logger.info(
             f'{pipeline_name} pipeline status: '
             f'{status_counts[PipelineStatus.SUCCEEDED]} completed, '
@@ -449,4 +473,4 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
             with outputs[error_log_key].open('w') as gcp_error_log_file:
                 gcp_error_log_file.write('\n'.join(lines))
     except (OSError, gcs_exceptions.GoogleCloudError) as e:
-        logger.error(f'Failed to persist tmp_errors.log to {error_log_key} before 5% failure exit: {e}')
+        logger.error(f'Failed to persist tmp_errors.log to {error_log_key} on loop exit: {e}')

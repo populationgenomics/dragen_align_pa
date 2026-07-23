@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 from google.api_core import exceptions as gax_exceptions
 
-from dragen_align_pa import ica_api_utils
+from dragen_align_pa import ica_api_utils, ica_utils
 from icasdk.exceptions import ApiException
 
 
@@ -189,7 +189,10 @@ def test_get_ica_api_key_raises_when_family_field_missing(monkeypatch):
     mock_client = MagicMock()
     mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
     monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
-    monkeypatch.setattr('dragen_align_pa.constants_registry.config_retrieve', lambda key, default=None: 'tenk10k')  # noqa: ARG005
+    monkeypatch.setattr(
+        'dragen_align_pa.constants.constants_registry.config_retrieve',
+        lambda key, default=None: 'tenk10k',  # noqa: ARG005
+    )
 
     with pytest.raises(KeyError, match=r'tenk10k_apiKey'):
         ica_api_utils.get_ica_api_key()
@@ -290,6 +293,24 @@ def test_check_ica_pipeline_status_retries_on_503_then_succeeds():
 
     assert result == 'SUCCEEDED'
     assert api.get_analysis.call_count == 2
+
+
+def test_check_ica_pipeline_status_does_not_retry_409():
+    """409 is retryable only for create-data (via `ica_retry_create`, behind an
+    existence re-check). A status poll goes through the base `ica_retry`, which
+    must propagate 409 on the first occurrence rather than retry a non-idempotent
+    conflict it cannot recover."""
+    api = MagicMock()
+    api.get_analysis.side_effect = ApiException(status=409, reason='Conflict')
+
+    with pytest.raises(ApiException) as exc_info:
+        ica_api_utils.check_ica_pipeline_status(
+            api_instance=api,
+            path_params={'projectId': 'p', 'analysisId': 'a'},
+        )
+
+    assert exc_info.value.status == 409
+    assert api.get_analysis.call_count == 1
 
 
 def test_check_ica_pipeline_status_does_not_retry_non_transient_status():
@@ -420,3 +441,156 @@ def test_check_object_already_exists_retries_on_503_then_succeeds():
 
     assert result is None
     assert api.get_project_data_list.call_count == 2
+
+
+def test_create_upload_object_id_recovers_object_on_conflict_retry():
+    """A 409 on create is retried; because the existence check now sits inside the
+    retry boundary, the retry finds the object the conflicting write already landed
+    and returns it rather than creating a duplicate."""
+    api = MagicMock()
+    not_found = MagicMock(body={'items': []})
+    now_exists = MagicMock(body={'items': [{'data': {'id': 'fid_recovered', 'details': {'status': 'AVAILABLE'}}}]})
+    api.get_project_data_list.side_effect = [not_found, now_exists]
+    api.create_data_in_project.side_effect = ApiException(status=409, reason='Conflict')
+
+    object_id, status = ica_utils.create_upload_object_id(
+        api_instance=api,
+        path_params={'projectId': 'p'},
+        folder_name='myfolder',
+        file_name='SYN1.cram',
+        folder_path='/bucket/folder',
+        object_type='FILE',
+    )
+
+    assert (object_id, status) == ('fid_recovered', 'AVAILABLE')
+    assert api.create_data_in_project.call_count == 1  # not re-created after recovery
+    assert api.get_project_data_list.call_count == 2  # re-checked on the retry
+
+
+def test_submit_nextflow_analysis_does_not_retry_409():
+    """MF2: the DRAGEN analysis submit is non-idempotent and has no existence
+    re-check, so a 409 must propagate on the first occurrence — retrying it would
+    risk a duplicate analysis. Only create-data (via `ica_retry_create`) retries 409."""
+    api = MagicMock()
+    api.create_nextflow_analysis.side_effect = ApiException(status=409, reason='Conflict')
+
+    with pytest.raises(ApiException) as exc_info:
+        ica_api_utils.submit_nextflow_analysis(
+            api_instance=api,
+            path_params={'projectId': 'p'},
+            body=MagicMock(),
+        )
+
+    assert exc_info.value.status == 409
+    assert api.create_nextflow_analysis.call_count == 1
+
+
+def test_check_object_already_exists_retry_false_does_not_retry():
+    """With retry=False the existence check makes a single SDK call and lets a
+    transient error propagate — the caller (`create_upload_object_id`) owns the
+    retry boundary, so retrying here too would multiply the attempt budget."""
+    api = MagicMock()
+    api.get_project_data_list.side_effect = ApiException(status=503, reason='Service Unavailable')
+
+    with pytest.raises(ApiException) as exc_info:
+        ica_api_utils.check_object_already_exists(
+            api_instance=api,
+            path_params={'projectId': 'p'},
+            file_name='SYN1.cram',
+            folder_path='/bucket/folder',
+            object_type='FILE',
+            retry=False,
+        )
+
+    assert exc_info.value.status == 503
+    assert api.get_project_data_list.call_count == 1
+
+
+def test_create_upload_object_id_retries_existence_check_once_via_outer_boundary():
+    """A 503 during the inside-boundary existence check is retried by the single
+    outer `ica_retry_create` boundary, not by a second inner layer: the whole
+    _find_or_create re-runs, so get_project_data_list is called once per outer
+    attempt (here: fail then succeed = 2), never the ~11x11 product."""
+    api = MagicMock()
+    now_missing = MagicMock(body={'items': []})
+    api.get_project_data_list.side_effect = [
+        ApiException(status=503, reason='Service Unavailable'),
+        now_missing,
+    ]
+    api.create_data_in_project.return_value = MagicMock(
+        body={'data': {'id': 'fid_new', 'details': {'status': 'PARTIAL'}}},
+    )
+
+    object_id, status = ica_utils.create_upload_object_id(
+        api_instance=api,
+        path_params={'projectId': 'p'},
+        folder_name='myfolder',
+        file_name='SYN1.cram',
+        folder_path='/bucket/folder',
+        object_type='FILE',
+    )
+
+    assert (object_id, status) == ('fid_new', 'PARTIAL')
+    assert api.get_project_data_list.call_count == 2  # one per outer attempt, not squared
+    assert api.create_data_in_project.call_count == 1
+
+
+def test_create_upload_object_id_passes_transitional_folder_status_to_caller():
+    """An existing FOLDER in a transitional status is returned as (id, status) so
+    the caller can apply its own reuse policy — `create_upload_object_id` does not
+    swallow it or re-create."""
+    api = MagicMock()
+    api.get_project_data_list.return_value = MagicMock(
+        body={'items': [{'data': {'id': 'fol.deleting', 'details': {'status': 'DELETING'}}}]},
+    )
+
+    object_id, status = ica_utils.create_upload_object_id(
+        api_instance=api,
+        path_params={'projectId': 'p'},
+        folder_name='COH0001',
+        file_name='COH0001',
+        folder_path='/bucket/parent',
+        object_type='FOLDER',
+    )
+
+    assert (object_id, status) == ('fol.deleting', 'DELETING')
+    api.create_data_in_project.assert_not_called()
+
+
+def test_check_object_already_exists_folder_available_is_returned():
+    """An AVAILABLE folder is safe to reuse and is returned as (id, status)."""
+    api = MagicMock()
+    api.get_project_data_list.return_value = MagicMock(
+        body={'items': [{'data': {'id': 'fol.ok', 'details': {'status': 'AVAILABLE'}}}]},
+    )
+
+    result = ica_api_utils.check_object_already_exists(
+        api_instance=api,
+        path_params={'projectId': 'p'},
+        file_name='myfolder',
+        folder_path='/bucket/parent',
+        object_type='FOLDER',
+    )
+
+    assert result == ('fol.ok', 'AVAILABLE')
+
+
+def test_check_object_already_exists_folder_reports_transitional_status():
+    """A faithful query: a folder in a transitional status (e.g. DELETING) is
+    reported as (id, status), not raised on. The reuse-safety policy for such a
+    folder belongs to the caller (`prepare_ica_for_analysis`), which fails loud
+    with an actionable message rather than a bare NotImplementedError."""
+    api = MagicMock()
+    api.get_project_data_list.return_value = MagicMock(
+        body={'items': [{'data': {'id': 'fol.doomed', 'details': {'status': 'DELETING'}}}]},
+    )
+
+    result = ica_api_utils.check_object_already_exists(
+        api_instance=api,
+        path_params={'projectId': 'p'},
+        file_name='myfolder',
+        folder_path='/bucket/parent',
+        object_type='FOLDER',
+    )
+
+    assert result == ('fol.doomed', 'DELETING')

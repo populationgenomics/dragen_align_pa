@@ -3,7 +3,7 @@
 Covers the algorithmic helpers: _build_retry_batches (per-sample retry
 discipline + single-retry invariant + CANCELLED-as-terminal),
 _handle_management_flags (force_resubmit clean-slate delete, cancel
-preserves per-SG state), _threshold_breached (5% boundary semantics).
+preserves per-SG state).
 
 Integration glue around the shared monitor loop (_on_succeeded_factory,
 _on_status_change_factory, _build_submit_callable) is left for end-to-end
@@ -14,15 +14,23 @@ that can't reasonably be mocked here.
 import json
 from pathlib import Path
 
+import icasdk
 import pytest
 
 from dragen_align_pa.batches import BatchesFile, IcaBatch
+from dragen_align_pa.ica_utils import get_ica_sample_folder
+from dragen_align_pa.jobs.ica_pipeline_manager import MonitoredTarget, PipelineStatus
 from dragen_align_pa.jobs.manage_dragen_pipeline import (
     CohortCancelled,
     _build_retry_batches,
     _handle_management_flags,
-    _threshold_breached,
+    _on_status_change_factory,
+    _project_pipeline_id_files,
+    _reconcile_batches_with_ica,
+    _repoint_per_sg_state_to_winning_generation,
+    _write_per_sg_state,
 )
+from dragen_align_pa.utils import load_per_sg_state
 
 
 def _make_file(tmp_path: Path, batches: list[IcaBatch]) -> BatchesFile:
@@ -38,17 +46,19 @@ def _set_management_flags(
     force_resubmit: bool = False,
     monitor_previous: bool = False,
     cancel_cohort_run: bool = False,
+    force_retry: bool = False,
 ) -> None:
     """Stub `config_retrieve` to return the supplied management flag values.
 
-    Every test that exercises `_handle_management_flags` needs to pin all three
-    flags; doing it inline produces four near-identical 7-line blocks. This
-    helper collapses each to a one-line call.
+    Every test that exercises `_handle_management_flags` needs to pin all the
+    flags; doing it inline produces near-identical blocks. This helper collapses
+    each to a one-line call.
     """
     cfg = {
         ('ica', 'management', 'force_resubmit'): force_resubmit,
         ('ica', 'management', 'monitor_previous'): monitor_previous,
         ('ica', 'management', 'cancel_cohort_run'): cancel_cohort_run,
+        ('ica', 'management', 'force_retry'): force_retry,
     }
     monkeypatch.setattr(
         'dragen_align_pa.jobs.manage_dragen_pipeline.config_retrieve',
@@ -81,9 +91,9 @@ def test_retry_batches_from_dragen_failed_status(tmp_path: Path):
 
     A batch of 5 where one sample fails records e.g. `{"CPG_A": "Success", ...,
     "CPG_B": "Failed"}`. Before normalisation at `record_passfail`, the raw
-    `"Failed"` matched neither `== 'Fail'` (retry / threshold) nor
-    `== 'Success'`, so the failed sample was silently dropped — never retried,
-    never counted against the 5% threshold. `record_passfail` now normalises
+    `"Failed"` matched neither `== 'Fail'` (the retry selection) nor
+    `== 'Success'`, so the failed sample was silently dropped — never retried
+    and never surfaced by `failed_sg_names`. `record_passfail` now normalises
     `"Failed"` to the canonical `"Fail"`, so the sample enters the retry path.
     """
     bf = _make_file(
@@ -275,7 +285,7 @@ def test_force_resubmit_deletes_completion_marker(tmp_path: Path, monkeypatch):
 
 def test_cancel_cohort_run_raises_cohort_cancelled(tmp_path: Path, monkeypatch):
     """`cancel_cohort_run=true` is terminal — raises CohortCancelled so run()
-    short-circuits past retry-building and threshold-checking."""
+    short-circuits past retry-building."""
     # No batches file → "no in-flight state" branch still raises CohortCancelled.
     _set_management_flags(monkeypatch, cancel_cohort_run=True)
     with pytest.raises(CohortCancelled):
@@ -349,35 +359,353 @@ def test_cancel_cohort_run_preserves_per_sg_state(tmp_path: Path, monkeypatch):
     assert sg_state.exists(), 'cancel_cohort_run must not delete per-SG state files'
 
 
-def test_threshold_breached_just_above_5pct(tmp_path: Path):
-    """20 SGs, 2 Fail → 10% → above threshold."""
+def test_failed_sg_names_reports_single_failure_no_rate_tolerance(tmp_path: Path):
+    """The orchestrator raises after the retry pass on ANY residual failure
+    (no 5%-rate tolerance). failed_sg_names() is the signal it checks: even a
+    single failed SG in a large cohort surfaces, so run() would raise."""
     sg_names = [f'SYN{i:05d}' for i in range(20)]
     bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, sg_names)])
-    bf.record_passfail(
-        0,
-        {**dict.fromkeys(sg_names[:18], 'Success'), sg_names[18]: 'Fail', sg_names[19]: 'Fail'},
-    )
-    n_failed = len(bf.failed_sg_names())
-    assert n_failed == 2
-    assert _threshold_breached(n_failed=n_failed, n_total=len(sg_names))
-
-
-def test_threshold_breached_exactly_at_5pct(tmp_path: Path):
-    """Spec §6 line 312 uses strict `>`: 20 SGs / 1 Fail = 5.0% → NOT raise.
-    Boundary semantics matter when N is small."""
-    sg_names = [f'SYN{i:05d}' for i in range(20)]
-    bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, sg_names)])
+    # 1/20 = 5% — under the OLD gate this passed; now it's a reported failure.
     bf.record_passfail(0, {**dict.fromkeys(sg_names[:19], 'Success'), sg_names[19]: 'Fail'})
-    n_failed = len(bf.failed_sg_names())
-    assert n_failed == 1
-    assert not _threshold_breached(n_failed=n_failed, n_total=len(sg_names))
+    assert bf.failed_sg_names() == [sg_names[19]]
 
 
-def test_threshold_breached_just_above_5pct_small_n(tmp_path: Path):
-    """19 SGs, 1 Fail = 5.26% → above threshold."""
-    sg_names = [f'SYN{i:05d}' for i in range(19)]
+def _submitted_batch_file(tmp_path: Path, sg_names: list[str], status: str) -> BatchesFile:
+    """A one-batch file that reached ICA (has pipeline_id/user_reference) at `status`."""
     bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, sg_names)])
-    bf.record_passfail(0, {**dict.fromkeys(sg_names[:18], 'Success'), sg_names[18]: 'Fail'})
-    n_failed = len(bf.failed_sg_names())
-    assert n_failed == 1
-    assert _threshold_breached(n_failed=n_failed, n_total=len(sg_names))
+    bf.record_pipeline_submission(
+        batch_index=0,
+        pipeline_id='pid-0',
+        ar_guid='guid-0',
+        user_reference='COH0001-batch0000_guid-0_',
+    )
+    bf.record_status(0, status)
+    return bf
+
+
+def test_build_retry_batches_force_overrides_single_retry_gate(tmp_path: Path):
+    """force=True resubmits a failure that already used its one automatic retry."""
+    bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, ['SYN_A', 'SYN_B'])])
+    bf.record_passfail(0, {'SYN_A': 'Success', 'SYN_B': 'Fail'})
+    assert len(_build_retry_batches('COH0001', bf, 5)) == 1  # normal retry consumes the gate
+    bf.record_passfail(1, {'SYN_B': 'Fail'})  # the retry batch also fails
+    assert _build_retry_batches('COH0001', bf, 5) == []  # gate blocks a second normal retry
+    forced = _build_retry_batches('COH0001', bf, 5, force=True)
+    assert len(forced) == 1
+    assert forced[0].sg_names == ['SYN_B']
+
+
+def test_build_retry_batches_force_skips_already_succeeded_sgs(tmp_path: Path):
+    """force mode harvests: an SG that succeeded in any batch is never rerun."""
+    bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, ['SYN_A', 'SYN_B'])])
+    bf.record_status(0, 'FAILED')  # gen-0 whole-batch failure (all SGs)
+    bf.add_retry_batch(sg_names=['SYN_A', 'SYN_B'])  # gen-1 retry, index 1
+    bf.record_passfail(1, {'SYN_A': 'Success', 'SYN_B': 'Fail'})
+    forced = _build_retry_batches('COH0001', bf, 5, force=True)
+    assert len(forced) == 1
+    assert forced[0].sg_names == ['SYN_B']  # SYN_A harvested from the gen-1 success
+
+
+def test_build_retry_batches_force_skips_sg_with_in_flight_retry(tmp_path: Path):
+    """force mode must not resubmit an SG whose retry is still in flight: the resume
+    path in run() re-monitors the existing PENDING/INPROGRESS batch, so a fresh retry
+    here would run two concurrent ICA analyses for the same SG."""
+    bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, ['SYN_A', 'SYN_B'])])
+    bf.record_passfail(0, {'SYN_A': 'Success', 'SYN_B': 'Fail'})
+    bf.record_status(0, 'SUCCEEDED')
+    bf.add_retry_batch(sg_names=['SYN_B'])  # gen-1 retry, index 1
+    bf.record_status(1, 'INPROGRESS')  # retry still running at ICA
+    assert _build_retry_batches('COH0001', bf, 5, force=True) == []
+
+
+def test_reconcile_flips_stale_failed_to_succeeded_from_ica(tmp_path: Path, monkeypatch):
+    """The reported scenario: GCS says FAILED, ICA says SUCCEEDED with all-Success
+    passfail → reconcile to SUCCEEDED and harvest (nothing left to rerun)."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A', 'SYN_B'], status='FAILED')
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        lambda **_kwargs: 'SUCCEEDED',
+    )
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline._fetch_batch_passfail_and_folder',
+        lambda *_args: ({'SYN_A': 'Success', 'SYN_B': 'Success'}, 'fol.x'),
+    )
+    _reconcile_batches_with_ica('COH0001', bf)
+    assert bf.batches[0]['status'] == 'SUCCEEDED'
+    assert bf.failed_sg_names() == []
+    assert bf.successful_sg_names() == ['SYN_A', 'SYN_B']
+
+
+def test_reconcile_keeps_failed_when_ica_failed(tmp_path: Path, monkeypatch):
+    bf = _submitted_batch_file(tmp_path, ['SYN_A'], status='INPROGRESS')
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        lambda **_kwargs: 'FAILED',
+    )
+    _reconcile_batches_with_ica('COH0001', bf)
+    assert bf.batches[0]['status'] == 'FAILED'
+
+
+def test_reconcile_marks_failed_when_ica_analysis_gone(tmp_path: Path, monkeypatch):
+    """A gone (404) analysis is marked FAILED so its SGs resubmit fresh."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A'], status='SUCCEEDED')
+
+    def _raise_not_found(**_kwargs):
+        raise icasdk.ApiException(status=404)
+
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        _raise_not_found,
+    )
+    _reconcile_batches_with_ica('COH0001', bf)
+    assert bf.batches[0]['status'] == 'FAILED'
+
+
+def test_reconcile_gone_batch_clears_passfail_so_all_sgs_resubmit(tmp_path: Path, monkeypatch):
+    """A gone (404) analysis that previously recorded a passfail must clear it: its
+    outputs no longer exist, so every SG — including ones marked Success — resubmits
+    fresh rather than being harvested from a stale outcome."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A', 'SYN_B'], status='SUCCEEDED')
+    bf.record_passfail(0, {'SYN_A': 'Success', 'SYN_B': 'Fail'})
+
+    def _raise_not_found(**_kwargs):
+        raise icasdk.ApiException(status=404)
+
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        _raise_not_found,
+    )
+    _reconcile_batches_with_ica('COH0001', bf)
+    assert bf.batches[0]['status'] == 'FAILED'
+    assert bf.batches[0]['passfail'] is None
+    assert bf.successful_sg_names() == []  # SYN_A no longer harvested from a gone analysis
+    forced = _build_retry_batches('COH0001', bf, 5, force=True)
+    assert sorted(sg for b in forced for sg in b.sg_names) == ['SYN_A', 'SYN_B']
+
+
+def test_reconcile_terminal_failure_clears_stale_passfail(tmp_path: Path, monkeypatch):
+    """Symmetric with the 404 branch: an ICA terminal failure clears any recorded
+    passfail so the whole batch resubmits rather than harvesting stale Success SGs."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A', 'SYN_B'], status='SUCCEEDED')
+    bf.record_passfail(0, {'SYN_A': 'Success', 'SYN_B': 'Fail'})
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        lambda **_kwargs: 'ABORTED',
+    )
+    _reconcile_batches_with_ica('COH0001', bf)
+    assert bf.batches[0]['status'] == 'FAILED'
+    assert bf.batches[0]['passfail'] is None
+    assert bf.successful_sg_names() == []  # SYN_A not harvested from a failed analysis
+
+
+def test_reconcile_succeeded_fetch_error_leaves_inprogress(tmp_path: Path, monkeypatch):
+    """A transient passfail-fetch blip on one SUCCEEDED batch must not abort the whole
+    recovery: the batch is left INPROGRESS for the resume loop to re-fetch."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A'], status='FAILED')
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        lambda **_kwargs: 'SUCCEEDED',
+    )
+
+    def _raise_fetch_error(*_args: object):
+        raise json.JSONDecodeError('boom', '', 0)
+
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline._fetch_batch_passfail_and_folder',
+        _raise_fetch_error,
+    )
+    _reconcile_batches_with_ica('COH0001', bf)  # does not raise
+    assert bf.batches[0]['status'] == 'INPROGRESS'
+
+
+def test_reconcile_succeeded_fetch_error_clears_stale_passfail(tmp_path: Path, monkeypatch):
+    """MF1: a batch demoted to INPROGRESS on a passfail-fetch blip must have its stale
+    passfail cleared, so `_build_retry_batches`'s `in_flight_sgs` guard excludes it
+    instead of resubmitting its Fail SGs while the resume loop re-monitors the same
+    analysis (double submit)."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A', 'SYN_B'], status='INPROGRESS')
+    bf.record_passfail(0, {'SYN_A': 'Success', 'SYN_B': 'Fail'})  # stale prior-run passfail
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        lambda **_kwargs: 'SUCCEEDED',
+    )
+
+    def _raise_fetch_error(*_args: object):
+        raise json.JSONDecodeError('boom', '', 0)
+
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline._fetch_batch_passfail_and_folder',
+        _raise_fetch_error,
+    )
+    _reconcile_batches_with_ica('COH0001', bf)
+    assert bf.batches[0]['status'] == 'INPROGRESS'
+    assert bf.batches[0]['passfail'] is None
+    # Excluded as in-flight, not resubmitted, by force-mode retry building.
+    assert _build_retry_batches('COH0001', bf, 5, force=True) == []
+
+
+def test_reconcile_still_running_clears_stale_passfail(tmp_path: Path, monkeypatch):
+    """MF1: the still-running (REQUESTED/INPROGRESS) demotion branch clears a stale
+    passfail too, for the same in_flight_sgs invariant."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A', 'SYN_B'], status='FAILED')
+    bf.record_passfail(0, {'SYN_A': 'Success', 'SYN_B': 'Fail'})  # stale prior-run passfail
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        lambda **_kwargs: 'INPROGRESS',
+    )
+    _reconcile_batches_with_ica('COH0001', bf)
+    assert bf.batches[0]['status'] == 'INPROGRESS'
+    assert bf.batches[0]['passfail'] is None
+    assert _build_retry_batches('COH0001', bf, 5, force=True) == []
+
+
+def test_reconcile_skips_cancelled_batch(tmp_path: Path, monkeypatch):
+    """CANCELLED is terminal: reconcile must not query or relabel a cancelled batch,
+    even though it still carries a pipeline_id (else its ABORTED status would map to
+    FAILED and the cancelled work would be resubmitted)."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A'], status='CANCELLED')
+
+    def _must_not_be_called(**_kwargs):
+        raise AssertionError('reconcile queried a CANCELLED batch')
+
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        _must_not_be_called,
+    )
+    _reconcile_batches_with_ica('COH0001', bf)
+    assert bf.batches[0]['status'] == 'CANCELLED'
+
+
+def test_repoint_per_sg_state_points_download_at_succeeded_generation(tmp_path: Path):
+    """After a two-generation force_retry (gen-0 reconciled SUCCEEDED, gen-1 failed
+    and last wrote the per-SG state file), the per-SG state — the sole input the
+    download path uses — must be repointed at gen-0 so the CRAM can be found."""
+    bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, ['SYN_A'])])
+    bf.record_pipeline_submission(
+        batch_index=0,
+        pipeline_id='pid-0',
+        ar_guid='guid-0',
+        user_reference='COH0001-batch0000_guid-0_',
+    )
+    bf.record_status(0, 'SUCCEEDED')
+    bf.record_passfail(0, {'SYN_A': 'Success'})
+    # gen-1 automatic retry that failed and last overwrote the per-SG state file.
+    bf.add_retry_batch(sg_names=['SYN_A'])
+    bf.record_pipeline_submission(
+        batch_index=1,
+        pipeline_id='pid-1',
+        ar_guid='guid-1',
+        user_reference='COH0001-batch0001_guid-1_',
+    )
+    bf.record_status(1, 'FAILED')
+
+    state_path = tmp_path / 'SYN_A_pipeline_id_and_arguid.json'
+    _write_per_sg_state(
+        state_path,
+        pipeline_id='pid-1',
+        ar_guid='guid-1',
+        user_reference='COH0001-batch0001_guid-1_',
+        batch_index=1,
+    )
+    outputs = {'SYN_A_pipeline_id_and_arguid': state_path}
+
+    _repoint_per_sg_state_to_winning_generation(outputs, bf)
+
+    state = load_per_sg_state(state_path, required_keys=('pipeline_id', 'user_reference', 'batch_index'))
+    assert state['batch_index'] == 0
+    assert state['pipeline_id'] == 'pid-0'
+    folder = get_ica_sample_folder(state_path, sg_name='SYN_A', cohort_name='COH0001')
+    assert 'pid-0' in folder
+    assert 'pid-1' not in folder
+
+
+def test_repoint_per_sg_state_skips_sg_dropped_from_cohort(tmp_path: Path):
+    """A succeeded SG with no declared per-SG output (dropped from the cohort) is
+    skipped, not raised on — no download stage runs for it."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A'], status='SUCCEEDED')
+    bf.record_passfail(0, {'SYN_A': 'Success'})
+    _repoint_per_sg_state_to_winning_generation({}, bf)  # no output for SYN_A; does not raise
+
+
+def test_on_status_change_failed_final_clears_passfail(tmp_path: Path):
+    """SF4: a FAILED_FINAL escalation clears any stale passfail so the batch is an
+    unambiguous whole-batch failure, not a self-contradictory FAILED + non-empty
+    passfail that `_resolve_latest_outcomes` would read via its per-SG branch."""
+    batch = IcaBatch('COH0001', 0, ['SYN_A', 'SYN_B'])
+    bf = _make_file(tmp_path, [batch])
+    bf.record_passfail(0, {'SYN_A': 'Success', 'SYN_B': 'Fail'})  # stale passfail
+    sink: set[int] = set()
+    on_status_change = _on_status_change_factory(bf, {batch.name: batch}, sink)
+
+    on_status_change(MonitoredTarget(batch, allow_retry=False), PipelineStatus.FAILED_FINAL)
+
+    assert bf.batches[0]['status'] == 'FAILED'
+    assert bf.batches[0]['passfail'] is None
+    assert sink == {0}
+
+
+def test_reconcile_reraises_non_404_ica_error(tmp_path: Path, monkeypatch):
+    """A transient/unexpected ICA error must not be swallowed as 'gone'."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A'], status='INPROGRESS')
+
+    def _raise_server_error(**_kwargs):
+        raise icasdk.ApiException(status=503)
+
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.manage_dragen_pipeline.monitor_dragen_pipeline.run',
+        _raise_server_error,
+    )
+    with pytest.raises(icasdk.ApiException):
+        _reconcile_batches_with_ica('COH0001', bf)
+
+
+def test_project_pipeline_id_files_rebuilds_loop_file_for_in_flight_batch(tmp_path: Path):
+    """Resume safety: a batch that recorded a submission in batches.json but whose
+    loop-resume file was lost to a crash gets that file rebuilt from batches.json, so
+    the loop monitors it instead of resubmitting (which would be a duplicate ICA
+    analysis)."""
+    bf = _submitted_batch_file(tmp_path, ['SYN_A'], status='INPROGRESS')
+    batch = IcaBatch('COH0001', 0, ['SYN_A'])
+    loop_file = tmp_path / f'{batch.name}_pipeline_id.json'
+    loop_outputs = {f'{batch.name}_pipeline_id': loop_file}
+
+    _project_pipeline_id_files([batch], bf, loop_outputs)
+
+    assert loop_file.exists()
+    assert json.loads(loop_file.read_text()) == {'pipeline_id': 'pid-0', 'ar_guid': 'guid-0'}
+
+
+def test_project_pipeline_id_files_skips_unsubmitted_batch(tmp_path: Path):
+    """A batch with no recorded pipeline_id (never submitted) is left alone so the
+    loop submits it normally — no stale/empty loop file is written."""
+    bf = _make_file(tmp_path, [IcaBatch('COH0001', 0, ['SYN_A'])])
+    batch = IcaBatch('COH0001', 0, ['SYN_A'])
+    loop_file = tmp_path / f'{batch.name}_pipeline_id.json'
+
+    _project_pipeline_id_files([batch], bf, {f'{batch.name}_pipeline_id': loop_file})
+
+    assert not loop_file.exists()
+
+
+def test_force_retry_requires_existing_batches_file(tmp_path: Path, monkeypatch):
+    _set_management_flags(monkeypatch, force_retry=True)
+    with pytest.raises(FileNotFoundError, match='force_retry'):
+        _handle_management_flags(
+            cohort_name='COH0001',
+            batches_file_path=tmp_path / 'missing.json',
+            outputs={},
+            sg_names=['SYN_A'],
+        )
+
+
+def test_force_retry_mutually_exclusive_with_other_flags(tmp_path: Path, monkeypatch):
+    _set_management_flags(monkeypatch, force_retry=True, force_resubmit=True)
+    existing = tmp_path / 'COH0001_batches.json'
+    existing.write_text('{}')
+    with pytest.raises(ValueError, match='mutually exclusive'):
+        _handle_management_flags(
+            cohort_name='COH0001',
+            batches_file_path=existing,
+            outputs={},
+            sg_names=['SYN_A'],
+        )

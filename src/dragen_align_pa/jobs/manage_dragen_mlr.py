@@ -10,11 +10,11 @@ from cpg_flow.targets import Cohort
 from loguru import logger
 
 from dragen_align_pa import ica_cli_utils, utils
-from dragen_align_pa.constants import (
+from dragen_align_pa.constants.ica_constants import (
     ANALYSIS_INSTANCE_TIER,
     MLR_HASH_TABLE_RELPATH,
 )
-from dragen_align_pa.constants_registry import (
+from dragen_align_pa.constants.constants_registry import (
     ROLE_DRAGEN_ALIGN,
     ROLE_DRAGEN_MLR,
     ica_mlr_config_file_id,
@@ -215,4 +215,8 @@ def run(
         submit_function_factory=_create_submit_callable,
         allow_retry=False,
         sleep_time_seconds=330,
+        # Zero-tolerance (the loop default): any FAILED_FINAL aborts the cohort.
+        # The 5%-rate gate was removed branch-wide; MLR intentionally halts on a
+        # single unrecoverable failure rather than tolerating a fraction.
+        raise_on_failed_final=True,
     )

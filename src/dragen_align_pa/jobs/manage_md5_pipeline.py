@@ -11,7 +11,7 @@ from icasdk.apis.tags import project_data_api
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils
-from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
+from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
 from dragen_align_pa.paths import IcaPath
 from dragen_align_pa.jobs import run_intake_qc_pipeline
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
@@ -243,4 +243,8 @@ def run(
         submit_function_factory=lambda _target_name: submit_callable,
         allow_retry=True,
         sleep_time_seconds=300,
+        # Zero-tolerance (the loop default): any FAILED_FINAL aborts the cohort.
+        # The 5%-rate gate was removed branch-wide; MD5 intentionally halts on a
+        # single unrecoverable failure rather than tolerating a fraction.
+        raise_on_failed_final=True,
     )

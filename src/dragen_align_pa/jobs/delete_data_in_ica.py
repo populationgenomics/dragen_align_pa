@@ -25,7 +25,7 @@ from icasdk.exceptions import ApiException, ApiValueError
 from loguru import logger
 
 from dragen_align_pa import ica_api_utils
-from dragen_align_pa.constants_registry import (
+from dragen_align_pa.constants.constants_registry import (
     ROLE_DRAGEN_ALIGN,
     ROLE_FASTQ_UPLOAD,
     ica_can_delete_fastq,

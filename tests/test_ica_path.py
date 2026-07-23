@@ -3,7 +3,8 @@
 import pytest
 from cpg_utils.config import ConfigError
 
-from dragen_align_pa import constants, constants_registry, paths
+from dragen_align_pa import paths
+from dragen_align_pa.constants import ica_constants, constants_registry
 
 _SENTINEL = object()
 
@@ -88,11 +89,11 @@ def test_empty_path_folder_is_root_slash(monkeypatch):
 
 def test_mlr_hash_table_relpath_composes_expected_url(monkeypatch):
     _patch_config(monkeypatch)
-    url = paths.IcaPath.from_relpath(constants.MLR_HASH_TABLE_RELPATH).as_url(constants_registry.ROLE_DRAGEN_MLR)
+    url = paths.IcaPath.from_relpath(ica_constants.MLR_HASH_TABLE_RELPATH).as_url(constants_registry.ROLE_DRAGEN_MLR)
     assert url == 'ica://ourdna-dragen-mlr-jobs/data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9'
 
 
 def test_mlr_hash_table_relpath_carries_no_scheme_or_project():
     # The ICA project must be resolved from [ica.projects], never baked into the constant.
-    assert not constants.MLR_HASH_TABLE_RELPATH.startswith('ica://')
-    assert 'ourdna' not in constants.MLR_HASH_TABLE_RELPATH
+    assert not ica_constants.MLR_HASH_TABLE_RELPATH.startswith('ica://')
+    assert 'ourdna' not in ica_constants.MLR_HASH_TABLE_RELPATH

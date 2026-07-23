@@ -1,5 +1,5 @@
 from dragen_align_pa import ica_api_utils
-from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN, ROLE_DRAGEN_MLR
+from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN, ROLE_DRAGEN_MLR
 
 
 def run(ica_pipeline_id: str | dict[str, str], is_mlr: bool = False) -> str:

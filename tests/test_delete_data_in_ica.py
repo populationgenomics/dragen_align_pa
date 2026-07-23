@@ -196,7 +196,7 @@ def test_fastq_mode_skips_collaborator_managed_project(tmp_path: Path, patched_e
     # project_root=tenk10k → can_delete_fastq is False. `ica_can_delete_fastq` reads config in the
     # constants_registry binding, so patch it there.
     monkeypatch.setattr(
-        'dragen_align_pa.constants_registry.config_retrieve',
+        'dragen_align_pa.constants.constants_registry.config_retrieve',
         lambda key, default=None: 'tenk10k',  # noqa: ARG005
     )
 

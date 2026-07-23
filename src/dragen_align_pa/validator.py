@@ -12,8 +12,8 @@ from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import config_retrieve
 from loguru import logger
 
-from dragen_align_pa.constants import DESIGN_TO_BEDS, DESIGN_TO_CANONICAL
-from dragen_align_pa.constants_registry import (
+from dragen_align_pa.constants.ica_constants import DESIGN_TO_BEDS, DESIGN_TO_CANONICAL
+from dragen_align_pa.constants.constants_registry import (
     REQUIRED_ICA_ROLES,
     ROLE_DRAGEN_ALIGN,
     ROLE_DRAGEN_MLR,
@@ -103,7 +103,7 @@ def _resolve_sg_canonical_design(sg: SequencingGroup) -> str:
         raise RuntimeError(
             f'Sequencing group {sg.id} has sequencing_library {sequencing_library!r} that '
             f"doesn't map to a canonical design. Add it to DESIGN_TO_CANONICAL in "
-            f'dragen_align_pa.constants.',
+            f'dragen_align_pa.constants.ica_constants.',
         )
     return DESIGN_TO_CANONICAL[sequencing_library]
 
@@ -149,7 +149,7 @@ def assert_cohort_design_matches_configured_bed(cohort: Cohort) -> None:
     valid_beds = DESIGN_TO_BEDS.get(cohort_design)
     if valid_beds is None:
         raise RuntimeError(
-            f'No DESIGN_TO_BEDS entry for design {cohort_design!r}; update dragen_align_pa.constants.',
+            f'No DESIGN_TO_BEDS entry for design {cohort_design!r}; update dragen_align_pa.constants.ica_constants.',
         )
 
     # get_bed_names_for_seqtype raises if exome bed_names is missing or has

@@ -23,7 +23,11 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.batches import IcaBatch, validate_error_strategy
-from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN, resolve_cnv_normals_panel, resolve_ica_file_id
+from dragen_align_pa.constants.constants_registry import (
+    ROLE_DRAGEN_ALIGN,
+    resolve_cnv_normals_panel,
+    resolve_ica_file_id,
+)
 from dragen_align_pa.utils import get_bed_names_for_seqtype
 
 # DRAGEN flags that don't depend on input type (CRAM vs FASTQ) or sequencing type (WGS vs WES).
@@ -203,7 +207,7 @@ def _build_cram_data_inputs(
             raise ValueError(f"Missing 'cram_fid' in {state_path}")
         cram_fids.append(sg_state['cram_fid'])
 
-    # Resolve the configured CRAM-reference folder ID from constants.py via file name in config
+    # Resolve the configured CRAM-reference folder ID from ica_constants.py via file name in config
     selected_ref: str = resolve_ica_file_id(config_retrieve(['ica', 'cram_references', 'reference']))
 
     return (

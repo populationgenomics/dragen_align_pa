@@ -22,6 +22,11 @@ TODO_FID_PREFIX: Final = 'fil.TODO_'
 _TODO_FID: Final = f'{TODO_FID_PREFIX}REPLACE_AFTER_ICA_UPLOAD'
 
 
+# The config-free DRAGEN batch / pipeline-management constants (batch status +
+# passfail vocabulary, schema version, chunking width, ICA status vocabulary)
+# live in `batch_constants.py` so they can be imported without a loaded config.
+
+
 # ICA project setup
 # Contains the following:
 # A project block informing the user of the project names and IDs for running pipelines in ICA

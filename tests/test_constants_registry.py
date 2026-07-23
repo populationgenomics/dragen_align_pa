@@ -4,19 +4,19 @@ The registries map human-readable names (BED basenames, ICA project names) to
 ICA IDs / fields so config can be written in terms the user understands, and the
 submitter does one indirection to recover the ICA value. The data tables live in
 `constants`; the resolvers here read them. Tests that need to substitute a table
-patch it on `dragen_align_pa.constants` (where the data lives) — the resolvers
+patch it on `dragen_align_pa.constants.ica_constants` (where the data lives) — the resolvers
 read it off that module at call time.
 """
 
 import pytest
 
-from dragen_align_pa import constants_registry
+from dragen_align_pa.constants import constants_registry
 
 
 def test_resolve_ica_file_id_returns_registered_id(monkeypatch):
     """Known basename mapped to a real fil.… ID → returns that ID."""
     monkeypatch.setattr(
-        'dragen_align_pa.constants.ICA_FILE_IDS',
+        'dragen_align_pa.constants.ica_constants.ICA_FILE_IDS',
         {'real.bed': 'fil.0123456789abcdef'},
     )
     assert constants_registry.resolve_ica_file_id('real.bed') == 'fil.0123456789abcdef'
@@ -35,7 +35,7 @@ def test_resolve_ica_file_id_rejects_placeholder_id(monkeypatch):
     opaque "no such file" failure mid-run. resolve_ica_file_id must instead
     raise at submitter startup with a clear actionable message."""
     monkeypatch.setattr(
-        'dragen_align_pa.constants.ICA_FILE_IDS',
+        'dragen_align_pa.constants.ica_constants.ICA_FILE_IDS',
         {'staged_but_not_uploaded.bed': 'fil.TODO_REPLACE_AFTER_ICA_UPLOAD'},
     )
     with pytest.raises(ValueError, match=r'staged_but_not_uploaded\.bed'):
@@ -148,7 +148,7 @@ def test_config_reading_entry_points_use_configured_family():
 def test_resolve_cnv_normals_panel_returns_list_basename_and_all_ids(monkeypatch):
     """A registered panel resolves to its derived list basename plus every file ID."""
     monkeypatch.setattr(
-        'dragen_align_pa.constants.ICA_PON_FILE_IDS',
+        'dragen_align_pa.constants.ica_constants.ICA_PON_FILE_IDS',
         {
             'panel-a': {
                 'pon_list_file': 'fil.list',
@@ -171,7 +171,7 @@ def test_resolve_cnv_normals_panel_raises_on_unknown_panel():
 def test_resolve_cnv_normals_panel_raises_without_pon_list_file(monkeypatch):
     """A panel missing its pon_list_file entry can't be run against, so fail loud."""
     monkeypatch.setattr(
-        'dragen_align_pa.constants.ICA_PON_FILE_IDS',
+        'dragen_align_pa.constants.ica_constants.ICA_PON_FILE_IDS',
         {'panel-b': {'count_file_ids': ['fil.count1']}},
     )
     with pytest.raises(ValueError, match=r'pon_list_file'):
@@ -181,7 +181,7 @@ def test_resolve_cnv_normals_panel_raises_without_pon_list_file(monkeypatch):
 def test_resolve_cnv_normals_panel_rejects_placeholder_id(monkeypatch):
     """A not-yet-uploaded file (fil.TODO_ placeholder) in the panel must raise."""
     monkeypatch.setattr(
-        'dragen_align_pa.constants.ICA_PON_FILE_IDS',
+        'dragen_align_pa.constants.ica_constants.ICA_PON_FILE_IDS',
         {
             'panel-c': {
                 'pon_list_file': 'fil.list',
@@ -196,7 +196,7 @@ def test_resolve_cnv_normals_panel_rejects_placeholder_id(monkeypatch):
 def test_resolve_cnv_normals_panel_rejects_placeholder_list_file(monkeypatch):
     """A not-yet-uploaded list file (fil.TODO_ placeholder) must also raise."""
     monkeypatch.setattr(
-        'dragen_align_pa.constants.ICA_PON_FILE_IDS',
+        'dragen_align_pa.constants.ica_constants.ICA_PON_FILE_IDS',
         {'panel-d': {'pon_list_file': 'fil.TODO_REPLACE_AFTER_ICA_UPLOAD', 'count_file_ids': ['fil.c1']}},
     )
     with pytest.raises(ValueError, match=r'placeholder'):
@@ -206,7 +206,7 @@ def test_resolve_cnv_normals_panel_rejects_placeholder_list_file(monkeypatch):
 def test_resolve_cnv_normals_panel_allows_empty_count_file_ids(monkeypatch):
     """count_file_ids is optional: a panel with only its list file still resolves."""
     monkeypatch.setattr(
-        'dragen_align_pa.constants.ICA_PON_FILE_IDS',
+        'dragen_align_pa.constants.ica_constants.ICA_PON_FILE_IDS',
         {'panel-e': {'pon_list_file': 'fil.list'}},
     )
     list_basename, file_ids = constants_registry.resolve_cnv_normals_panel('panel-e')
@@ -217,7 +217,7 @@ def test_resolve_cnv_normals_panel_allows_empty_count_file_ids(monkeypatch):
 def test_resolve_cnv_normals_panel_rejects_non_list_count_file_ids(monkeypatch):
     """count_file_ids must be a list — a stray basename→id dict (the old schema) fails loud."""
     monkeypatch.setattr(
-        'dragen_align_pa.constants.ICA_PON_FILE_IDS',
+        'dragen_align_pa.constants.ica_constants.ICA_PON_FILE_IDS',
         {'panel-f': {'pon_list_file': 'fil.list', 'count_file_ids': {'sgA.counts.gz': 'fil.c1'}}},
     )
     with pytest.raises(ValueError, match=r'count_file_ids'):
@@ -228,7 +228,7 @@ def test_resolve_cnv_normals_panel_rejects_non_string_count_file_id(monkeypatch)
     """A non-string element (e.g. a hand-edit typo) fails with a clean ValueError,
     not the AttributeError that a bare `.startswith` on None/int would raise."""
     monkeypatch.setattr(
-        'dragen_align_pa.constants.ICA_PON_FILE_IDS',
+        'dragen_align_pa.constants.ica_constants.ICA_PON_FILE_IDS',
         {'panel-g': {'pon_list_file': 'fil.list', 'count_file_ids': ['fil.c1', None]}},
     )
     with pytest.raises(ValueError, match=r'count_file_ids'):
@@ -240,7 +240,7 @@ def test_resolve_cnv_normals_panel_rejects_empty_count_file_id(monkeypatch):
     so without this guard it would slip through into ICA data inputs and surface
     as an opaque 'no such file' mid-run (matching the list-file guard's rejection)."""
     monkeypatch.setattr(
-        'dragen_align_pa.constants.ICA_PON_FILE_IDS',
+        'dragen_align_pa.constants.ica_constants.ICA_PON_FILE_IDS',
         {'panel-h': {'pon_list_file': 'fil.list', 'count_file_ids': ['fil.c1', '']}},
     )
     with pytest.raises(ValueError, match=r'count_file_ids'):

@@ -4,59 +4,39 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from dragen_align_pa.constants.batch_constants import (
+    ALLOWED_BATCH_STATUSES,
+    ALLOWED_ERROR_STRATEGIES,
+    BATCH_STATUS_CANCELLED,
+    BATCH_STATUS_FAILED,
+    BATCH_STATUS_INPROGRESS,
+    BATCH_STATUS_PENDING,
+    BATCHES_SCHEMA_VERSION,
+    CANONICAL_PASSFAIL_FAIL,
+    CANONICAL_PASSFAIL_SUCCESS,
+    PASSFAIL_STATUS_NORMALISATION,
+)
+
 if TYPE_CHECKING:
     from pathlib import Path
 
     import cpg_utils
 
-SCHEMA_VERSION = 1
 
-# DRAGEN/ICA accepts exactly these three values for the `error_strategy`
-# pipeline parameter. Anything else is rejected at the API boundary with an
-# opaque message; we validate locally so misuse fails fast with a clear error.
-ALLOWED_ERROR_STRATEGIES = frozenset({'auto', 'continue', 'terminate'})
-
-# Per-batch status values written into batches.json. Named so call sites
-# compare against `BATCH_STATUS_FAILED` rather than the bare string 'FAILED' —
-# a typo in a literal is a silent lookup miss, a typo in a name is a NameError.
-# The orchestrator's in-memory `PipelineStatus` enum is finer-grained
-# (FAILED_RETRYING / FAILED_FINAL); the persistence layer collapses both to
-# `BATCH_STATUS_FAILED`.
-BATCH_STATUS_PENDING = 'PENDING'
-BATCH_STATUS_INPROGRESS = 'INPROGRESS'
-BATCH_STATUS_SUCCEEDED = 'SUCCEEDED'
-BATCH_STATUS_FAILED = 'FAILED'
-BATCH_STATUS_CANCELLED = 'CANCELLED'
-
-ALLOWED_BATCH_STATUSES = frozenset(
-    {
-        BATCH_STATUS_PENDING,
-        BATCH_STATUS_INPROGRESS,
-        BATCH_STATUS_SUCCEEDED,
-        BATCH_STATUS_FAILED,
-        BATCH_STATUS_CANCELLED,
-    },
-)
-
-# Statuses that mean "a batch is still being worked (or waiting to be)". Used by
-# the resume paths to decide which batches to re-monitor.
-ACTIVE_BATCH_STATUSES = frozenset({BATCH_STATUS_PENDING, BATCH_STATUS_INPROGRESS})
-
-# Per-sample passfail status vocabulary. DRAGEN's `passfail.json` writes
-# `"Success"` / `"Failed"`; we normalise at the persistence boundary
-# (`record_passfail`) so downstream code only ever compares against the two
-# canonical values below. `"Fail"` (not `"Failed"`) is canonical because every
-# existing consumer already compared `== 'Fail'`.
-CANONICAL_PASSFAIL_SUCCESS = 'Success'
-CANONICAL_PASSFAIL_FAIL = 'Fail'
-_PASSFAIL_STATUS_NORMALISATION = {
-    'Success': CANONICAL_PASSFAIL_SUCCESS,
-    'Fail': CANONICAL_PASSFAIL_FAIL,
-    'Failed': CANONICAL_PASSFAIL_FAIL,
-}
+class PassfailStatusError(ValueError):
+    """A passfail.json status value outside the recognised input set."""
 
 
 def validate_error_strategy(value: str, *, context: str) -> None:
+    """Validate an ICA `error_strategy` value.
+
+    Args:
+        value: The `error_strategy` to check.
+        context: Caller description prefixed to the error message.
+
+    Raises:
+        ValueError: If `value` is not one of `ALLOWED_ERROR_STRATEGIES`.
+    """
     if value not in ALLOWED_ERROR_STRATEGIES:
         raise ValueError(
             f'{context}: error_strategy must be one of {sorted(ALLOWED_ERROR_STRATEGIES)}, got {value!r}.',
@@ -66,13 +46,21 @@ def validate_error_strategy(value: str, *, context: str) -> None:
 def normalise_passfail_status(value: str, *, context: str) -> str:
     """Map a raw passfail status onto the canonical `"Success"` / `"Fail"`.
 
-    Raises `ValueError` on any status outside the recognised input set.
+    Args:
+        value: A raw passfail status (DRAGEN writes `"Success"` / `"Failed"`).
+        context: Caller description prefixed to the error message.
+
+    Returns:
+        The canonical status (`CANONICAL_PASSFAIL_SUCCESS` or `CANONICAL_PASSFAIL_FAIL`).
+
+    Raises:
+        PassfailStatusError: If `value` is outside the recognised input set.
     """
     try:
-        return _PASSFAIL_STATUS_NORMALISATION[value]
+        return PASSFAIL_STATUS_NORMALISATION[value]
     except KeyError:
-        raise ValueError(
-            f'{context}: passfail status must be one of {sorted(_PASSFAIL_STATUS_NORMALISATION)}, got {value!r}.',
+        raise PassfailStatusError(
+            f'{context}: passfail status must be one of {sorted(PASSFAIL_STATUS_NORMALISATION)}, got {value!r}.',
         ) from None
 
 
@@ -94,6 +82,19 @@ class IcaBatch:
     @property
     def name(self) -> str:
         return f'{self.cohort_name}-batch{self.batch_index:04d}'
+
+    @classmethod
+    def from_entry(cls, cohort_name: str, entry: dict[str, Any]) -> IcaBatch:
+        """Hydrate an `IcaBatch` from a `{cohort}_batches.json` entry dict.
+
+        Args:
+            cohort_name: The cohort the batch belongs to.
+            entry: A batches-file entry (carries `batch_index` and `sg_names`).
+
+        Returns:
+            The reconstructed `IcaBatch`.
+        """
+        return cls(cohort_name=cohort_name, batch_index=entry['batch_index'], sg_names=entry['sg_names'])
 
 
 def chunk_sgs_into_batches(
@@ -270,10 +271,10 @@ class BatchesFile:
         with self.path.open('r') as fh:
             data = json.load(fh)
         version = data.get('schema_version', 0)
-        if version != SCHEMA_VERSION:
+        if version != BATCHES_SCHEMA_VERSION:
             raise ValueError(
                 f'BatchesFile schema_version mismatch in {self.path}: '
-                f'file has {version}, code expects {SCHEMA_VERSION}',
+                f'file has {version}, code expects {BATCHES_SCHEMA_VERSION}',
             )
         for required in ('batch_size', 'batches'):
             if required not in data:
@@ -313,13 +314,32 @@ class BatchesFile:
         copy+delete) and is intentionally removed here.
         """
         payload = {
-            'schema_version': SCHEMA_VERSION,
+            'schema_version': BATCHES_SCHEMA_VERSION,
             'batch_size': self.batch_size,
             'n_batches': len(self.batches),
             'batches': self.batches,
         }
         with self.path.open('w') as fh:
             json.dump(payload, fh, indent=2, sort_keys=True)
+
+    def batch_entry(self, batch_index: int) -> dict[str, Any]:
+        """Return the batch entry with the given `batch_index`.
+
+        Args:
+            batch_index: The batch's `batch_index`.
+
+        Returns:
+            The matching batch entry dict.
+
+        Raises:
+            KeyError: If no batch has that `batch_index`.
+        """
+        # Match by batch_index, not list position: read() does not guarantee the
+        # list is stored in index order.
+        for b in self.batches:
+            if b['batch_index'] == batch_index:
+                return b
+        raise KeyError(f'No batch with batch_index={batch_index} in {self.path}')
 
     def record_pipeline_submission(
         self,
@@ -328,7 +348,7 @@ class BatchesFile:
         ar_guid: str,
         user_reference: str,
     ) -> None:
-        b = self.batches[batch_index]
+        b = self.batch_entry(batch_index)
         b['pipeline_id'] = pipeline_id
         b['ar_guid'] = ar_guid
         b['user_reference'] = user_reference
@@ -342,27 +362,34 @@ class BatchesFile:
                 f'The orchestrator enum is finer-grained — collapse FAILED_RETRYING/'
                 f"FAILED_FINAL to 'FAILED' at the persistence boundary.",
             )
-        self.batches[batch_index]['status'] = status
+        self.batch_entry(batch_index)['status'] = status
 
     def record_passfail(self, batch_index: int, passfail: dict[str, str]) -> None:
-        self.batches[batch_index]['passfail'] = {
+        b = self.batch_entry(batch_index)
+        b['passfail'] = {
             sg: normalise_passfail_status(status, context=f'record_passfail(batch_index={batch_index}, sg={sg!r})')
             for sg, status in passfail.items()
         }
-        self.batches[batch_index]['passfail_seen'] = True
+        b['passfail_seen'] = True
+
+    def clear_passfail(self, batch_index: int) -> None:
+        """Reset a batch's passfail result to unset (`passfail=None`, `passfail_seen=False`)."""
+        b = self.batch_entry(batch_index)
+        b['passfail'] = None
+        b['passfail_seen'] = False
 
     def record_analysis_output_folder_fid(self, batch_index: int, fid: str) -> None:
-        self.batches[batch_index]['analysis_output_folder_fid'] = fid
+        self.batch_entry(batch_index)['analysis_output_folder_fid'] = fid
 
     def record_fastq_list_fid(self, batch_index: int, fid: str) -> None:
-        self.batches[batch_index]['fastq_list_fid'] = fid
+        self.batch_entry(batch_index)['fastq_list_fid'] = fid
 
     def record_cram_fids(self, batch_index: int, fids: list[str]) -> None:
-        self.batches[batch_index]['cram_fids'] = list(fids)
+        self.batch_entry(batch_index)['cram_fids'] = list(fids)
 
     def record_error_strategy(self, batch_index: int, error_strategy: str) -> None:
         validate_error_strategy(error_strategy, context=f'record_error_strategy(batch_index={batch_index})')
-        self.batches[batch_index]['error_strategy'] = error_strategy
+        self.batch_entry(batch_index)['error_strategy'] = error_strategy
 
     def mark_sgs_retried(self, source_batch_idx: int, sg_names: list[str]) -> None:
         """Record that these SGs from `source_batch_idx` have been pulled into a retry batch.
@@ -374,7 +401,7 @@ class BatchesFile:
         has used up its retry allowance regardless of how many SGs were
         involved).
         """
-        b = self.batches[source_batch_idx]
+        b = self.batch_entry(source_batch_idx)
         if not sg_names:
             return
         for sg in sg_names:
@@ -418,78 +445,104 @@ class BatchesFile:
         )
         return new_index
 
-    def failed_sg_names(self) -> list[str]:
-        """SGs marked Fail across all batches (via passfail.json or batch-level FAILED).
+    def _resolve_latest_outcomes(self) -> tuple[list[str], dict[str, bool]]:
+        """Resolve each SG to its definitive Success/Fail outcome.
 
-        CANCELLED is NOT a failure — `cancel_cohort_run=true` is user-initiated
-        and should not count against the 5% threshold or any "failure" report.
-        Call `cancelled_sg_names()` for cancellation reporting.
+        An SG's outcome is Success if any generation produced an ICA-confirmed
+        Success for it; otherwise it is Fail. Determinate outcomes come from
+        per-sample passfail (Success/Fail) or a batch-level FAILED with falsy
+        passfail (every SG in the batch Fail). CANCELLED batches contribute no
+        outcome.
 
-        Deduplicated across batches so an SG that fails in both gen=0 and
-        gen=1 counts once. The 5%-threshold check uses `len(failed_sg_names())`
-        and must not be artificially tripped by retried failures.
+        Returns:
+            A `(first_seen_order, is_fail)` tuple: the SG names in first-seen order
+            and a map of SG name to whether its outcome is Fail.
         """
+        succeeded: set[str] = set()
         seen: set[str] = set()
-        failed: list[str] = []
+        first_seen: list[str] = []
         for b in self.batches:
-            if b['status'] == BATCH_STATUS_FAILED and b['passfail'] is None:
-                candidates: list[str] = list(b['sg_names'])
+            if b['status'] == BATCH_STATUS_CANCELLED:
+                # Cancellation is not an outcome — a batch that recorded a passfail
+                # then got CANCELLED reports only through `cancelled_sg_names()`.
+                continue
+            if b['status'] == BATCH_STATUS_FAILED and not b['passfail']:
+                outcomes: list[tuple[str, bool]] = [(sg, True) for sg in b['sg_names']]
             elif b['passfail']:
-                candidates = [sg for sg, status in b['passfail'].items() if status == CANONICAL_PASSFAIL_FAIL]
+                outcomes = [(sg, status == CANONICAL_PASSFAIL_FAIL) for sg, status in b['passfail'].items()]
             else:
                 continue
-            for sg in candidates:
+            for sg, fail in outcomes:
                 if sg not in seen:
                     seen.add(sg)
-                    failed.append(sg)
-        return failed
+                    first_seen.append(sg)
+                if not fail:
+                    succeeded.add(sg)
+        # A Success at any generation beats a later Fail: force_retry can reconcile
+        # an original batch to SUCCEEDED after a superseding retry already failed,
+        # and that earlier CRAM is the real output.
+        is_fail = {sg: sg not in succeeded for sg in first_seen}
+        return first_seen, is_fail
+
+    def failed_sg_names(self) -> list[str]:
+        """SGs whose definitive outcome is Fail, across all batches.
+
+        Each SG resolves via `_resolve_latest_outcomes`: a Success at any
+        generation wins, otherwise Fail. A batch-level FAILED with falsy
+        passfail marks every SG in the batch Fail. CANCELLED batches contribute
+        no outcome (see `cancelled_sg_names`).
+
+        Returns:
+            The failed SG names, in first-seen order.
+        """
+        first_seen, is_fail = self._resolve_latest_outcomes()
+        return [sg for sg in first_seen if is_fail[sg]]
 
     def cancelled_sg_names(self) -> list[str]:
-        """SGs in batches marked CANCELLED (by user `cancel_cohort_run`).
+        """SGs in batches marked CANCELLED (by `cancel_cohort_run`).
 
-        Like `failed_sg_names`, may double-count an SG that appears in both
-        an initial (gen=0) and a retry (gen=1) batch if BOTH were cancelled —
-        a degenerate scenario in practice (retries are spawned only from
-        failures, and cancel only fires on PENDING/INPROGRESS batches).
-        Callers that need unique SGs should wrap in `set(...)`.
+        May list an SG twice if it appears in both an initial (gen=0) and a retry
+        (gen=1) batch that were both cancelled; wrap in `set(...)` for uniqueness.
+
+        Returns:
+            The SG names across all CANCELLED batches.
         """
         return [sg for b in self.batches if b['status'] == BATCH_STATUS_CANCELLED for sg in b['sg_names']]
 
     def successful_sg_names(self) -> list[str]:
-        """SGs explicitly marked Success in any non-CANCELLED batch's passfail.
+        """SGs whose definitive outcome is Success, across all batches.
 
-        Asymmetric with `failed_sg_names` by design: success requires positive
-        confirmation from `passfail.json`, whereas batch-level FAILED implies
-        Fail for every SG in the batch. An SG only appears here once its
-        batch's `passfail_seen` is True.
+        Symmetric with `failed_sg_names`: each SG resolves via
+        `_resolve_latest_outcomes`. Success requires positive confirmation from
+        `passfail.json` at some generation; a batch-level FAILED with falsy
+        passfail is a Fail, not a Success. CANCELLED batches contribute no outcome.
 
-        CANCELLED batches are excluded so a batch that records passfail then
-        is cancelled reports only through `cancelled_sg_names()` — this matches
-        `failed_sg_names`'s exclusion of CANCELLED and prevents the
-        resume-after-cancel guard from double-counting them.
+        Returns:
+            The succeeded SG names, in first-seen order.
         """
-        successful: list[str] = []
-        for b in self.batches:
-            if b['status'] == BATCH_STATUS_CANCELLED:
-                continue
-            if b['passfail']:
-                successful.extend(sg for sg, status in b['passfail'].items() if status == CANONICAL_PASSFAIL_SUCCESS)
-        return successful
+        first_seen, is_fail = self._resolve_latest_outcomes()
+        return [sg for sg in first_seen if not is_fail[sg]]
 
     def find_batch_for_sg(self, sg_name: str) -> dict[str, Any] | None:
-        """Return the most recent (highest batch_index) batch containing `sg_name`.
+        """Return the batch holding `sg_name`'s outcome, or None if absent.
 
-        SGs may appear in both an initial batch (`retry_generation=0`) and a
-        retry batch (`retry_generation=1`). The retry batch is the source of
-        truth for path resolution because its `pipeline_id` / `user_reference`
-        are what the per-SG state file points at after the retry write.
-
-        Selects by explicit max(batch_index) rather than relying on
-        self.batches being stored in ascending order — that invariant is
-        not enforced by read() and a future refactor / hand-edit could
-        silently return the wrong entry.
+        Returns the batch that produced the winning outcome: the successful
+        generation if any generation succeeded, else the highest-`batch_index`
+        batch containing the SG. Selects by explicit `batch_index`, not
+        self.batches list order.
         """
         candidates = [b for b in self.batches if sg_name in b['sg_names']]
         if not candidates:
             return None
-        return max(candidates, key=lambda b: b['batch_index'])
+        # Prefer a generation that succeeded for this SG (force_retry can reconcile
+        # an earlier batch to SUCCEEDED after a later retry failed); otherwise the
+        # highest-index generation, which is the in-flight retry during a normal
+        # retry. read() does not enforce list order, so key on batch_index.
+        succeeded = [
+            b
+            for b in candidates
+            if b['status'] != BATCH_STATUS_CANCELLED
+            and b['passfail']
+            and b['passfail'].get(sg_name) == CANONICAL_PASSFAIL_SUCCESS
+        ]
+        return max(succeeded or candidates, key=lambda b: b['batch_index'])

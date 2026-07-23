@@ -22,7 +22,7 @@ So this script's whole job is data management, in five steps, per panel:
     5. REGISTER — print a ready-to-paste JSON block, `{<panel-name>:
                   {"pon_list_file": <list `fil.…` ID>, "count_file_ids":
                   [<count `fil.…` ID>, …]}}`, to merge into `ICA_PON_FILE_IDS` in
-                  `dragen_align_pa.constants`. Only file IDs are stored — the
+                  `dragen_align_pa.constants.ica_constants`. Only file IDs are stored — the
                   renamed count basenames (which embed CPG sample IDs) are
                   intentionally dropped. A run then selects the panel by name
                   (`[presets.exome].cnv_normals_panel`) instead of listing IDs.
@@ -35,7 +35,7 @@ WHY THE RENAME (`--rename-suffix`, default `_pon`):
     a sample can sit in a panel that is also used to call it.
 
 WHY BASENAMES IN THE LIST (not ICA paths or file IDs):
-    `constants.py` documents that ICA localises all analysis inputs into a
+    `ica_constants.py` documents that ICA localises all analysis inputs into a
     single working directory at run time, and DRAGEN's CLI args reference files
     by basename. The DRAGEN guide (p.130) also states relative paths in the PON
     list are supported, resolved against the current working directory. So the
@@ -82,7 +82,7 @@ from loguru import logger
 from metamist.graphql import gql, query
 
 from dragen_align_pa import ica_api_utils, ica_cli_utils, ica_utils, utils
-from dragen_align_pa.constants_registry import ROLE_DRAGEN_ALIGN
+from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
 
 # WES tool (WGS self-normalises and never builds a PON). DRAGEN's gc-corrected
 # counts <SG>.target.counts.gc-corrected.gz are the right PON input when GC
@@ -406,7 +406,7 @@ def _print_registration_snippet(panel_name: str, file_ids: dict[str, str]) -> No
     count files are emitted as a plain list of IDs under ``count_file_ids``. Their
     basenames are intentionally dropped — they embed CPG sample IDs (blocked by
     the CPG-ID pre-commit hook) and are never consumed. See ``ICA_PON_FILE_IDS``
-    in ``dragen_align_pa.constants`` for the consumed structure.
+    in ``dragen_align_pa.constants.ica_constants`` for the consumed structure.
 
     Args:
         panel_name: Panel label, also the JSON block's top-level key.
@@ -419,7 +419,7 @@ def _print_registration_snippet(panel_name: str, file_ids: dict[str, str]) -> No
     }
     logger.info(
         f'Panel "{panel_name}" built (1 normals list + {len(entry["count_file_ids"])} count files). '
-        f'Merge this block into ICA_PON_FILE_IDS in dragen_align_pa.constants '
+        f'Merge this block into ICA_PON_FILE_IDS in dragen_align_pa.constants.ica_constants '
         f'(reformat to the repo code style — the block below is JSON, not Python):',
     )
     print(f'\n# --- CNV PON: {panel_name} ---')
