@@ -9,6 +9,19 @@ import pytest
 from dragen_align_pa.batches import BatchesFile, IcaBatch, chunk_sgs_into_batches
 
 
+def _make_bf(tmp_path: Path, batches: list[IcaBatch], batch_size: int = 5) -> BatchesFile:
+    """Build an initialised BatchesFile at the conventional tmp path.
+
+    Collapses the `path = ... / bf = BatchesFile(path=...) / bf.initialise(...)`
+    triplet that recurs in almost every test here. Callers reach the on-disk
+    path via `bf.path`; write()/read() stay explicit at the call sites that
+    exercise them.
+    """
+    bf = BatchesFile(path=tmp_path / 'COH0001_batches.json')
+    bf.initialise(batch_size=batch_size, batches=batches)
+    return bf
+
+
 def test_batches_module_imports_without_a_loaded_config():
     """M5 regression: `batches.py` must import without a CPG config present. It
     pulls its constants from the config-free `batch_constants` module, not from
@@ -75,17 +88,10 @@ def test_chunk_rejects_non_positive_batch_size():
 
 
 def test_batches_file_roundtrip(tmp_path: Path):
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     bf.write()
 
-    loaded = BatchesFile(path=path)
+    loaded = BatchesFile(path=bf.path)
     loaded.read()
     assert loaded.batch_size == 5
     assert len(loaded.batches) == 1
@@ -94,14 +100,7 @@ def test_batches_file_roundtrip(tmp_path: Path):
 
 
 def test_batches_file_record_pipeline_id(tmp_path: Path):
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])])
     bf.write()
     bf.record_pipeline_submission(
         batch_index=0,
@@ -111,7 +110,7 @@ def test_batches_file_record_pipeline_id(tmp_path: Path):
     )
     bf.write()
 
-    loaded = BatchesFile(path=path)
+    loaded = BatchesFile(path=bf.path)
     loaded.read()
     assert loaded.batches[0]['pipeline_id'] == 'abc'
     assert loaded.batches[0]['ar_guid'] == 'xyz'
@@ -119,18 +118,11 @@ def test_batches_file_record_pipeline_id(tmp_path: Path):
 
 
 def test_batches_file_record_passfail(tmp_path: Path):
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     bf.record_passfail(batch_index=0, passfail={'CPG_A': 'Success', 'CPG_B': 'Fail'})
     bf.write()
 
-    loaded = BatchesFile(path=path)
+    loaded = BatchesFile(path=bf.path)
     loaded.read()
     assert loaded.failed_sg_names() == ['CPG_B']
     assert loaded.successful_sg_names() == ['CPG_A']
@@ -140,14 +132,7 @@ def test_batches_file_record_passfail(tmp_path: Path):
 def test_record_passfail_normalises_dragen_failed_status(tmp_path: Path):
     """DRAGEN writes `"Failed"`; record_passfail normalises it to canonical `"Fail"`
     so `failed_sg_names` (and the retry path) pick the sample up."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     bf.record_passfail(batch_index=0, passfail={'CPG_A': 'Success', 'CPG_B': 'Failed'})
     assert bf.batches[0]['passfail'] == {'CPG_A': 'Success', 'CPG_B': 'Fail'}
     assert bf.failed_sg_names() == ['CPG_B']
@@ -195,31 +180,17 @@ def test_read_migrates_legacy_failed_passfail_value(tmp_path: Path):
 def test_record_passfail_raises_on_unknown_status(tmp_path: Path):
     """An unrecognised status raises loudly rather than silently recording a value
     that matches neither `== 'Fail'` nor `== 'Success'`."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     with pytest.raises(ValueError, match=r'passfail status must be one of'):
         bf.record_passfail(batch_index=0, passfail={'CPG_A': 'Success', 'CPG_B': 'PASS'})
 
 
 def test_batches_file_record_cram_fids(tmp_path: Path):
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     bf.record_cram_fids(batch_index=0, fids=['fil.aaa', 'fil.bbb'])
     bf.write()
 
-    loaded = BatchesFile(path=path)
+    loaded = BatchesFile(path=bf.path)
     loaded.read()
     assert loaded.batches[0]['cram_fids'] == ['fil.aaa', 'fil.bbb']
 
@@ -266,29 +237,15 @@ def test_batches_file_rejects_missing_per_batch_keys(tmp_path: Path):
 
 def test_batches_file_write_persists(tmp_path: Path):
     """Single-PUT atomic write — GCS object PUT is atomic per object."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])])
     bf.write()
-    assert path.is_file()
+    assert bf.path.is_file()
     # No .tmp sidecar exists — we use a direct write, not tmp+rename.
     assert not (tmp_path / 'COH0001_batches.json.tmp').exists()
 
 
 def test_add_retry_batch_single_sample_uses_continue(tmp_path: Path):
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     new_idx = bf.add_retry_batch(sg_names=['CPG_B'])
     assert new_idx == 1
     assert bf.batches[1]['retry_generation'] == 1
@@ -298,14 +255,7 @@ def test_add_retry_batch_single_sample_uses_continue(tmp_path: Path):
 
 
 def test_add_retry_batch_multi_sample_uses_auto(tmp_path: Path):
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     bf.add_retry_batch(sg_names=['CPG_A', 'CPG_B'])
     assert bf.batches[1]['error_strategy'] == 'auto'
 
@@ -314,14 +264,7 @@ def test_add_retry_batch_rejects_invalid_error_strategy(tmp_path: Path):
     """ICA only accepts {auto, continue, terminate}. A typo (e.g. trailing
     whitespace, wrong case) must surface here as a clear ValueError, not as
     an obscure ICA pipeline-parameter rejection at submission time."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])])
     with pytest.raises(ValueError, match='error_strategy'):
         bf.add_retry_batch(sg_names=['CPG_A'], error_strategy='CONTINUE')
 
@@ -329,14 +272,7 @@ def test_add_retry_batch_rejects_invalid_error_strategy(tmp_path: Path):
 def test_record_error_strategy_rejects_invalid_value(tmp_path: Path):
     """record_error_strategy() writes the value verbatim into batches.json
     and downstream submission. Reject anything outside the allowed set."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])])
     with pytest.raises(ValueError, match='error_strategy'):
         bf.record_error_strategy(batch_index=0, error_strategy='continue ')  # trailing whitespace
 
@@ -346,14 +282,7 @@ def test_failed_sg_names_dedupes_across_retry_generations(tmp_path: Path):
     once in failed_sg_names(). The orchestrator's completion-marker failure
     count uses `len(failed_sg_names())`; double-counting would inflate the
     reported failure count on cohorts with retries."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     # Gen 0 fails CPG_A.
     bf.record_passfail(0, {'CPG_A': 'Fail', 'CPG_B': 'Success'})
     bf.record_status(0, 'FAILED')
@@ -371,14 +300,7 @@ def test_failed_sg_names_excludes_sg_recovered_by_retry(tmp_path: Path):
     The orchestrator raises when `failed_sg_names()` is non-empty after the
     retry pass, so a recovered SG lingering here would abort a run the retry
     actually saved."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     # Gen 0: CPG_B fails, CPG_A succeeds.
     bf.record_passfail(0, {'CPG_A': 'Success', 'CPG_B': 'Fail'})
     bf.record_status(0, 'SUCCEEDED')
@@ -395,14 +317,7 @@ def test_failed_sg_names_whole_batch_failure_recovered_by_retry(tmp_path: Path):
     """A batch-level FAILED (no passfail) marks every SG Fail, but a later retry
     that succeeds those SGs wins: whole-batch infrastructure failure recovered on
     retry must not count as failed."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     # Gen 0: whole batch fails at ICA level (no passfail produced).
     bf.record_status(0, 'FAILED')
     # Gen 1 retry re-runs both and they succeed.
@@ -417,14 +332,7 @@ def test_failed_sg_names_counts_failed_batch_with_empty_passfail(tmp_path: Path)
     """A FAILED batch whose passfail is an empty dict (hand-edited/older file) counts
     as a whole-batch failure — resolution keys on falsy passfail, not `is None`, so it
     is never silently dropped."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     bf.record_status(0, 'FAILED')
     bf.batch_entry(0)['passfail'] = {}  # not the None the writers produce
 
@@ -435,12 +343,7 @@ def test_success_at_any_generation_beats_later_failure(tmp_path: Path):
     """force_retry can reconcile an original batch to SUCCEEDED after a superseding
     retry has already failed (GCS-drift recovery). The confirmed Success must win:
     the SG is not resubmitted, and path resolution points at the successful batch."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])])
     # Gen 1 retry, spawned while GCS thought batch 0 failed, genuinely failed.
     bf.add_retry_batch(sg_names=['CPG_A'])
     bf.record_status(1, 'FAILED')  # whole-batch fail, passfail stays None
@@ -459,15 +362,7 @@ def test_batch_entry_resolves_by_index_not_position(tmp_path: Path):
     """record_* / clear_passfail resolve by batch_index via `batch_entry`, not list
     position — so a batches list stored out of order (hand-edit / future reorder)
     mutates the right entry rather than a positional neighbour."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch('COH0001', 0, ['CPG_A']),
-            IcaBatch('COH0001', 1, ['CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch('COH0001', 0, ['CPG_A']), IcaBatch('COH0001', 1, ['CPG_B'])])
     bf.batches.reverse()  # position 0 now holds batch_index 1, and vice versa
 
     bf.record_status(0, 'FAILED')
@@ -482,14 +377,7 @@ def test_successful_sg_names_resolves_latest_generation(tmp_path: Path):
     """`successful_sg_names` is latest-generation-aware and symmetric with
     `failed_sg_names`: an SG whose gen-0 outcome was Fail but whose gen-1 retry
     Succeeded appears in successful (and NOT in failed), counted once."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     bf.record_passfail(0, {'CPG_A': 'Success', 'CPG_B': 'Fail'})
     bf.record_status(0, 'SUCCEEDED')
     bf.add_retry_batch(sg_names=['CPG_B'])  # gen-1 retry, index 1
@@ -507,27 +395,13 @@ def test_record_status_rejects_invalid_status(tmp_path: Path):
     orchestrator's `FAILED_FINAL` leaking through unmapped) would silently
     produce a batch that is neither successful, failed, nor cancelled —
     breaking the failure/success counts and the resume-after-cancel guard."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])])
     with pytest.raises(ValueError, match='FAILED_FINAL'):
         bf.record_status(batch_index=0, status='FAILED_FINAL')
 
 
 def test_mark_sgs_retried_tracks_per_sg(tmp_path: Path):
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     bf.mark_sgs_retried(source_batch_idx=0, sg_names=['CPG_B'])
     # `retried_sgs` accrues per-SG; `has_been_retried` is the action gate and
     # flips True on the first retry (no second-retry allowed regardless of count).
@@ -541,14 +415,7 @@ def test_failed_excludes_cancelled_and_cancelled_helper_returns_them(tmp_path: P
     """Round-4 policy: `cancel_cohort_run` is user-initiated and must NOT
     be counted as a failure. `failed_sg_names` excludes CANCELLED; a
     sibling `cancelled_sg_names` reports them separately."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     bf.record_status(0, 'CANCELLED')
     assert bf.failed_sg_names() == []
     assert sorted(bf.cancelled_sg_names()) == ['CPG_A', 'CPG_B']
@@ -563,11 +430,9 @@ def test_cancelled_helper_mixed_with_succeeded(tmp_path: Path):
     result — Option 2's terminal-on-any-CANCELLED semantic depends on this
     helper distinguishing CANCELLED from SUCCEEDED correctly even when both
     co-exist in the same batches file."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
+    bf = _make_bf(
+        tmp_path,
+        [
             IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
             IcaBatch(cohort_name='COH0001', batch_index=1, sg_names=['CPG_C', 'CPG_D']),
         ],
@@ -586,14 +451,7 @@ def test_cancelled_helper_mixed_with_succeeded(tmp_path: Path):
 def test_find_batch_for_sg_prefers_latest_generation(tmp_path: Path):
     """SGs may appear in both an initial batch (gen=0) and a retry batch (gen=1).
     The most recent batch is the relevant one for path resolution."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     bf.record_passfail(0, {'CPG_A': 'Success', 'CPG_B': 'Fail'})
     bf.add_retry_batch(sg_names=['CPG_B'])
     found = bf.find_batch_for_sg('CPG_B')
@@ -607,26 +465,12 @@ def test_initialise_single_sample_batch_uses_continue(tmp_path: Path):
     passfail.json is written. `initialise()` must mirror `add_retry_batch`'s
     heuristic so an initial cohort with 1 SG — or a trailing single-SG batch —
     gets `continue` and produces a passfail."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])])
     assert bf.batches[0]['error_strategy'] == 'continue'
 
 
 def test_initialise_multi_sample_batch_uses_auto(tmp_path: Path):
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     assert bf.batches[0]['error_strategy'] == 'auto'
 
 
@@ -634,11 +478,9 @@ def test_initialise_mixed_batch_sizes_apply_strategy_per_batch(tmp_path: Path):
     """Trailing single-SG batch (e.g. cohort of 6 with batch_size 5) is the
     realistic regression path — the trailing batch silently aborts unless
     initialise applies the per-batch heuristic."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
+    bf = _make_bf(
+        tmp_path,
+        [
             IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B', 'CPG_C', 'CPG_D', 'CPG_E']),
             IcaBatch(cohort_name='COH0001', batch_index=1, sg_names=['CPG_F']),
         ],
@@ -652,14 +494,7 @@ def test_successful_sg_names_excludes_cancelled_batches(tmp_path: Path):
     NOT appear in successful_sg_names(). Otherwise the orchestrator's
     resume-after-cancel guard fires for SGs that already succeeded —
     `failed_sg_names` already excludes CANCELLED for the symmetric reason."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A', 'CPG_B'])])
     bf.record_passfail(0, {'CPG_A': 'Success', 'CPG_B': 'Success'})
     bf.record_status(0, 'CANCELLED')
     assert bf.successful_sg_names() == []
@@ -672,14 +507,7 @@ def test_find_batch_for_sg_robust_to_out_of_order_storage(tmp_path: Path):
     and overwrote, which was correct only if batches were stored in
     ascending batch_index order. A future refactor or hand-edit could
     break that silently."""
-    path = tmp_path / 'COH0001_batches.json'
-    bf = BatchesFile(path=path)
-    bf.initialise(
-        batch_size=5,
-        batches=[
-            IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A']),
-        ],
-    )
+    bf = _make_bf(tmp_path, [IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])])
     # Simulate a corrupt/reordered file: prepend the retry batch.
     retry_entry = bf._new_batch_entry(
         IcaBatch(cohort_name='', batch_index=1, sg_names=['CPG_A']),

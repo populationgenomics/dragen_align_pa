@@ -1,6 +1,5 @@
 import json
 import os
-import subprocess
 from collections.abc import Callable
 from functools import partial
 from typing import Any
@@ -140,44 +139,39 @@ def _submit_mlr_run(
     sample_path = ica_run_path(cohort_name, user_reference, pipeline_id) / sg_name
     ica_base_folder = sample_path.as_folder()
 
-    try:
-        # --- 0. Authenticate against the DRAGEN project, where the CRAM/gVCF inputs live and
-        # are listed below; step 2 switches to the MLR project (same dataset family) to submit.
-        ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_ALIGN)
+    # --- 0. Authenticate against the DRAGEN project, where the CRAM/gVCF inputs live and
+    # are listed below; step 2 switches to the MLR project (same dataset family) to submit.
+    ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_ALIGN)
 
-        # --- 1. Find input file paths ---
-        cram_url, gvcf_url = _mlr_find_input_urls(ica_base_folder, sg_name)
+    # --- 1. Find input file paths ---
+    cram_url, gvcf_url = _mlr_find_input_urls(ica_base_folder, sg_name)
 
-        # --- 2. Switch the CLI to the MLR project to submit into (same family key, so this just
-        # re-enters as the MLR project) ---
-        ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_MLR)
-        # --- 3. Download MLR config JSON ---
-        local_config_path = _mlr_download_config(mlr_config_json, batch_tmpdir)
+    # --- 2. Switch the CLI to the MLR project to submit into (same family key, so this just
+    # re-enters as the MLR project) ---
+    ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_MLR)
+    # --- 3. Download MLR config JSON ---
+    local_config_path = _mlr_download_config(mlr_config_json, batch_tmpdir)
 
-        # --- 4. Build and run the popgen-cli command ---
-        output_folder_url = sample_path.as_url(ROLE_DRAGEN_ALIGN)
-        mlr_run_id = f'{sg_name}-mlr'
-        submit_command = _mlr_build_popgen_cli_command(
-            local_config_path=local_config_path,
-            output_analysis_json_folder=sg_name,
-            run_id=mlr_run_id,
-            sample_id=sg_name,
-            mlr_hash_table=mlr_hash_table,
-            output_folder_url=output_folder_url,
-            cram_url=cram_url,
-            gvcf_url=gvcf_url,
-        )
-        utils.run_subprocess_with_log(submit_command, 'Submit popgen-cli MLR')
+    # --- 4. Build and run the popgen-cli command ---
+    output_folder_url = sample_path.as_url(ROLE_DRAGEN_ALIGN)
+    mlr_run_id = f'{sg_name}-mlr'
+    submit_command = _mlr_build_popgen_cli_command(
+        local_config_path=local_config_path,
+        output_analysis_json_folder=sg_name,
+        run_id=mlr_run_id,
+        sample_id=sg_name,
+        mlr_hash_table=mlr_hash_table,
+        output_folder_url=output_folder_url,
+        cram_url=cram_url,
+        gvcf_url=gvcf_url,
+    )
+    utils.run_subprocess_with_log(submit_command, 'Submit popgen-cli MLR')
 
-        # --- 5. Read the pipeline ID from the output JSON ---
-        mlr_analysis_id = _mlr_parse_submission_output(sg_name, mlr_run_id)
+    # --- 5. Read the pipeline ID from the output JSON ---
+    mlr_analysis_id = _mlr_parse_submission_output(sg_name, mlr_run_id)
 
-        logger.info(f'MLR pipeline ID for {sg_name} is {mlr_analysis_id}')
-        return mlr_analysis_id
-
-    except (subprocess.CalledProcessError, FileNotFoundError, ValueError, json.JSONDecodeError) as e:
-        logger.error(f'Failed to submit MLR pipeline for {sg_name}: {e}')
-        raise
+    logger.info(f'MLR pipeline ID for {sg_name} is {mlr_analysis_id}')
+    return mlr_analysis_id
 
 
 def run(
@@ -215,8 +209,6 @@ def run(
         submit_function_factory=_create_submit_callable,
         allow_retry=False,
         sleep_time_seconds=330,
-        # Zero-tolerance (the loop default): any FAILED_FINAL aborts the cohort.
-        # The 5%-rate gate was removed branch-wide; MLR intentionally halts on a
-        # single unrecoverable failure rather than tolerating a fraction.
+        # Zero-tolerance (loop default): any FAILED_FINAL aborts the cohort (the 5%-rate gate was removed branch-wide).
         raise_on_failed_final=True,
     )

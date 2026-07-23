@@ -21,14 +21,10 @@ if TYPE_CHECKING:
 
 
 def _write_icav2_config() -> None:
-    """Write the icav2 CLI config (`~/.icav2/config.yaml`) for the configured dataset family.
-
-    Fetches and validates the key with the shared Python guard (`get_ica_api_key`, which raises
-    if the family's API-key field is missing or blank), then writes the key straight to the
-    config file. The key never enters a shell command string, so it cannot leak into the command
-    that `run_subprocess_with_log` logs — unlike fetching it via `gcloud | jq` inside the shell
-    (and `set +x` would not have hidden it from that Python-side log line).
-    """
+    """Write the icav2 CLI config (`~/.icav2/config.yaml`) for the configured dataset family."""
+    # Fetch/validate the key in Python (get_ica_api_key raises on a missing/blank field) and
+    # write it straight to the file — the key never enters a shell command string, so it can't
+    # leak into the command that `run_subprocess_with_log` logs.
     api_key = ica_api_utils.get_ica_api_key()
     config_dir = Path.home() / '.icav2'
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -37,9 +33,6 @@ def _write_icav2_config() -> None:
 
 def authenticate_ica_cli(role: str) -> None:
     """Configure the icav2 CLI for the configured family and enter `role`'s ICA project.
-
-    Writes the CLI config with the family's API key in Python (no `gcloud`/`jq` shell step, and
-    the key never touches a logged command), then enters the project registered for `role`.
 
     Args:
         role: The ICA role to enter (one of `constants_registry.REQUIRED_ICA_ROLES`).
@@ -115,8 +108,7 @@ def perform_upload_if_needed(cram_status: str | None, paths: dict[str, str], rol
     """Download a CRAM from GCS and upload it to ICA using the CLIs (used by upload_data_to_ica.py).
 
     Args:
-        cram_status: The CRAM's current ICA status; `AVAILABLE` means already uploaded, so the
-            upload is skipped.
+        cram_status: The CRAM's current ICA status; `AVAILABLE` skips the upload.
         paths: The GCS/local/ICA paths for the CRAM (keys `cram_name`, `local_cram_path`,
             `gcs_cram_path`, `ica_folder_path`).
         role: The ICA role to upload into (one of `constants_registry.REQUIRED_ICA_ROLES`).

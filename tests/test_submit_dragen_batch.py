@@ -53,6 +53,37 @@ def _patch_config(monkeypatch, fake) -> None:
     monkeypatch.setattr(utils, 'config_retrieve', fake)
 
 
+def _common_data_cfg(
+    *,
+    sequencing_type='genome',
+    coverage_region_beds=(),
+    cross_cont_vcf=None,
+    preset_additional_files=(),
+    user_additional_files=(),
+    extra=None,
+):
+    """Build the config dict the `_build_common_data_inputs` tests share.
+
+    Collapses the recurring six-key block (dragen_ht_id, per-seqtype
+    coverage_region_beds, cross_cont_vcf, sequencing_type, preset + user
+    additional_files). `extra` merges in the per-test tuple-keyed entries
+    (bed_names, cnv_normals_panel).
+    """
+    cfg: dict[tuple, object] = {
+        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
+        ('ica', 'qc', sequencing_type, 'coverage_region_beds'): list(coverage_region_beds),
+        ('ica', 'qc', 'cross_cont_vcf'): cross_cont_vcf,
+        ('workflow', 'sequencing_type'): sequencing_type,
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type, 'additional_files'): list(
+            preset_additional_files
+        ),
+        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): list(user_additional_files),
+    }
+    if extra:
+        cfg.update(extra)
+    return cfg
+
+
 def test_build_additional_args_genome(monkeypatch):
     monkeypatch.setattr(submit_dragen_batch, 'config_retrieve', _config_factory())
     result = submit_dragen_batch._build_additional_args()
@@ -201,21 +232,19 @@ def test_build_common_data_inputs_adds_bed_names_to_additional_files(monkeypatch
             'pon.bed': 'fil.pon',
         },
     )
-    cfg = {
-        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
-        ('ica', 'qc', 'exome', 'coverage_region_beds'): [],
-        ('ica', 'qc', 'cross_cont_vcf'): None,
-        ('workflow', 'sequencing_type'): 'exome',
+    cfg = _common_data_cfg(
+        sequencing_type='exome',
         # preset.additional_files lists an extra (e.g. PoN) not present in bed_names.
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'additional_files'): ['pon.bed'],
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
+        preset_additional_files=['pon.bed'],
         # Three entries, two distinct basenames -- dedupe should collapse.
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names'): {
-            'vc_target': 'covered.bed',
-            'cnv_target': 'regions.bed',
-            'sv_call_regions': 'regions.bed',
+        extra={
+            ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names'): {
+                'vc_target': 'covered.bed',
+                'cnv_target': 'regions.bed',
+                'sv_call_regions': 'regions.bed',
+            },
         },
-    }
+    )
     _patch_config(monkeypatch, lambda key, default=None: cfg.get(tuple(key), default))
     inputs = submit_dragen_batch._build_common_data_inputs()
     additional = [i for i in inputs if i['parameterCode'] == 'additional_files']
@@ -227,14 +256,7 @@ def test_build_common_data_inputs_adds_bed_names_to_additional_files(monkeypatch
 def test_build_common_data_inputs_resolves_user_additional_files(monkeypatch):
     """user.additional_files entries are also basenames that must resolve."""
     _stub_registry(monkeypatch, {'user_extra.bed': 'fil.user_extra'})
-    cfg = {
-        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
-        ('ica', 'qc', 'genome', 'coverage_region_beds'): [],
-        ('ica', 'qc', 'cross_cont_vcf'): None,
-        ('workflow', 'sequencing_type'): 'genome',
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): ['user_extra.bed'],
-    }
+    cfg = _common_data_cfg(user_additional_files=['user_extra.bed'])
     _patch_config(monkeypatch, lambda key, default=None: cfg.get(tuple(key), default))
     inputs = submit_dragen_batch._build_common_data_inputs()
     additional = [i for i in inputs if i['parameterCode'] == 'additional_files']
@@ -373,19 +395,8 @@ def test_build_common_data_inputs_rejects_too_many_coverage_beds(monkeypatch):
     Mock just enough config_retrieve to drive the validation path."""
     bed_names = [f'bed{i}.bed' for i in range(_MAX_COVERAGE_REGION_BEDS + 1)]
     _stub_registry(monkeypatch, {name: f'fil.{i:07d}' for i, name in enumerate(bed_names)})
-    cfg = {
-        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
-        ('ica', 'qc', 'genome', 'coverage_region_beds'): bed_names,
-        ('ica', 'qc', 'cross_cont_vcf'): None,
-        ('workflow', 'sequencing_type'): 'genome',
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
-    }
-    monkeypatch.setattr(
-        submit_dragen_batch,
-        'config_retrieve',
-        lambda key, default=None: cfg.get(tuple(key), default),
-    )
+    cfg = _common_data_cfg(coverage_region_beds=bed_names)
+    _patch_config(monkeypatch, lambda key, default=None: cfg.get(tuple(key), default))
     with pytest.raises(ValueError, match='coverage_region_beds'):
         submit_dragen_batch._build_common_data_inputs()
 
@@ -397,19 +408,8 @@ def test_build_common_data_inputs_accepts_max_coverage_beds(monkeypatch):
     bed_names = [f'bed{i}.bed' for i in range(_MAX_COVERAGE_REGION_BEDS)]
     registry = {name: f'fil.{i:07d}' for i, name in enumerate(bed_names)}
     _stub_registry(monkeypatch, registry)
-    cfg = {
-        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
-        ('ica', 'qc', 'genome', 'coverage_region_beds'): bed_names,
-        ('ica', 'qc', 'cross_cont_vcf'): None,
-        ('workflow', 'sequencing_type'): 'genome',
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
-    }
-    monkeypatch.setattr(
-        submit_dragen_batch,
-        'config_retrieve',
-        lambda key, default=None: cfg.get(tuple(key), default),
-    )
+    cfg = _common_data_cfg(coverage_region_beds=bed_names)
+    _patch_config(monkeypatch, lambda key, default=None: cfg.get(tuple(key), default))
     inputs = submit_dragen_batch._build_common_data_inputs()
     coverage_inputs = [i for i in inputs if i['parameterCode'] == 'qc_coverage_region_beds']
     assert len(coverage_inputs) == 1
@@ -421,19 +421,8 @@ def test_build_common_data_inputs_rejects_unregistered_bed_name(monkeypatch):
     """A typo or unstaged BED in coverage_region_beds must fail fast at
     submitter startup, not surface mid-run as an opaque ICA error."""
     _stub_registry(monkeypatch, {'registered.bed': 'fil.0000001'})
-    cfg = {
-        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
-        ('ica', 'qc', 'genome', 'coverage_region_beds'): ['registered.bed', 'typo_or_missing.bed'],
-        ('ica', 'qc', 'cross_cont_vcf'): None,
-        ('workflow', 'sequencing_type'): 'genome',
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
-    }
-    monkeypatch.setattr(
-        submit_dragen_batch,
-        'config_retrieve',
-        lambda key, default=None: cfg.get(tuple(key), default),
-    )
+    cfg = _common_data_cfg(coverage_region_beds=['registered.bed', 'typo_or_missing.bed'])
+    _patch_config(monkeypatch, lambda key, default=None: cfg.get(tuple(key), default))
     with pytest.raises(KeyError, match=r'typo_or_missing\.bed'):
         submit_dragen_batch._build_common_data_inputs()
 
@@ -443,19 +432,8 @@ def test_build_common_data_inputs_resolves_cross_cont_vcf_basename(monkeypatch):
     the qc_cross_cont_vcf data input must carry the resolved fil.… ID, not the
     basename from config."""
     _stub_registry(monkeypatch, {'SNP_NCBI_GRCh38.vcf': 'fil.crosscont'})
-    cfg = {
-        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
-        ('ica', 'qc', 'genome', 'coverage_region_beds'): [],
-        ('ica', 'qc', 'cross_cont_vcf'): 'SNP_NCBI_GRCh38.vcf',
-        ('workflow', 'sequencing_type'): 'genome',
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
-    }
-    monkeypatch.setattr(
-        submit_dragen_batch,
-        'config_retrieve',
-        lambda key, default=None: cfg.get(tuple(key), default),
-    )
+    cfg = _common_data_cfg(cross_cont_vcf='SNP_NCBI_GRCh38.vcf')
+    _patch_config(monkeypatch, lambda key, default=None: cfg.get(tuple(key), default))
     inputs = submit_dragen_batch._build_common_data_inputs()
     cross_cont = [i for i in inputs if i['parameterCode'] == 'qc_cross_cont_vcf']
     assert len(cross_cont) == 1
@@ -465,19 +443,8 @@ def test_build_common_data_inputs_resolves_cross_cont_vcf_basename(monkeypatch):
 def test_build_common_data_inputs_rejects_unregistered_cross_cont_vcf(monkeypatch):
     """A typo or unstaged cross_cont_vcf must fail fast at submitter startup."""
     _stub_registry(monkeypatch, {'SNP_NCBI_GRCh38.vcf': 'fil.crosscont'})
-    cfg = {
-        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
-        ('ica', 'qc', 'genome', 'coverage_region_beds'): [],
-        ('ica', 'qc', 'cross_cont_vcf'): 'typo.vcf',
-        ('workflow', 'sequencing_type'): 'genome',
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'genome', 'additional_files'): [],
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
-    }
-    monkeypatch.setattr(
-        submit_dragen_batch,
-        'config_retrieve',
-        lambda key, default=None: cfg.get(tuple(key), default),
-    )
+    cfg = _common_data_cfg(cross_cont_vcf='typo.vcf')
+    _patch_config(monkeypatch, lambda key, default=None: cfg.get(tuple(key), default))
     with pytest.raises(KeyError, match=r'typo\.vcf'):
         submit_dragen_batch._build_common_data_inputs()
 
@@ -637,20 +604,17 @@ def test_build_common_data_inputs_adds_cnv_panel_file_ids(monkeypatch):
     """A configured exome panel contributes all its count + list file IDs as inputs."""
     _stub_registry(monkeypatch, {'x.bed': 'fil.x'})
     _stub_pon_registry(monkeypatch, _PANEL_X)
-    cfg = {
-        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
-        ('ica', 'qc', 'exome', 'coverage_region_beds'): [],
-        ('ica', 'qc', 'cross_cont_vcf'): None,
-        ('workflow', 'sequencing_type'): 'exome',
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'additional_files'): [],
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'): [],
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'cnv_normals_panel'): 'panel-x',
-        ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names'): {
-            'vc_target': 'x.bed',
-            'cnv_target': 'x.bed',
-            'sv_call_regions': 'x.bed',
+    cfg = _common_data_cfg(
+        sequencing_type='exome',
+        extra={
+            ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'cnv_normals_panel'): 'panel-x',
+            ('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names'): {
+                'vc_target': 'x.bed',
+                'cnv_target': 'x.bed',
+                'sv_call_regions': 'x.bed',
+            },
         },
-    }
+    )
     _patch_config(monkeypatch, lambda key, default=None: cfg.get(tuple(key), default))
     inputs = submit_dragen_batch._build_common_data_inputs()
     additional = [i for i in inputs if i['parameterCode'] == 'additional_files']

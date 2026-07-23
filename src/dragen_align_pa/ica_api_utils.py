@@ -1,14 +1,12 @@
-"""
-This module centralises all direct interactions with the Illumina Connected
-Analytics (ICA) Python SDK. It handles authentication and provides thin
-wrappers around specific API endpoints.
+"""Direct interactions with the Illumina Connected Analytics (ICA) Python SDK: authentication
+and thin wrappers around specific API endpoints.
 
-Adding an ICA job? Open the client with `ica_project_data_api(role)` (or
-`ica_project_analysis_api(role)`), passing a `ROLE_*` constant from `constants_registry` — never
-a project name or a raw `config_retrieve(['ica', 'projects', ...])` — and use the yielded
-`(api_instance, path_params)`. Drop to the lower-level `ica_project_session` only when one client
-must back more than one `…Api` class (see `submit_dragen_batch`). Use the icav2 CLI
-(`ica_cli_utils.authenticate_ica_cli(role)`) only where the SDK can't reach — uploads / popgen-cli.
+Open a client with `ica_project_data_api(role)` / `ica_project_analysis_api(role)`, passing a
+`ROLE_*` constant from `constants_registry` (never a project name or raw
+`config_retrieve(['ica', 'projects', ...])`), and use the yielded `(api_instance, path_params)`.
+Drop to the lower-level `ica_project_session` only when one client must back more than one `…Api`
+class (see `submit_dragen_batch`). Use the icav2 CLI (`ica_cli_utils.authenticate_ica_cli(role)`)
+only where the SDK can't reach — uploads / popgen-cli.
 """
 
 import contextlib
@@ -93,6 +91,8 @@ def _secret_client() -> secretmanager.SecretManagerServiceClient:
     return secretmanager.SecretManagerServiceClient()
 
 
+# lru_cache: the secret payload is stable for a run, so only the first call hits Secret
+# Manager — a later transient 504 can't tear down a long-running monitor job.
 @functools.lru_cache(maxsize=1)
 @retry(
     retry=retry_if_exception_type(_TRANSIENT_SECRET_MANAGER_EXCEPTIONS),
@@ -103,17 +103,8 @@ def _secret_client() -> secretmanager.SecretManagerServiceClient:
 def _fetch_ica_secrets() -> dict[str, str]:
     """Fetch and parse the `illumina_cpg_workbench_api` secret payload (raw, unvalidated).
 
-    Cached for the lifetime of the process (the secret payload doesn't
-    change during a run). The previous behaviour fetched fresh on every
-    monitor-loop poll and every batch submission, which meant a single
-    transient Secret Manager 504 could tear down a long-running monitor
-    job. With the cache, only the very first call hits Secret Manager; all
-    subsequent calls return the cached dict without an RPC.
-
-    Retries transient Secret Manager failures (DeadlineExceeded /
-    ServiceUnavailable) with exponential backoff before giving up. Other
-    error classes (e.g. PermissionDenied, NotFound) propagate immediately
-    — they indicate IAM / config problems that retrying won't fix.
+    Retries transient Secret Manager failures (DeadlineExceeded / ServiceUnavailable) with
+    exponential backoff; other errors (e.g. PermissionDenied, NotFound) propagate.
 
     Returns:
         The secret payload: `projectID` plus one API-key field per dataset (e.g. `apiKey`,
@@ -133,11 +124,6 @@ def _fetch_ica_secrets() -> dict[str, str]:
 
 def get_ica_api_key() -> str:
     """Return the ICA API key for the configured dataset family, validated non-empty.
-
-    Fetches the process-cached payload (`_fetch_ica_secrets`), selects the family's key field
-    once (`ica_api_key_field`), and checks it is present and non-empty. A missing or blank key
-    fails here — with the field named — instead of as a bare `KeyError` at a client call site
-    (or an `x-api-key: null` written by the CLI).
 
     Returns:
         The API key.
@@ -160,12 +146,10 @@ def get_ica_api_key() -> str:
 
 @contextlib.contextmanager
 def get_ica_api_client() -> Generator[ApiClient]:
-    """Provide a context-managed icasdk.ApiClient for the configured dataset family.
+    """Provide a context-managed icasdk.ApiClient authenticated with the configured family's key.
 
-    Handles fetching the key, configuring, and closing the client. The API key is the
-    configured family's (`get_ica_api_key`), so a client is never authenticated with another
-    dataset's key. The client is not scoped to one ICA project — the project is named per
-    request via `path_params['projectId']` (see `ica_project_session`).
+    The client is not scoped to one ICA project — the project is named per request via
+    `path_params['projectId']` (see `ica_project_session`).
 
     Yields:
         A configured `ApiClient`.
@@ -188,11 +172,9 @@ def get_ica_api_client() -> Generator[ApiClient]:
 def ica_project_session(role: str) -> Generator[tuple[ApiClient, dict[str, str]]]:
     """Open an ICA client for the configured family and yield it with `role`'s REST path params.
 
-    Collapses the repeated "resolve project name → project id → open client" sequence at job
-    call sites into one step, and keeps the client paired with the right project: the yielded
-    `path_params` carries the `projectId` for `role`, resolved from the same configured family
-    the client authenticates against. Wrap the yielded client with whichever `…Api` class the
-    caller needs (data vs analysis).
+    The yielded `path_params` carries the `projectId` for `role`, resolved from the same
+    configured family the client authenticates against. Wrap the yielded client with whichever
+    `…Api` class the caller needs (data vs analysis).
 
     Args:
         role: One of `constants_registry.REQUIRED_ICA_ROLES`.
@@ -211,9 +193,6 @@ def ica_project_session(role: str) -> Generator[tuple[ApiClient, dict[str, str]]
 @contextlib.contextmanager
 def ica_project_data_api(role: str) -> Generator[tuple[project_data_api.ProjectDataApi, dict[str, str]]]:
     """`ica_project_session` for the data API: yield `(ProjectDataApi, path_params)` for `role`.
-
-    The common case — a job needs the project-data endpoints plus the role's `path_params`. Use
-    `ica_project_session` directly only when a single client must back more than one `…Api` class.
 
     Args:
         role: One of `constants_registry.REQUIRED_ICA_ROLES`.
@@ -243,23 +222,14 @@ def ica_project_analysis_api(role: str) -> Generator[tuple[project_analysis_api.
 
 
 def _is_retryable_ica_error(exc: BaseException, retryable_statuses: frozenset[int]) -> bool:
-    """Tenacity predicate: True for a transient ICA error whose status is retryable.
-
-    Args:
-        exc: The exception raised by the wrapped ICA call.
-        retryable_statuses: The HTTP statuses treated as transient for this call.
-    """
+    """Tenacity predicate: True for a transient ICA error whose status is retryable."""
     # ApiException is a single class carrying `.status`, so match on status rather
     # than exception type.
     return isinstance(exc, ApiException) and exc.status in retryable_statuses  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def _log_ica_retry(retry_state: RetryCallState) -> None:
-    """tenacity ``before_sleep`` hook: log every scheduled transient-error retry.
-
-    Fires only when a retry is actually scheduled (a retryable error with retry
-    attempts remaining).
-    """
+    """tenacity ``before_sleep`` hook: log every scheduled transient-error retry."""
     exc = retry_state.outcome.exception() if retry_state.outcome else None
     status = getattr(exc, 'status', '?')
     fn_name = getattr(retry_state.fn, '__name__', repr(retry_state.fn))
@@ -272,34 +242,27 @@ def _log_ica_retry(retry_state: RetryCallState) -> None:
 def _ica_retrying(retryable_statuses: frozenset[int] = _RETRYABLE_ICA_STATUSES) -> Retrying:
     """Build the shared tenacity controller for transient ICA errors.
 
-    Read at call time (not at import) so the retry count can be tuned via
-    `[ica.retry] max_retries` in config without rebuilding the image, and to
-    avoid an import-time config_retrieve (config is not loaded when this module
-    is first imported).
-
-    `max_retries` is retries *after* the initial attempt, so total attempts is
-    `max_retries + 1`. Defaults to 10 retries.
-
     Args:
         retryable_statuses: The HTTP statuses treated as transient. Defaults to
             `_RETRYABLE_ICA_STATUSES` (429/503); create-data passes the wider
             `_RETRYABLE_ICA_CREATE_STATUSES` (adds 409).
     """
+    # `max_retries` is read at call time (not import) so it can be tuned via config without a
+    # rebuild, and to avoid an import-time config_retrieve. It counts retries *after* the
+    # initial attempt (total attempts = max_retries + 1), defaulting to 10.
     max_retries = int(
         config_retrieve(['ica', 'retry', 'max_retries'], default=_DEFAULT_ICA_MAX_RETRIES),
     )
     return Retrying(
         retry=retry_if_exception(lambda exc: _is_retryable_ica_error(exc, retryable_statuses)),
         stop=stop_after_attempt(max_retries + 1),
-        # wait_random_exponential gives a fully-randomised exponential backoff
-        # (each wait is random in [0, min(2^attempt, max)]), which desynchronises
-        # concurrent retries against a shared rate limit — non-negotiable at
-        # 16-wide fan-out, where lockstep backoff is a self-inflicted second
-        # wave. The additive wait_fixed(2) is a hard 2s floor: wait_random_exponential
-        # can otherwise pick a near-zero first wait, letting a worker hammer ICA
-        # instantly after a 429. NB: worst-case backoff scales with max_retries
-        # (~32s per retry at the cap), so a large max_retries can exceed a tight
-        # polling cycle (e.g. MLR's 330s) — tune both together.
+        # Fully-randomised exponential backoff desynchronises concurrent retries against a
+        # shared rate limit (non-negotiable at 16-wide fan-out, where lockstep backoff is a
+        # self-inflicted second wave). The additive wait_fixed(2) is a hard 2s floor:
+        # wait_random_exponential can otherwise pick a near-zero first wait, letting a worker
+        # hammer ICA instantly after a 429. NB worst-case backoff scales with max_retries
+        # (~32s/retry at the cap), so a large max_retries can exceed a tight polling cycle
+        # (e.g. MLR's 330s) — tune both together.
         wait=wait_random_exponential(multiplier=1, min=2, max=30) + wait_fixed(2),
         before_sleep=_log_ica_retry,
         reraise=True,
@@ -309,16 +272,12 @@ def _ica_retrying(retryable_statuses: frozenset[int] = _RETRYABLE_ICA_STATUSES) 
 def ica_retry(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
     """Invoke a single ICA SDK call with transient-error retry.
 
-    Wraps `fn(*args, **kwargs)` in the shared jittered-backoff controller (see
-    `_ica_retrying`). Only the transient statuses in `_RETRYABLE_ICA_STATUSES`
-    (429 rate-limit, 503 backend-unavailable) are retried; every other error
-    propagates on the first occurrence. The controller is rebuilt per call so
-    `[ica.retry] max_retries` is read from config at call time.
-
-    Wrap only the SDK call itself, inside any existing try/except, so the
-    caller's error logging still fires on the *final* failure while
-    `_log_ica_retry` reports each intermediate retry.
+    Wraps `fn(*args, **kwargs)` in the shared jittered-backoff controller (`_ica_retrying`).
+    Only `_RETRYABLE_ICA_STATUSES` (429 rate-limit, 503 backend-unavailable) are retried; every
+    other error propagates on the first occurrence.
     """
+    # Wrap only the SDK call itself, inside any existing try/except, so the caller's error
+    # logging still fires on the final failure while `_log_ica_retry` reports each retry.
     return _ica_retrying()(fn, *args, **kwargs)
 
 
@@ -329,14 +288,6 @@ def ica_retry_create(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
     """Invoke a create-data ICA SDK call with transient-error retry, including 409.
 
     Retries the wider `_RETRYABLE_ICA_CREATE_STATUSES` (429/503 plus 409).
-
-    Args:
-        fn: The ICA SDK create-data call to invoke.
-        *args: Positional arguments forwarded to `fn`.
-        **kwargs: Keyword arguments forwarded to `fn`.
-
-    Returns:
-        The result of `fn(*args, **kwargs)`.
     """
     return _ica_retrying(_RETRYABLE_ICA_CREATE_STATUSES)(fn, *args, **kwargs)
 
@@ -345,14 +296,6 @@ def _call_without_retry(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> 
     """Invoke an ICA SDK call once, with no retry.
 
     Signature-compatible with `ica_retry` so a caller can select between them.
-
-    Args:
-        fn: The ICA SDK call to invoke.
-        *args: Positional arguments forwarded to `fn`.
-        **kwargs: Keyword arguments forwarded to `fn`.
-
-    Returns:
-        The result of `fn(*args, **kwargs)`.
     """
     return fn(*args, **kwargs)
 
@@ -361,22 +304,21 @@ def check_ica_pipeline_status(
     api_instance: project_analysis_api.ProjectAnalysisApi,
     path_params: dict[str, str],
 ) -> str:
-    """Check the status of an ICA pipeline via a pipeline ID
+    """Check the status of an ICA pipeline via a pipeline ID.
 
-    Transient ICA errors (`_RETRYABLE_ICA_STATUSES`: 429/503) are retried with
-    jittered exponential backoff (see `ica_retry`); other errors propagate on the
-    first occurrence.
+    Transient ICA errors (429/503) are retried via `ica_retry`; other errors propagate.
 
     Args:
-        api_instance (project_analysis_api.ProjectAnalysisApi): An instance of the ProjectAnalysisApi
-        path_params (dict[str, str]): Dict with projectId and analysisId
+        api_instance: An instance of the ProjectAnalysisApi.
+        path_params: Dict with projectId and analysisId.
 
     Raises:
-        icasdk.ApiException: Any exception if the API call is incorrect
+        icasdk.ApiException: If the API call fails.
 
     Returns:
-        str: The status of the pipeline. Can be one of ['REQUESTED', 'AWAITINGINPUT', 'INPROGRESS', 'SUCCEEDED', 'FAILED', 'FAILEDFINAL', 'ABORTED']
-    """  # noqa: E501
+        The pipeline status, one of ['REQUESTED', 'AWAITINGINPUT', 'INPROGRESS', 'SUCCEEDED',
+        'FAILED', 'FAILEDFINAL', 'ABORTED'].
+    """
     try:
         api_response = ica_retry(api_instance.get_analysis, path_params=path_params)  # type: ignore[ReportUnknownVariableType]
         pipeline_status: str = api_response.body['status']  # type: ignore[ReportUnknownVariableType]
@@ -400,21 +342,21 @@ def check_object_already_exists(
     """Check if an object already exists in ICA.
 
     Args:
-        api_instance (project_data_api.ProjectDataApi): An instance of the ProjectDataApi
-        path_params (dict[str, str]): A dict with the projectId
-        file_name (str): The name of the object that you want to check in ICA e.g.
-        folder_path (str): The path to the object that you want to create in ICA.
-        object_type (str): The type of the object to create in ICA. Must be one of ['FILE', 'FOLDER']
-        retry (bool): Retry transient errors (429/503) via `ica_retry`. Pass False
-            when the caller already wraps this in a retry boundary (e.g.
-            `create_upload_object_id`) to avoid a multiplicative retry budget.
+        api_instance: An instance of the ProjectDataApi.
+        path_params: A dict with the projectId.
+        file_name: The name of the object to check in ICA.
+        folder_path: The path to the object in ICA.
+        object_type: The type of the object. Must be one of ['FILE', 'FOLDER'].
+        retry: Retry transient errors (429/503) via `ica_retry`. Pass False when the caller
+            already wraps this in a retry boundary (e.g. `create_upload_object_id`) to avoid a
+            multiplicative retry budget.
 
     Raises:
-        NotImplementedError: Only checks for files with the status 'PARTIAL' or 'AVAILABLE'
-        icasdk.ApiException: Other API errors
+        NotImplementedError: For a file with a status other than 'PARTIAL' or 'AVAILABLE'.
+        icasdk.ApiException: Other API errors.
 
     Returns:
-        tuple[str, str] | None: (object_ID, object_status) if it exists, or else None
+        (object_ID, object_status) if it exists, else None.
     """
     query_params: dict[str, Sequence[str] | list[str] | str] = {
         'filePath': [IcaPath.from_relpath(folder_path).as_file(file_name)],
@@ -427,9 +369,8 @@ def check_object_already_exists(
             'filenameMatchMode': 'EXACT',
         } | query_params
     try:
-        # When retry=False the caller owns the retry boundary; call the SDK
-        # directly so transient errors surface to that single boundary rather than
-        # being retried here as well.
+        # retry=False: the caller owns the retry boundary, so call the SDK directly rather than
+        # retrying here as well.
         list_data = ica_retry if retry else _call_without_retry
         api_response = list_data(
             api_instance.get_project_data_list,  # type: ignore[ReportUnknownVariableType]
@@ -444,11 +385,9 @@ def check_object_already_exists(
         object_id = object_data['id']  # pyright: ignore[reportUnknownVariableType]
         status: str = object_data['details'].get('status', 'UNKNOWN')  # pyright: ignore[reportUnknownVariableType]
 
-        # This is a faithful query: report the folder id and whatever status ICA
-        # holds, including a transitional one such as DELETING or ARCHIVED. The
-        # policy of whether such a folder is safe to reuse belongs to the caller —
-        # `prepare_ica_for_analysis.run` owns it for the cohort folder and fails
-        # loud there with an actionable message.
+        # Faithful query: report the folder id and whatever status ICA holds, including a
+        # transitional one (DELETING / ARCHIVED). Whether such a folder is safe to reuse is the
+        # caller's policy — `prepare_ica_for_analysis.run` owns it and fails loud there.
         if object_type == 'FOLDER':
             return object_id, status
 
@@ -551,9 +490,7 @@ def submit_nextflow_analysis(
     body: CreateNextflowAnalysis,
     header_params: dict[str, Any] | None = None,
 ) -> str:
-    """
-    Submits a Nextflow analysis to ICA and returns the analysis ID.
-    Centralizes the try/except logic for pipeline submission.
+    """Submit a Nextflow analysis to ICA and return the analysis ID.
 
     Args:
         api_instance: An instance of the ProjectAnalysisApi.
@@ -565,7 +502,7 @@ def submit_nextflow_analysis(
         icasdk.ApiException: If the API call fails.
 
     Returns:
-        str: The analysis ID of the submitted pipeline.
+        The analysis ID of the submitted pipeline.
     """
     if header_params is None:
         header_params = {}

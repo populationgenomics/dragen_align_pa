@@ -15,6 +15,7 @@ from dragen_align_pa.validator import (
     assert_cohort_design_matches_configured_bed,
     assert_ica_project_root_resolves,
 )
+from tests._config_helpers import _config_factory
 
 
 @dataclass
@@ -79,17 +80,6 @@ def test_resolve_design_unmapped_value_raises():
 
 
 # ----- assert_cohort_design_matches_configured_bed -----
-
-
-def _config_factory(sequencing_type='exome', bed_names=None):
-    cfg: dict[tuple[str, ...], object] = {('workflow', 'sequencing_type'): sequencing_type}
-    if bed_names is not None:
-        cfg[('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names')] = bed_names
-
-    def fake_retrieve(key, default=None):
-        return cfg.get(tuple(key), default)
-
-    return fake_retrieve
 
 
 def _patch_config(monkeypatch, factory) -> None:

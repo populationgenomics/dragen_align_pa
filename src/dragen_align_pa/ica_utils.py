@@ -28,60 +28,34 @@ if TYPE_CHECKING:
 
 
 # --- ICA folder builders --------------------------------------------------------------
-# These return a composable `IcaPath`; the caller picks the terminal form (`.as_folder()`
-# for a REST folder string, `.as_url(role)` for an `ica://` URL, or append `/ segment`
-# first). Keeping them `IcaPath`-returning — rather than str-returning wrappers — means the
-# run-folder layout is defined once and the terminal-form choice stays explicit at the call
-# site. The one exception is `get_ica_sample_folder`, which has real behaviour (reads and
-# validates the per-SG state file), so it returns the finished folder string directly.
+# These return a composable `IcaPath`; the caller picks the terminal form (`.as_folder()`,
+# `.as_url(role)`, or append `/ segment` first). Returning `IcaPath` — not str — keeps the
+# run-folder layout defined once with the terminal-form choice explicit at the call site.
+# `get_ica_sample_folder` is the exception: it has real behaviour (reads/validates the per-SG
+# state file), so it returns the finished folder string directly.
 
 
 def ica_cohort_path(cohort_name: str) -> IcaPath:
-    """`IcaPath` for one cohort's ICA output folder: `{output_root}/{cohort}`.
-
-    Args:
-        cohort_name: Cohort whose output folder is wanted.
-
-    Returns:
-        A composable `IcaPath` at `{output_root}/{cohort_name}`.
-    """
+    """`IcaPath` for one cohort's ICA output folder: `{output_root}/{cohort}`."""
     return IcaPath.output_root() / cohort_name
 
 
 def ica_run_path(cohort_name: str, user_reference: str, pipeline_id: str) -> IcaPath:
-    """`IcaPath` for one batch's ICA analysis-run folder.
+    """`IcaPath` for one batch's run folder `{output_root}/{cohort}/{user_reference}-{pipeline_id}`.
 
-    Layout: `{output_root}/{cohort}/{user_reference}-{pipeline_id}` — the single definition
-    of the run-folder layout, so the folder, per-SG, and `ica://` URL forms all derive from
-    it and stay in lockstep. `user_reference` ends in `_`, so the hyphen yields a
-    `…_-{pipeline_id}` folder name.
-
-    Args:
-        cohort_name: Cohort the batch belongs to.
-        user_reference: The batch's ICA user reference.
-        pipeline_id: The ICA pipeline/analysis ID for the run.
-
-    Returns:
-        A composable `IcaPath`; append `/ sg_name` for a per-SG folder, or call
-        `.as_folder()` / `.as_url(role)` for a terminal string.
+    The single definition of the run-folder layout, so the folder, per-SG, and `ica://` URL
+    forms all derive from it. `user_reference` ends in `_`, so the hyphen yields a
+    `…_-{pipeline_id}` folder name. Append `/ sg_name` for a per-SG folder.
     """
     return ica_cohort_path(cohort_name) / f'{user_reference}-{pipeline_id}'
 
 
 def ica_md5_run_path(cohort_name: str, ar_guid: str, pipeline_id: str) -> IcaPath:
-    """`IcaPath` for the (unbatched) MD5 pipeline's analysis-run folder.
+    """`IcaPath` for the (unbatched) MD5 run folder `{output_root}/{cohort}/{cohort}_{ar_guid}-{pipeline_id}`.
 
-    Distinct from `ica_run_path`: the MD5 pipeline processes all of a cohort's SGs in a
-    single pass, so its run folder has no batch segment and keys on `{cohort}_{ar_guid}`
-    rather than a DRAGEN batch's `user_reference`.
-
-    Args:
-        cohort_name: Cohort the MD5 run belongs to.
-        ar_guid: The analysis-runner GUID identifying the run.
-        pipeline_id: The ICA pipeline/analysis ID for the run.
-
-    Returns:
-        A composable `IcaPath` at `{output_root}/{cohort}/{cohort}_{ar_guid}-{pipeline_id}`.
+    Distinct from `ica_run_path`: the MD5 pipeline processes all of a cohort's SGs in a single
+    pass, so its run folder has no batch segment and keys on `{cohort}_{ar_guid}` rather than a
+    DRAGEN batch's `user_reference`.
     """
     return ica_cohort_path(cohort_name) / f'{cohort_name}_{ar_guid}-{pipeline_id}'
 
@@ -95,10 +69,8 @@ def get_ica_sample_folder(
 
     Reads `user_reference` and `pipeline_id` from the per-SG state file, then composes the
     per-SG run folder. A schema-mismatched or missing-key state file raises here rather than
-    downstream — operators can recover by rerunning with `force_resubmit=true` or deleting
-    the offending per-SG file so the next resume reads from `{cohort}_batches.json` (the
-    authoritative source). The helper has no awareness of CANCELLED batches; the
-    orchestrator's resume-after-cancel guard halts the cohort before any Download stage runs.
+    downstream, so operators can recover by rerunning with `force_resubmit=true` or deleting
+    the offending per-SG file.
 
     Args:
         pipeline_id_arguid_path: Path to the SG's per-SG state file.
@@ -129,23 +101,21 @@ def create_upload_object_id(
     folder_path: str,
     object_type: str,
 ) -> tuple[str, str]:
-    """Create an object in ICA that can be used to upload data to,
-    or to write analysis outputs into
+    """Create an object in ICA to upload data to, or to write analysis outputs into.
 
     Args:
-        api_instance (project_data_api.ProjectDataApi): An instance of the ProjectDataApi
-        path_params (dict[str, str]): A dict with the projectId
-        folder_name (str): Name used when creating a FOLDER object (ignored for FILE)
-        file_name (str): The name of the file to upload e.g. CPGxxxx.CRAM
-        folder_path (str): The base path to the object in ICA to create
-        object_type (str): The type of the object to create. Must be one of ['FILE', 'FOLDER']
+        api_instance: An instance of the ProjectDataApi.
+        path_params: A dict with the projectId.
+        folder_name: Name used when creating a FOLDER object (ignored for FILE).
+        file_name: The name of the file to upload e.g. CPGxxxx.CRAM.
+        folder_path: The base path to the object in ICA to create.
+        object_type: The type of the object to create. Must be one of ['FILE', 'FOLDER'].
 
     Raises:
-        icasdk.ApiException: Any API error
+        icasdk.ApiException: Any API error.
 
     Returns:
-        tuple[str, str]: (object_ID, status)
-        Status will be from ICA, e.g. 'AVAILABLE', 'PARTIAL'.
+        (object_ID, status), where status is from ICA, e.g. 'AVAILABLE', 'PARTIAL'.
     """
     # Normalise to a single leading + trailing slash so the existence check and
     # CreateData below don't produce a double slash when a caller passes a
@@ -158,13 +128,12 @@ def create_upload_object_id(
         body = CreateData(name=folder_name, folderPath=folder_path, dataType=object_type)
 
     def _find_or_create() -> tuple[str, str]:
-        # The existence check sits inside the retry boundary: create_data_in_project
-        # is not idempotent, and its 409 (ICA_DATA_105) is a retryable conflict, so a
-        # retry must re-check first — if the conflicting write already landed the
-        # object, we return it instead of minting a duplicate.
-        # retry=False: the outer `ica_retry_create` already retries 429/503 for this
-        # whole callable, so letting the check retry too would multiply the budget
-        # (~11x11 attempts, ~1h) instead of the intended single ~11-attempt boundary.
+        # The existence check sits inside the retry boundary: create_data_in_project is not
+        # idempotent, and its 409 (ICA_DATA_105) is a retryable conflict, so a retry re-checks
+        # first and returns the already-landed object instead of minting a duplicate.
+        # retry=False: the outer `ica_retry_create` already retries 429/503 for this whole
+        # callable; letting the check retry too would square the budget (~11x11) rather than
+        # the intended single ~11-attempt boundary.
         existing_object_details = ica_api_utils.check_object_already_exists(
             api_instance=api_instance,
             path_params=path_params,
@@ -243,18 +212,10 @@ def batch_create_download_urls(
 ) -> dict[str, str]:
     """Mint pre-signed download URLs for many files in ONE ICA API call.
 
-    Uses the batch `:createDownloadUrls` endpoint instead of one
-    `:createDownloadUrl` POST per file, collapsing the per-file rate-limited
-    call volume — the dominant 429 source when a folder has many outputs —
-    from N to 1. (A pre-signed URL is per-object, so this returns N URLs in
-    one response, not a single folder URL.)
-
-    Returns a `{dataId: url}` map; the response is keyed by `dataId` so callers
-    match URLs back to the file IDs they already hold. An empty `file_ids`
-    short-circuits without an API call.
-
-    Goes through `ica_retry`, so a transient 429/503 on the batch mint is
-    absorbed like every other data-plane call.
+    Uses the batch `:createDownloadUrls` endpoint instead of one `:createDownloadUrl` POST per
+    file, collapsing per-file call volume (the dominant 429 source) from N to 1. Returns a
+    `{dataId: url}` map so callers match URLs back to the file IDs they hold. An empty
+    `file_ids` short-circuits without an API call. Goes through `ica_retry`.
     """
     if not file_ids:
         return {}
@@ -363,25 +324,18 @@ def list_ica_files(
     *,
     recursive: bool = False,
 ) -> list[tuple[str, str]]:
-    """List files under an ICA folder. Pagination is handled internally.
+    """List files under an ICA folder, returning ``(name_or_relative_path, file_id)`` tuples.
 
-    Returns ``(name_or_relative_path, file_id)`` tuples.
+    Pagination is handled internally. With ``recursive=False`` (default), lists only files
+    directly inside ``base_ica_folder_path`` and the first tuple element is the leaf file name.
+    With ``recursive=True``, walks subfolders and returns relative paths (e.g.
+    ``'report_files/samples/foo.csv'``) suitable to pass directly to ``stream_ica_file_to_gcs``
+    as ``file_name`` so the GCS object key preserves the nested layout. No extension filtering —
+    callers compose any filter they need.
 
-    With ``recursive=False`` (default), lists only files directly inside
-    ``base_ica_folder_path``; the first tuple element is the leaf file
-    name. With ``recursive=True``, walks subfolders and returns relative
-    paths (e.g. ``'report_files/samples/foo.csv'``) — pass the relative
-    path directly to ``stream_ica_file_to_gcs`` as ``file_name`` and the
-    GCS object key preserves the nested layout.
-
-    No extension filtering — callers compose any filter they need (e.g.
-    ``[(n, f) for n, f in list_ica_files(...) if not n.endswith(...)]``).
-
-    Folder traversal uses separate ``type=FOLDER`` queries — the ICA SDK's
-    ``get_project_data_list`` does not expose a recursive flag. The walk
-    is not transactional: if a subfolder query fails after some files
-    have been collected, those collected entries are discarded and the
-    ``icasdk.ApiException`` propagates. Callers should re-run on failure.
+    Folder traversal uses separate ``type=FOLDER`` queries (the SDK exposes no recursive flag).
+    The walk is not transactional: a subfolder query failing mid-walk discards collected entries
+    and propagates the ``icasdk.ApiException`` — callers should re-run on failure.
     """
     base = IcaPath.from_relpath(base_ica_folder_path).as_folder()
 
@@ -507,10 +461,10 @@ def wait_for_file_available(
     file_name: str,
     folder_path: str,
 ) -> bool:
-    """
-    Files in ICA don't become available immediately after upload.
-    This function guards against that by retrying the file existence check up to 4 times.
-    It has an initial 2 second sleep to guard against the first check failing due to race conditions.
+    """Wait for a just-uploaded file to become AVAILABLE in ICA.
+
+    Files aren't available immediately after upload, so this retries the existence check up to 4
+    times, with an initial 2s sleep to guard against the first check racing the upload.
     """
     time.sleep(2)  # Guard against race condition where file is not yet available
     result: str | None = check_file_existence(

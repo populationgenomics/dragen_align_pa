@@ -51,19 +51,10 @@ from dragen_align_pa.ica_utils import ica_cohort_path, ica_run_path
 from dragen_align_pa.utils import PER_SG_STATE_SCHEMA_VERSION, get_pipeline_path, load_per_sg_state
 
 
+# Distinct exception type so operators can tell a user-initiated cancellation
+# apart from a true pipeline failure. N818's `…Error` suffix is intentionally skipped.
 class CohortCancelled(RuntimeError):  # noqa: N818
-    """Raised when `cancel_cohort_run=true` has terminated the cohort.
-
-    Distinct exception type so cpg-flow / operators can distinguish a
-    user-initiated cancellation from a true pipeline failure (the
-    residual-failure `RuntimeError` raised after the retry pass, or an ICA
-    exception out of the monitor loop). Both halt the stage and skip downstream
-    work via cpg-flow's required-stage propagation; only the message differs.
-
-    Named for the *event*, not the failure category — `…Cancelled` reads more
-    naturally at the catch site (`except CohortCancelled`) and matches the
-    plan's vocabulary. N818's `…Error` suffix is intentionally skipped.
-    """
+    """Raised when `cancel_cohort_run=true` has terminated the cohort."""
 
 
 def _build_submit_callable(
@@ -75,16 +66,12 @@ def _build_submit_callable(
     batches_file: BatchesFile,
     outputs: dict[str, cpg_utils.Path],
 ) -> Callable[[], str]:
-    """Wraps `submit_dragen_batch.run` so it returns just the pipeline_id (the
-    shared loop expects a `Callable[[], str]`), and persists ar_guid /
-    user_reference / fastq_list_fid into the cohort batches file plus per-SG
-    state files at submission time (so MLR and downstream download stages see
-    a consistent state even if the orchestrator job is later killed mid-flight).
+    """Wrap `submit_dragen_batch.run` to return just the pipeline_id and persist
+    the submission identity into the batches file + per-SG state files.
     """
 
     def _submit() -> str:
-        # Use the batch entry's recorded error_strategy (set on creation by either
-        # `BatchesFile.initialise` or `BatchesFile.add_retry_batch`). It is never
+        # error_strategy is set on creation (initialise / add_retry_batch), never
         # changed here, so it is not written back below.
         entry = batches_file.batch_entry(batch.batch_index)
         error_strategy = entry['error_strategy']
@@ -96,21 +83,16 @@ def _build_submit_callable(
             per_sg_fastq_list_paths=per_sg_fastq_list_paths,
             error_strategy=error_strategy,
         )
-        # Narrow the return-dict values to satisfy type-checkers — submit_dragen_batch.run
-        # returns dict[str, str | list[str]] but the str-keyed fields are always strings.
+        # Narrow return-dict values for the type-checker: these fields are always str.
         pipeline_id_v = result['pipeline_id']
         ar_guid_v = result['ar_guid']
         user_reference_v = result['user_reference']
         assert isinstance(pipeline_id_v, str) and isinstance(ar_guid_v, str) and isinstance(user_reference_v, str)
 
-        # Persistence ordering (see BatchesFile docstring "Note on atomic writes"):
-        # per-SG state files FIRST (best-effort projections), batches.json SECOND
-        # (the commit point). If we crash between, batches.json still shows the
-        # batch as PENDING; the next orchestrator pass re-submits, generating a
-        # new pipeline_id that overwrites per-SG state. The orphan ICA submission
-        # is leaked but the system reconverges. We accept this in exchange for
-        # never serving a downstream stage a per-SG state file that references a
-        # batch the batches.json doesn't acknowledge.
+        # Persistence ordering (canonical: BatchesFile "Note on atomic writes"):
+        # per-SG state FIRST, batches.json SECOND (the commit point), so a crash
+        # between leaves the batch PENDING to re-submit rather than exposing a
+        # state file for a batch batches.json doesn't acknowledge.
         _persist_per_sg_state_for_batch(
             outputs,
             batch,
@@ -140,11 +122,9 @@ def _build_submit_callable(
     return _submit
 
 
-# Single writer for the per-SG state schema, shared by submit-time
-# `_persist_per_sg_state_for_batch` and the `force_retry`
-# `_repoint_per_sg_state_to_winning_generation` correction, so the two writers
-# can't drift. The schema must match what `utils.load_per_sg_state` /
-# `ica_utils.get_ica_sample_folder` validate on read.
+# Single writer for the per-SG state schema (shared by the submit-time and
+# force_retry paths) so the two can't drift. Schema must match what
+# utils.load_per_sg_state / ica_utils.get_ica_sample_folder validate on read.
 def _write_per_sg_state(
     path: cpg_utils.Path,
     *,
@@ -182,27 +162,16 @@ def _persist_per_sg_state_for_batch(
 ) -> None:
     """Write per-SG state files for one batch immediately on submission.
 
-    Schema must match the version validated by `get_ica_sample_folder`.
-    Bumping the version requires a coordinated change on both sides — the
-    `monitor_previous=true` resume path will refuse to read state files written
-    under a different version.
-
-    Note on overwrite-on-retry: when an SG is included in a retry batch, this
-    function rewrites its per-SG state with the retry batch's identifiers
-    (pipeline_id, user_reference, batch_index). cpg-flow's `required_stages`
-    ordering guarantees that `ManageDragenPipeline`'s retry pass completes
-    before any downstream stage (MLR, downloads) reads the state file —
-    so MLR/downloads always see the *latest* generation's identifiers.
+    On retry this rewrites the SG's state with the retry batch's identifiers;
+    cpg-flow's `required_stages` ordering guarantees downstream stages (MLR,
+    downloads) read only the latest generation's identifiers.
     """
     for sg_name in batch.sg_names:
         key = f'{sg_name}_pipeline_id_and_arguid'
         if key not in outputs:
-            # `run()` pre-validates per-SG state output keys before any
-            # submission, so reaching this branch means the cohort SG list
-            # changed mid-run (or the pre-check was bypassed). Raise loudly
-            # rather than orphan the submission with no per-SG state file —
-            # downstream Download* stages would otherwise fail later with a
-            # less actionable error.
+            # run() pre-validates these keys, so reaching here means the cohort SG
+            # list changed mid-run. Raise loudly rather than orphan the submission
+            # with no per-SG state file (downstream Download* would fail less clearly).
             raise KeyError(
                 f'Per-SG state output {key!r} not declared in outputs for batch '
                 f"{batch.name}. run()'s pre-check should have caught this — "
@@ -250,14 +219,10 @@ def _fetch_batch_passfail_and_folder(
         requests.RequestException: On a network error fetching the presigned URL.
         json.JSONDecodeError: If the presigned URL serves a non-JSON body.
     """
-    # ICA names the analysis folder `{user_reference}-{pipeline_id}` (see
-    # `get_ica_sample_folder` in ica_utils.py — same separator). The hyphen is
-    # required: user_reference ends in `_`, so the folder name is `…_-{pipeline_id}/`.
+    # ICA names the analysis folder `{user_reference}-{pipeline_id}` (user_reference
+    # ends in `_`, so `…_-{pipeline_id}/`), inside the cohort-level parent folder.
+    # Built via the shared builders to stay in lockstep with get_ica_sample_folder.
     analysis_folder_name = f'{user_reference}-{pipeline_id}'
-    # ICA writes each batch's analysis folder INSIDE the cohort-level parent folder
-    # (`PrepareIcaForDragenAnalysis` creates one folder named `cohort.name`). Both
-    # levels come from the shared builders so they stay in lockstep with
-    # `ica_utils.get_ica_sample_folder`.
     ica_parent = ica_cohort_path(batch.cohort_name).as_folder()
     ica_folder = ica_run_path(batch.cohort_name, user_reference, pipeline_id).as_folder()
 
@@ -361,13 +326,9 @@ def _on_succeeded_factory(
                 entry['pipeline_id'],
             )
         except _PASSFAIL_FETCH_ERRORS as e:
-            # RAISE (don't `return`): the shared loop's transactional callback
-            # contract catches this, logs it, and leaves the per-target status
-            # at INPROGRESS. batches.json also stays INPROGRESS (we never
-            # called record_status). Next poll cycle re-fires on_succeeded.
-            # If we silently `return`ed here, the loop would think the
-            # callback succeeded and set SUCCEEDED — diverging from
-            # batches.json which would still show INPROGRESS.
+            # RAISE (don't return): the loop's transactional contract leaves the
+            # target INPROGRESS and re-fires next poll. A silent return would let
+            # the loop set SUCCEEDED while batches.json stays INPROGRESS.
             raise RuntimeError(
                 f'Batch {batch.name}: ICA fetch failed in on_succeeded ({e}); '
                 f'leaving status INPROGRESS so the next poll can re-fetch.',
@@ -385,18 +346,10 @@ def _on_status_change_factory(
 ) -> Callable[[MonitoredTarget, PipelineStatus], None]:
     """Mirror the loop's terminal non-success transitions into `{cohort}_batches.json`.
 
-    Without this, the loop's in-memory `FAILED_FINAL` / `CANCELLED` transitions
-    never propagate to the batches file, leaving entries stuck at INPROGRESS
-    forever. The downstream consequences are:
-    - `_build_retry_batches`'s `elif b['status'] == BATCH_STATUS_FAILED:` branch becomes
-      unreachable (whole-batch infrastructure failure can't trigger a retry).
-    - A subsequent resume's `initial_batches` filter (`status in {PENDING,
-      INPROGRESS}`) re-picks-up the dead batch and the loop polls a long-
-      aborted ICA analysis.
-
-    `SUCCEEDED` is intentionally NOT routed through this callback — the
-    transactional `_on_succeeded_factory` already records SUCCEEDED via
-    `batches_file.record_status(idx, BATCH_STATUS_SUCCEEDED)`.
+    Without this, FAILED_FINAL / CANCELLED transitions never reach the batches
+    file (stuck INPROGRESS), making the retry path's batch-level branch
+    unreachable and re-polling dead analyses on resume. SUCCEEDED is NOT routed
+    here — `_on_succeeded_factory` records it transactionally.
 
     Args:
         batches_file: The cohort batches file to mirror transitions into.
@@ -418,9 +371,8 @@ def _on_status_change_factory(
             return
         if new_status == PipelineStatus.FAILED_FINAL:
             failed_final_sink.add(batch.batch_index)
-            # Clear any stale passfail so the batch is an unambiguous whole-batch
-            # failure — a FAILED entry with a non-empty passfail would be read via
-            # `_resolve_latest_outcomes`'s per-SG branch, a self-contradictory state.
+            # Clear stale passfail so this is an unambiguous whole-batch failure
+            # (a FAILED entry with passfail would be read via the per-SG branch).
             _mark_failed_and_clear(batches_file, batch.batch_index)
         elif new_status == PipelineStatus.CANCELLED:
             batches_file.record_status(batch.batch_index, BATCH_STATUS_CANCELLED)
@@ -488,10 +440,8 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
     counts: Counter[str] = Counter()
     for entry in batches_file.batches:
         if entry['status'] == BATCH_STATUS_CANCELLED:
-            # CANCELLED is terminal — never relabel it (its ICA analysis reports
-            # ABORTED, which would otherwise map to FAILED and resubmit). run()
-            # refuses force_retry on a cancelled cohort before we get here; this
-            # is defence-in-depth for any other caller.
+            # CANCELLED is terminal — never relabel it (ABORTED would map to FAILED
+            # and resubmit). Defence-in-depth; run() already refuses this path.
             continue
         pipeline_id = entry['pipeline_id']
         if not pipeline_id:
@@ -541,13 +491,10 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
     )
 
 
-# The per-SG state file is the sole input the Download* stages use to locate an
-# SG's ICA output folder (`ica_utils.get_ica_sample_folder`). It is written at
-# submit time and overwritten whenever an SG is resubmitted in a later
-# generation. `force_retry` reconciliation can restore an earlier generation to
-# SUCCEEDED after a superseding retry already failed and overwrote the pointer,
-# leaving the file aimed at the failed generation's absent output folder. This
-# corrects that before the run is declared complete.
+# The per-SG state file is the sole input Download* uses to locate an SG's ICA
+# output folder, overwritten on each resubmission. force_retry can restore an
+# earlier generation to SUCCEEDED after a later retry overwrote the pointer,
+# leaving it aimed at the failed generation's absent folder; this corrects that.
 def _repoint_per_sg_state_to_winning_generation(
     outputs: dict[str, cpg_utils.Path],
     batches_file: BatchesFile,
@@ -610,28 +557,15 @@ def _build_retry_batches(
 ) -> list[IcaBatch]:
     """Form retry batches from per-sample failures across batches.
 
-    Normal mode: only retries batches with `retry_generation == 0` (the initial
-    cohort batches) that have not `has_been_retried`. Uses `BatchesFile.add_retry_batch`
-    to append retry entries and `BatchesFile.mark_sgs_retried` to record the per-SG
-    audit trail on the source batches. Retry batches are created with
-    `has_been_retried=True` and `error_strategy` defaulting to `continue` for
-    single-sample batches, so a second retry pass short-circuits — enforcing the
-    single-retry invariant.
+    Normal mode retries only `retry_generation == 0` batches not yet
+    `has_been_retried`; retry batches are created with `has_been_retried=True`
+    (and `continue` for single-sample batches) so a second pass short-circuits —
+    the single-retry invariant. `force=True` ignores that gate and spans ALL
+    generations, excluding SGs already succeeded or with a retry still in flight
+    (those are re-monitored by `run()`'s resume path).
 
-    `force=True` (operator `force_retry`): ignores the single-retry gate and
-    considers failures across ALL generations. Excludes SGs already succeeded (in
-    `successful_sg_names()`) and SGs whose retry is still in flight (in an active
-    batch with no passfail result yet); the latter are re-monitored by the resume
-    path in `run()`.
-
-    `CANCELLED` is treated as a **terminal** state — `cancel_cohort_run=true` is
-    a user-initiated abort and the spec (§4 line 214) does not allow it to spawn
-    retries (in both modes: a CANCELLED batch has empty `passfail` and status
-    CANCELLED, so neither branch below selects it). Only `FAILED` (ICA-level
-    infrastructure failure) feeds the retry path when no `passfail.json` was produced.
-
-    Resume uses `retry_generation` + `status` (NOT `has_been_retried`) so in-flight
-    retry batches that crashed mid-submission can still be re-monitored.
+    CANCELLED is terminal (empty passfail + CANCELLED status → neither branch
+    selects it); only FAILED feeds the retry path when no passfail.json exists.
 
     Args:
         cohort_name: The cohort the retry batches belong to.
@@ -644,19 +578,12 @@ def _build_retry_batches(
     Returns:
         The newly-appended retry batches (empty if there is nothing to retry).
     """
-    # Map each failed SG to the source batch it came from, so we can record
-    # `retried_sgs` per source batch (not just batch-level `has_been_retried`).
-    # Precedence note: `passfail` populated implies a SUCCEEDED batch (the only
-    # writer is `_on_succeeded` / reconciliation). A CANCELLED batch's `passfail`
-    # is empty by construction, so the `if b['passfail']:` branch can never
-    # re-enable a cancelled batch for retry — preserving CANCELLED's terminal status.
-    # In force mode, an SG already succeeded in some batch is never rerun. Nor is
-    # one whose retry is still genuinely running (an ACTIVE batch that has not yet
-    # produced a passfail result): force mode bypasses the single-retry gate, so
-    # without this such an SG would be resubmitted afresh here while the resume path
-    # in `run()` re-monitors the existing batch — two concurrent ICA analyses for one
-    # SG. The resume path owns the in-flight ones. A batch with a passfail result is
-    # terminal, so it is evaluated normally below.
+    # Map each failed SG to its source batch so `retried_sgs` can be recorded per
+    # source. A CANCELLED batch's passfail is empty, so the `if b['passfail']:`
+    # branch never re-enables it (CANCELLED stays terminal). In force mode, exclude
+    # SGs already succeeded and SGs whose retry is still in flight (an ACTIVE batch
+    # with no passfail yet) — the resume path owns those, so resubmitting here would
+    # run two concurrent ICA analyses for one SG.
     already_succeeded = set(batches_file.successful_sg_names()) if force else set()
     in_flight_sgs = (
         {
@@ -716,14 +643,9 @@ def _build_retry_batches(
 def _build_loop_outputs_for_batches(batches: list[IcaBatch]) -> dict[str, cpg_utils.Path]:
     """Build the shared loop's `outputs` dict keyed by batch name.
 
-    Per-batch success / pipeline_id paths are internal orchestrator state
-    — `cpg-flow` does not consume them, so the orchestrator constructs
-    them directly via `get_pipeline_path()` rather than reading them out
-    of `ManageDragenPipeline.expected_outputs`. Declaring per-batch files
-    in `expected_outputs` would force a heuristic upper bound on the
-    batch count (`max_batches`), and if fewer retry batches materialise
-    than the heuristic predicts, `cpg-flow` would treat the stage as
-    incomplete and re-run unnecessarily.
+    Per-batch success / pipeline_id paths are internal orchestrator state built
+    directly via `get_pipeline_path()`; declaring them in `expected_outputs`
+    would force a heuristic batch-count bound that triggers spurious re-runs.
     """
     keys: dict[str, cpg_utils.Path] = {}
     for b in batches:
@@ -784,36 +706,15 @@ def _handle_management_flags(
     outputs: dict[str, cpg_utils.Path],
     sg_names: list[str],
 ) -> None:
-    """Apply `force_resubmit` / `monitor_previous` / `cancel_cohort_run` /
-    `force_retry` BEFORE constructing the BatchesFile.
+    """Apply the four management flags BEFORE constructing the BatchesFile.
 
-    Raises `CohortCancelled` (terminal) if `cancel_cohort_run=true` —
-    short-circuits `run()` so it doesn't fall into retry-building.
-
-    Semantics:
-    - `monitor_previous=true`: raises if the batches file is missing.
-    - `force_resubmit=true`: clean slate. Deletes `{cohort}_batches.json`,
-      the completion marker, and every per-SG state file. The caller
-      re-batches the cohort from scratch — fresh AR GUIDs are minted on
-      submission, no positional reuse. Raises if no prior state exists
-      (force_resubmit on a fresh cohort is a config mistake, not a no-op).
-    - `cancel_cohort_run=true`: for each batch with status PENDING/INPROGRESS,
-      calls the ICA abort API if a `pipeline_id` is known, then marks the
-      batch CANCELLED in the file. **Per-SG state files are NOT deleted** —
-      the versioned state file is the single source of per-SG truth, and
-      preserving it lets a `force_resubmit=true` recovery rerun see clearly
-      what was running when the cancel fired (the files become stale
-      pointers to aborted ICA analyses, which the resubmit path deletes
-      wholesale). The function raises `CohortCancelled` to terminate cleanly.
-    - `force_retry=true`: recovery for a run whose GCS state drifted from ICA
-      (e.g. batches persisted FAILED that ICA actually completed). Requires an
-      existing batches file; this function only validates (raises if missing).
-      The reconciliation + rerun itself happens in `run()`
-      (`_reconcile_batches_with_ica` then `_build_retry_batches(force=True)`),
-      because it needs the loaded BatchesFile and drives the monitor loop.
-
-    Conflicts: the four flags express orthogonal intents; setting more than one
-    raises `ValueError`. Pick exactly one.
+    The flags are mutually exclusive (more than one raises `ValueError`). Their
+    per-branch behaviour is documented at each branch below:
+    - `monitor_previous` / `force_retry`: validate only (raise if no batches file).
+    - `force_resubmit`: delete batches file, completion marker, and per-SG state
+      (raise if no prior state exists). `force_retry`'s reconcile + rerun runs in
+      `run()`, which has the loaded BatchesFile and drives the loop.
+    - `cancel_cohort_run`: abort in-flight batches and raise `CohortCancelled`.
 
     Args:
         cohort_name: The cohort being managed (for messages + per-SG state keys).
@@ -834,9 +735,7 @@ def _handle_management_flags(
     cancel_cohort_run = config_retrieve(['ica', 'management', 'cancel_cohort_run'], default=False)
     force_retry = config_retrieve(['ica', 'management', 'force_retry'], default=False)
 
-    # force_retry reconciles the existing run against ICA and reruns genuine
-    # failures; it is mutually exclusive with the other three (fresh-submit /
-    # cancel / plain-resume are distinct intents). Only one management flag at a time.
+    # The four flags express orthogonal intents; enforce exactly one.
     active_flags = [
         name
         for name, value in (
@@ -870,12 +769,8 @@ def _handle_management_flags(
     if force_resubmit:
         per_sg_state_paths = [outputs[k] for sg in sg_names if (k := f'{sg}_pipeline_id_and_arguid') in outputs]
         if not batches_file_path.exists() and not any(p.exists() for p in per_sg_state_paths):
-            # No batches file + no per-SG state means there's nothing to
-            # force-resubmit. Silently falling through to a fresh submission
-            # would burn money on an ICA run the user probably didn't intend
-            # (force_resubmit is the destructive flag — they expected
-            # existing state to be replaced). Raise so the user un-sets the
-            # flag explicitly.
+            # Nothing to force-resubmit. Falling through to a fresh submission would
+            # burn money on an unintended ICA run, so raise for an explicit un-set.
             raise RuntimeError(
                 f'force_resubmit=true for cohort {cohort_name} but no prior state '
                 f'(batches.json or per-SG state files) exists. Remove force_resubmit '
@@ -886,10 +781,9 @@ def _handle_management_flags(
             f'file, completion marker, and per-SG state — fresh slate.',
         )
         batches_file_path.unlink(missing_ok=True)
-        # Delete the completion marker too — otherwise a marker left over from a
-        # previous successful run would advertise this cohort as "complete" even
-        # though force_resubmit just wiped the underlying state. Defensive on
-        # the key presence so callers with an older outputs schema still work.
+        # Delete the completion marker too, else a stale marker advertises the
+        # cohort complete after force_resubmit wiped its state. Defensive on the
+        # key so an older outputs schema still works.
         complete_path = outputs.get(f'{cohort_name}_pipeline_complete')
         if complete_path is not None:
             complete_path.unlink(missing_ok=True)
@@ -918,9 +812,7 @@ def _handle_management_flags(
             pipeline_id = b.get('pipeline_id')
             if pipeline_id:
                 try:
-                    # Reuse the existing per-target cancel helper. is_mlr=False because
-                    # cohort-level cancellation only applies to DRAGEN batches; MLR
-                    # cancellation goes through its own per-SG path.
+                    # is_mlr=False: cohort-level cancel applies only to DRAGEN batches.
                     cancel_ica_pipeline_run.run(ica_pipeline_id=pipeline_id, is_mlr=False)
                     logger.info(f'Aborted ICA analysis {pipeline_id} for batch {b["batch_index"]}')
                 except Exception as e:  # noqa: BLE001
@@ -933,21 +825,13 @@ def _handle_management_flags(
                     f'Batch {b["batch_index"]} status={b["status"]} has no pipeline_id '
                     f'(never reached ICA); marking CANCELLED only.',
                 )
-            # Go through record_status so the value is validated against
-            # ALLOWED_BATCH_STATUSES — direct dict mutation works today but
-            # would silently accept a future typo or enum drift.
+            # Via record_status so the value is validated against ALLOWED_BATCH_STATUSES.
             existing.record_status(b['batch_index'], BATCH_STATUS_CANCELLED)
             n_aborted += 1
         existing.write()
-        # Per-SG state-file policy: do NOT delete the versioned per-SG state
-        # files here. The user has a choice — they can later run with
-        # `force_resubmit=true` (which deletes everything and re-batches, lifting
-        # AR GUIDs out of the preserved state files first) or just accept the
-        # cancellation. Keeping the per-SG files preserves AR GUIDs for that
-        # eventual harvest and provides an audit trail of what was running when
-        # cancel fired. They stay valid pointers — to aborted ICA analyses —
-        # so any downstream stage that later reads them will fail with a clear
-        # ICA "analysis not found" error rather than a confusing FileNotFoundError.
+        # Do NOT delete per-SG state files here: preserving them keeps AR GUIDs for
+        # a later force_resubmit harvest and an audit trail. They remain valid
+        # pointers to aborted ICA analyses (a clear "analysis not found" downstream).
         raise CohortCancelled(
             f'Cohort {cohort_name} cancelled by user request (cancel_cohort_run=true). '
             f'{n_aborted} in-flight batches aborted; SUCCEEDED batches preserved. '
@@ -987,18 +871,15 @@ def run(
         ['dragen_align_pa', 'manage_dragen_pipeline', 'batch_size'],
         default=DEFAULT_BATCH_SIZE,
     )
-    # Operator recovery flag: reconcile the persisted state against ICA, then rerun
-    # only what genuinely failed (see `_reconcile_batches_with_ica` +
-    # `_build_retry_batches(force=True)`). Validated in `_handle_management_flags`.
+    # Operator recovery flag: reconcile persisted state against ICA, then rerun only
+    # genuine failures. Validated in _handle_management_flags.
     force_retry: bool = config_retrieve(['ica', 'management', 'force_retry'], default=False)
     sg_names = [sg.name for sg in cohort.get_sequencing_groups()]
     if not sg_names:
         raise ValueError(f'Cohort {cohort.name} has no sequencing groups.')
 
-    # Pre-validate per-SG state output keys BEFORE any ICA submission, so a
-    # missing `expected_outputs` entry doesn't surface as an orphaned ICA
-    # analysis with no on-disk state file. Catching this at startup means
-    # the operator sees a single actionable error and zero leaked ICA work.
+    # Pre-validate per-SG state output keys BEFORE any ICA submission, so a missing
+    # expected_outputs entry surfaces as one startup error, not a leaked ICA analysis.
     missing_state_keys = [
         f'{sg}_pipeline_id_and_arguid' for sg in sg_names if f'{sg}_pipeline_id_and_arguid' not in outputs
     ]
@@ -1013,18 +894,12 @@ def run(
         f'{cohort.name}_{config_retrieve(["workflow", "sequencing_type"])}_'
         f'{config_retrieve(["workflow", "reads_type"])}_batches'
     ]
-    # `errors_path` is the error-log sink: the monitor loop flushes tmp_errors.log
-    # to it, and run() writes the failed-SG list to it before raising on residual
-    # failures. Internal scratch — computed via `get_pipeline_path` rather than
-    # declared in expected_outputs because variable-existence outputs trigger
-    # spurious cpg-flow re-runs.
+    # Error-log sink for the monitor loop + the failed-SG summary. Internal scratch
+    # (via get_pipeline_path) so its variable existence doesn't trigger cpg-flow re-runs.
     errors_path = get_pipeline_path(filename=f'{cohort.name}_errors.log')
 
-    # `_handle_management_flags` raises CohortCancelled on `cancel_cohort_run=true`
-    # — we let it propagate so cpg-flow marks the stage failed and downstream
-    # stages skip. On `force_resubmit=true` it deletes the previous state files
-    # (batches.json, completion marker, per-SG state) so this run starts from a
-    # clean slate; no AR GUIDs are preserved, fresh ones are minted at submit.
+    # Raises CohortCancelled on cancel_cohort_run (propagated so cpg-flow fails the
+    # stage); deletes prior state on force_resubmit for a clean-slate run.
     _handle_management_flags(
         cohort_name=cohort.name,
         batches_file_path=batches_file_path,
@@ -1037,11 +912,9 @@ def run(
         logger.info(f'Resuming from existing batches file {batches_file_path}')
         batches_file.read()
         if force_retry:
-            # CANCELLED is terminal: force_retry must not resurrect a user-cancelled
-            # cohort. Its aborted ICA analyses report ABORTED, which reconcile would
-            # otherwise map to FAILED and resubmit — silently defeating the cancel
-            # contract. Refuse up front (before any reconcile/resubmit); force_resubmit
-            # is the sanctioned recovery for a cancelled cohort.
+            # CANCELLED is terminal: force_retry must not resurrect a cancelled cohort
+            # (its ABORTED analyses would reconcile to FAILED and resubmit). Refuse up
+            # front; force_resubmit is the sanctioned recovery.
             cancelled_sgs = batches_file.cancelled_sg_names()
             if cancelled_sgs:
                 raise CohortCancelled(
@@ -1049,33 +922,22 @@ def run(
                     f'force_retry cannot recover a cancelled cohort. Rerun with force_resubmit=true '
                     f'to start a fresh submission.',
                 )
-            # Rewrite each submitted batch's status to ICA reality FIRST, so the
-            # initial_batches filter and _build_retry_batches(force=True) below act
-            # on the truth (a stale GCS-FAILED that ICA succeeded becomes SUCCEEDED
-            # and is harvested; a still-running one becomes INPROGRESS and is
+            # Rewrite each batch's status to ICA reality FIRST so the filters below
+            # act on the truth (stale FAILED→SUCCEEDED harvested; running→INPROGRESS
             # re-monitored). This is the whole point of force_retry.
             logger.warning(
                 f'force_retry=true for cohort {cohort.name}: reconciling persisted state against ICA.',
             )
             _reconcile_batches_with_ica(cohort.name, batches_file)
-        # Resume uses `retry_generation == 0` (initial batches only) + status to decide
-        # what to re-monitor on the first pass. Retry-batch resumption is handled in the
-        # second loop call below — see retry section.
+        # Resume the first pass from initial (generation 0) active batches; retry-batch
+        # resumption is handled below.
         initial_batches = _active_batches(batches_file, cohort.name, generation=0)
     else:
-        # Fresh cohort, or post-`force_resubmit` re-batching. Cohort membership may
-        # have changed (SGs added/removed) since the original submission, so we
-        # always re-batch from the *current* cohort SG list rather than reusing
-        # the prior `sg_names` partitions.
-        #
-        # Defensive: `_handle_management_flags` on the force_resubmit path
-        # calls `batches_file_path.unlink(missing_ok=True)`. If that ever
-        # silently fails (e.g. a hypothetical GCS rate-limit, manual hold),
-        # we'd hit this branch with the old file still present and
-        # `chunk_sgs_into_batches` + `batches_file.initialise` would
-        # overwrite it WITHOUT the resume-from-existing path being taken
-        # — a real risk of data loss. Hard-assert so any such failure
-        # surfaces here instead of corrupting state.
+        # Fresh cohort or post-force_resubmit re-batching: always re-batch from the
+        # current SG list (membership may have changed).
+        # Defensive: if force_resubmit's unlink silently failed, the old file would
+        # still be here and initialise() would overwrite it outside the resume path —
+        # data loss. Hard-assert so that surfaces here instead of corrupting state.
         assert not batches_file_path.exists(), (
             f'{batches_file_path} should have been deleted by '
             f'_handle_management_flags but still exists. Refusing to '
@@ -1089,9 +951,8 @@ def run(
         batches_file.initialise(batch_size=batch_size, batches=initial_batches)
         batches_file.write()
 
-    # Every FAILED_FINAL the loop reports lands here regardless of whether its
-    # (best-effort) persist succeeded; reconciled against the persisted file
-    # before the completion marker.
+    # Every FAILED_FINAL the loop reports lands here (even if its persist failed);
+    # reconciled against the persisted file before the completion marker.
     loop_failed_final: set[int] = set()
 
     batches_by_name = {b.name: b for b in initial_batches}
@@ -1111,17 +972,12 @@ def run(
 
     if initial_batches:
         loop_outputs = _build_loop_outputs_for_batches(initial_batches)
-        # Materialise loop-resume files from the authoritative batches file so a
-        # crash between the batches.json submission write and the loop's own write
-        # can't resubmit an already-running batch (duplicate ICA analysis).
+        # Materialise loop-resume files from the authoritative batches file so a crash
+        # between writes can't resubmit an already-running batch (duplicate analysis).
         _project_pipeline_id_files(initial_batches, batches_file, loop_outputs)
-        # allow_retry=False: the shared loop's whole-target retry is bypassed for
-        # DRAGEN. Per-sample retry over the cohort is owned by `run()`,
-        # not by the loop.
-        # raise_on_failed_final=False: a batch's FAILED_FINAL must NOT abort the
-        # loop here — it has to survive to `_build_retry_batches` so the batch is
-        # retried. `run()` raises after the retry pass on any SG still
-        # failed (see the failure check at the end of run()).
+        # allow_retry=False: per-sample retry is owned by run(), not the loop.
+        # raise_on_failed_final=False: FAILED_FINAL must survive to _build_retry_batches;
+        # run()'s post-retry check owns the abort.
         manage_ica_pipeline_loop(
             targets_to_process=initial_batches,
             outputs=loop_outputs | {f'{cohort.name}_errors': errors_path},
@@ -1190,15 +1046,10 @@ def run(
             raise_on_failed_final=False,
         )
 
-    # Reconcile the loop's reported FAILED_FINAL transitions against the
-    # PERSISTED batches file. `on_status_change` persists each via the loop's
-    # best-effort `_fire_status_change`, which swallows write errors — so a
-    # dropped GCS write could leave a batch INPROGRESS on disk even though the
-    # loop knew it failed. With DRAGEN opting out of the loop's own abort
-    # (raise_on_failed_final=False), this file is the single source of truth for
-    # `failed_sg_names()` below; a stale INPROGRESS would silently drop the
-    # failure (false success now, or a re-poll of a dead analysis on resume).
-    # Re-read from disk (not the in-memory copy) so we validate what persisted.
+    # Reconcile the loop's FAILED_FINAL set against the PERSISTED file: on_status_change
+    # persists best-effort (write errors swallowed), so a dropped write could leave a
+    # batch INPROGRESS on disk. This file is the source of truth for failed_sg_names()
+    # below, so a stale INPROGRESS would silently drop the failure. Re-read from disk.
     if loop_failed_final:
         persisted = BatchesFile(path=batches_file_path)
         persisted.read()
@@ -1215,23 +1066,10 @@ def run(
                 f'declare the cohort complete — re-run to reconcile the batches file.',
             )
 
-    # Resume-after-cancel guard: if any batch is CANCELLED, this rerun must
-    # not proceed. CANCELLED is terminal (user-initiated abort); the only
-    # sanctioned recovery is `force_resubmit=true`. Without this guard, two
-    # bad paths open up:
-    #   1. All-CANCELLED rerun: `initial_batches` filters out CANCELLED →
-    #      empty loop → `_build_retry_batches` returns [] (terminal) →
-    #      run() reaches the completion marker → downstream Download* stages
-    #      run with preserved per-SG state pointing at aborted ICA analyses →
-    #      all explode with cryptic "analysis not found" errors.
-    #   2. Partial-cancel-with-success: same as (1) but only the CANCELLED
-    #      SGs' downstream stages explode. Still bad UX — cancelled SGs
-    #      surface as per-SG ICA failures rather than a clean cohort halt.
-    # Tightening the guard to `if cancelled_sgs:` (no `and not any_succeeded`
-    # exception) closes both holes uniformly: any user-initiated cancellation
-    # forces an explicit `force_resubmit=true` to recover. Partial successes
-    # are preserved via batches.json + per-SG state files; force_resubmit
-    # harvests them on re-submission.
+    # Resume-after-cancel guard: any CANCELLED batch blocks this rerun. CANCELLED is
+    # terminal; without this guard the loop would reach the completion marker and
+    # downstream stages would explode on per-SG state pointing at aborted analyses.
+    # force_resubmit is the only sanctioned recovery (it harvests partial successes).
     cancelled_sgs = batches_file.cancelled_sg_names()
     if cancelled_sgs:
         raise CohortCancelled(
@@ -1241,30 +1079,21 @@ def run(
             f'the preserved per-SG state will be reused).',
         )
 
-    # force_retry can reconcile an earlier generation back to SUCCEEDED after a
-    # superseding retry already failed and overwrote the SG's per-SG state file.
-    # The Download* stages resolve the ICA folder solely from that file, so
-    # repoint each succeeded SG at its winning generation before completing.
+    # force_retry can reconcile an earlier generation back to SUCCEEDED after a later
+    # retry failed and overwrote the SG's state file; repoint each succeeded SG at its
+    # winning generation before completing (Download* resolves the folder from it).
     if force_retry:
         _repoint_per_sg_state_to_winning_generation(outputs, batches_file)
 
-    # Per-SG failures are recorded in batches.json (`failed_sg_names()` excludes
-    # CANCELLED by design — cancellation ≠ failure). Any SG still failed after
-    # the retry pass aborts the run: the old 5%-rate tolerance is gone, so a
-    # single unrecovered failure halts (matching the loop's FAILED_FINAL abort
-    # for MLR/MD5, which DRAGEN opts out of so this check owns the decision).
+    # failed_sg_names() excludes CANCELLED by design. Any SG still failed after the
+    # retry pass aborts the run — no rate tolerance, a single failure halts.
     n_total = len(sg_names)
     failed = batches_file.failed_sg_names()
     n_failed = len(failed)
     if n_failed > 0:
-        # Persist errors.log before raising so the cohort run leaves a durable
-        # failure artefact. Append (don't truncate): the monitor loop already
-        # flushed the ICA-level error detail to this same path on exit, and we
-        # want the failed-SG summary to sit alongside it, not overwrite it.
-        # `errors_path` is internal scratch — not a declared expected_output, so
-        # its absence on a clean run doesn't force a re-run. A timestamped header
-        # delimits each stage invocation, so a cpg-flow stage retry appends a
-        # fresh, attributable block instead of a run-mixing blob.
+        # Append (don't truncate) the failed-SG summary so it sits alongside the
+        # loop's ICA-level detail already flushed here. A timestamped header keeps
+        # each stage invocation an attributable block.
         run_marker = datetime.now(tz=UTC).isoformat()
         with errors_path.open('a') as fh:
             fh.write(
@@ -1277,13 +1106,9 @@ def run(
             f'See {errors_path} for the failure list.',
         )
 
-    # Completion marker: writes the canonical "stage completed without raising"
-    # signal that cpg-flow checks via expected_outputs. The marker is the LAST
-    # write of `run()` — any earlier raise (residual failure, cancel,
-    # ICA exception) skips this and leaves cpg-flow seeing the stage as failed,
-    # so the stage will retry. Marker payload records the cohort's outcome
-    # summary so operators can audit completed runs without re-reading
-    # batches.json.
+    # Completion marker: the "stage completed" signal cpg-flow checks. It's the LAST
+    # write of run(), so any earlier raise leaves the stage looking failed (retryable).
+    # Payload records the outcome summary for auditing without re-reading batches.json.
     complete_path = outputs[f'{cohort.name}_pipeline_complete']
     with complete_path.open('w') as fh:
         json.dump(

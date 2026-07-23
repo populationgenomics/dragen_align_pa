@@ -115,10 +115,7 @@ class FastqIntakeQc(CohortStage):
 
 @stage(required_stages=[FastqIntakeQc])
 class DownloadMd5Results(CohortStage):
-    """
-    Downloads the 'all_md5.txt' result file from a successful
-    MD5 Checksum pipeline run.
-    """
+    """Download the 'all_md5.txt' result file from a successful MD5 Checksum pipeline run."""
 
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:  # pyright: ignore[reportIncompatibleMethodOverride]
         return get_prep_path(filename=f'{cohort.name}_ica_md5sum.md5sum')
@@ -277,17 +274,13 @@ class ManageDragenPipeline(CohortStage):
     """
 
     def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
-        # Only DETERMINISTIC outputs go in expected_outputs — anything cpg-flow
-        # can't find when re-evaluating this stage triggers a re-run, so the
-        # set must be exactly the files a successful `run()` always writes.
-        # Variable-existence files (per-batch success/pipeline_id, errors.log
-        # written by the monitor loop) are internal `run()` scratch
-        # and `run()` computes their paths inline via
-        # `get_pipeline_path()` rather than going through expected_outputs.
-        # `_pipeline_complete` is the canonical "stage completed without raising"
-        # signal — written ONLY as the final action of a successful run(). Any
-        # earlier raise (residual SG failure, cancel, ICA error) skips it and the
-        # stage is correctly seen as failed.
+        # Only DETERMINISTIC outputs go here — a file cpg-flow can't find on
+        # re-evaluation triggers a re-run, so this must be exactly what a successful
+        # run() always writes. Variable-existence files (per-batch success/pipeline_id,
+        # the monitor loop's errors.log) are internal run() scratch, pathed inline via
+        # get_pipeline_path(). `_pipeline_complete` is the canonical "completed without
+        # raising" signal, written ONLY as the final action of a successful run(); any
+        # earlier raise skips it and the stage is correctly seen as failed.
         return {
             f'{cohort.name}_{config_retrieve(["workflow", "sequencing_type"])}_'
             f'{config_retrieve(["workflow", "reads_type"])}_batches': get_pipeline_path(
@@ -394,11 +387,10 @@ class ManageDragenMlr(CohortStage):
     required_stages=[ManageDragenPipeline],
 )
 class DownloadCramFromIca(SequencingGroupStage):
+    """Download cram + crai from ICA separately, so Metamist registration happens via
+    stage decorators. The pipeline ID is read inside the Hail job (reading it outside
+    would pick up the previous pipeline run's ID).
     """
-    Download cram and crai files from ICA separately. This is to allow registrations of the cram files
-    in metamist to be done via stage decorators. The pipeline ID needs to be read within the Hail BashJob to get the current
-    pipeline ID. If read outside the job, it will get the pipeline ID from the previous pipeline run.
-    """  # noqa: E501
 
     def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
@@ -521,10 +513,8 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
     ],
 )
 class DownloadDataFromIca(SequencingGroupStage):
-    """
-    Download all files from ICA for a single realignment run except the CRAM and GVCF files.
-    Register this batch download in Metamist.
-    Does not register individual files in Metamist.
+    """Download all ICA files for a realignment run except CRAM/GVCF, registering the
+    batch download (not individual files) in Metamist.
     """
 
     def expected_outputs(
@@ -600,15 +590,10 @@ class DownloadBatchArtefactsFromIca(CohortStage):
 
 @stage(required_stages=[DownloadCramFromIca])  # Depends on CRAM being downloaded
 class SomalierExtract(SequencingGroupStage):
-    """
-    Run Somalier extract on CRAM files to generate fingerprints.
-    """
+    """Run Somalier extract on CRAM files to generate fingerprints."""
 
     def expected_outputs(self, sequencing_group: SequencingGroup) -> cpg_utils.Path:
-        """
-        Expected Somalier fingerprint output file.
-        Uses SG ID for filename.
-        """
+        """Somalier fingerprint output file, named by SG ID."""
         return get_output_path(filename=f'somalier/{sequencing_group.id}.somalier')
 
     def queue_jobs(
@@ -616,9 +601,7 @@ class SomalierExtract(SequencingGroupStage):
         sequencing_group: SequencingGroup,
         inputs: StageInput,
     ) -> StageOutput | None:
-        """
-        Queue a job to run somalier extract.
-        """
+        """Queue a job to run somalier extract."""
         cram_path = inputs.as_path(
             target=sequencing_group,
             stage=DownloadCramFromIca,
@@ -668,9 +651,7 @@ class SomalierExtract(SequencingGroupStage):
     analysis_keys=['gvcf'],
 )
 class ReheaderMlrGvcf(SequencingGroupStage):
-    """
-    Reheader the MLR gVCF to insert correct reference block information that the MLR process removes.
-    """
+    """Reheader the MLR gVCF to reinsert reference-block info that the MLR process removes."""
 
     def expected_outputs(self, sequencing_group: SequencingGroup) -> dict[str, cpg_utils.Path]:
         return {

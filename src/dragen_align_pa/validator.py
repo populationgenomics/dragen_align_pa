@@ -47,32 +47,22 @@ def validate_configuration() -> None:
 def assert_ica_project_root_resolves() -> None:
     """Fail loud at submit if `[ica.projects].project_root` is misconfigured.
 
-    Config names only the dataset family; this confirms, purely from the registry tables (no
-    ICA calls), that the family is registered and complete — so a family mistake aborts on the
-    submitter rather than surfacing at the first ICA call deep in a job. It checks that:
-
-    - every required role (DRAGEN-align, DRAGEN-MLR, FASTQ-upload) resolves to a project name;
-    - the DRAGEN-align and DRAGEN-MLR projects have a project id (they're addressed by id at
-      runtime via `ica_project_session`; FASTQ-upload's id is legitimately absent for a
-      collaborator-managed family, so it's left on the name-only check);
-    - the family has a registered `illumina_cpg_workbench_api` API-key field (else every ICA
-      client build would fail at job runtime with a bare `KeyError`);
-    - the family's MLR project has a minted MLR config JSON (not the `fil.TODO_` placeholder),
-      which the MLR submission job would otherwise only discover mid-run;
-    - the family registers `can_delete_fastq` (a TypedDict gives no runtime enforcement), and if
-      it claims deletion authority (`True`), its FASTQ-upload project has a resolvable id — else
-      `DeleteDataInIca` would fail at cleanup, after a full alignment run, rather than here.
+    Confirms, purely from the registry tables (no ICA calls), that the configured
+    family is registered and complete for every required role — so a family mistake
+    aborts on the submitter rather than at the first ICA call deep in a job.
 
     Raises:
-        KeyError: If `project_root` isn't a registered family, a required role or its project
-            name is missing, the DRAGEN-align / DRAGEN-MLR project id is absent, or the family
-            has no registered API-key field or `can_delete_fastq` flag.
-        ValueError: If the MLR config JSON is still the not-yet-minted placeholder, or the family
-            sets `can_delete_fastq = True` but registers its FASTQ-upload project with no id.
+        KeyError: If `project_root` isn't a registered family, or a required role /
+            project name / project id / API-key field / `can_delete_fastq` flag is missing.
+        ValueError: If the MLR config JSON is still the not-yet-minted placeholder, or the
+            family sets `can_delete_fastq = True` but its FASTQ-upload project has no id.
     """
     project_root = configured_family()
     for role in REQUIRED_ICA_ROLES:
         resolve_ica_project_name(project_root, role)
+    # DRAGEN-align/MLR are addressed by id at runtime, so their ids must resolve now;
+    # FASTQ-upload's id is legitimately absent for a collaborator-managed family and is
+    # only required when the family claims deletion authority (below).
     resolve_ica_project_id(project_root, ROLE_DRAGEN_ALIGN)
     resolve_ica_project_id(project_root, ROLE_DRAGEN_MLR)
     resolve_ica_api_key_field(project_root)
@@ -109,16 +99,8 @@ def _resolve_sg_canonical_design(sg: SequencingGroup) -> str:
 
 
 def assert_cohort_design_matches_configured_bed(cohort: Cohort) -> None:
-    """Hard-fail at submit time if the cohort isn't a single exome design or the configured
-    BEDs aren't valid for that design.
-
-    Only acts when `workflow.sequencing_type == 'exome'`; genome runs return immediately.
-    Catches both design-mixed cohorts and a config TOML pointing at the wrong design's BEDs
-    before any ICA submission.
-
-    Args:
-        cohort: The cohort whose sequencing groups' designs are checked against
-            `[presets.exome.bed_names]`.
+    """Hard-fail at submit if an exome cohort mixes designs or its configured BEDs
+    don't match the resolved design. Genome runs (non-exome) return immediately.
 
     Raises:
         RuntimeError: If the cohort has no sequencing groups, mixes exome designs, resolves

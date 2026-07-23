@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 import cpg_utils.config
 from cpg_flow.targets import SequencingGroup
-from cpg_utils.config import get_driver_image
 from google.cloud import storage
 from google.cloud.storage.bucket import Bucket
 from icasdk.apis.tags import project_data_api
@@ -34,69 +33,47 @@ def _orchestrate_download(
     md5_file_name: str,
     md5_gcp_name: str,
 ) -> None:
-    """
-    Finds, downloads, verifies, and uploads the set of files.
-    This function contains the core operational logic.
-    """
-    try:
-        # --- 1. Find all three file IDs ---
-        main_file_id = ica_api_utils.find_file_id_by_name(
-            api_instance,
-            path_parameters,
-            base_ica_folder_path,
-            main_file_name,
-        )
-        index_file_id = ica_api_utils.find_file_id_by_name(
-            api_instance,
-            path_parameters,
-            base_ica_folder_path,
-            index_file_name,
-        )
-        md5_file_id = ica_api_utils.find_file_id_by_name(
-            api_instance,
-            path_parameters,
-            base_ica_folder_path,
-            md5_file_name,
-        )
+    """Find, download+MD5-verify, and upload the CRAM/index/MD5 file set to GCS."""
+    # --- 1. Find all three file IDs ---
+    main_file_id, index_file_id, md5_file_id = (
+        ica_api_utils.find_file_id_by_name(api_instance, path_parameters, base_ica_folder_path, name)
+        for name in (main_file_name, index_file_name, md5_file_name)
+    )
 
-        # --- 2. Get expected MD5 hash ---
-        expected_hash, md5_content = ica_utils.get_md5_from_ica(
-            api_instance,
-            path_parameters,
-            md5_file_id,
-        )
-        logger.info(f'Expected MD5 for {main_file_name} is {expected_hash}')
+    # --- 2. Get expected MD5 hash ---
+    expected_hash, md5_content = ica_utils.get_md5_from_ica(
+        api_instance,
+        path_parameters,
+        md5_file_id,
+    )
+    logger.info(f'Expected MD5 for {main_file_name} is {expected_hash}')
 
-        # --- 3. Stream main file, verifying MD5 ---
-        ica_utils.stream_ica_file_to_gcs(
-            api_instance=api_instance,
-            path_parameters=path_parameters,
-            file_id=main_file_id,
-            file_name=main_file_name,
-            gcs_bucket=gcs_bucket,
-            gcs_prefix=gcs_output_path_prefix,
-            expected_md5_hash=expected_hash,
-        )
+    # --- 3. Stream main file, verifying MD5 ---
+    ica_utils.stream_ica_file_to_gcs(
+        api_instance=api_instance,
+        path_parameters=path_parameters,
+        file_id=main_file_id,
+        file_name=main_file_name,
+        gcs_bucket=gcs_bucket,
+        gcs_prefix=gcs_output_path_prefix,
+        expected_md5_hash=expected_hash,
+    )
 
-        # --- 4. Stream index file (no verification) ---
-        ica_utils.stream_ica_file_to_gcs(
-            api_instance=api_instance,
-            path_parameters=path_parameters,
-            file_id=index_file_id,
-            file_name=index_file_name,
-            gcs_bucket=gcs_bucket,
-            gcs_prefix=gcs_output_path_prefix,
-            expected_md5_hash=None,
-        )
+    # --- 4. Stream index file (no verification) ---
+    ica_utils.stream_ica_file_to_gcs(
+        api_instance=api_instance,
+        path_parameters=path_parameters,
+        file_id=index_file_id,
+        file_name=index_file_name,
+        gcs_bucket=gcs_bucket,
+        gcs_prefix=gcs_output_path_prefix,
+        expected_md5_hash=None,
+    )
 
-        # --- 5. Upload the MD5 file itself ---
-        logger.info(f'Uploading MD5 file to {gcs_output_path_prefix}/{md5_gcp_name}')
-        md5_blob = gcs_bucket.blob(f'{gcs_output_path_prefix}/{md5_gcp_name}')
-        md5_blob.upload_from_string(md5_content)
-
-    except Exception as e:
-        logger.error(f'Failed to process files: {e}')
-        raise  # Re-raise to fail the job
+    # --- 5. Upload the MD5 file itself ---
+    logger.info(f'Uploading MD5 file to {gcs_output_path_prefix}/{md5_gcp_name}')
+    md5_blob = gcs_bucket.blob(f'{gcs_output_path_prefix}/{md5_gcp_name}')
+    md5_blob.upload_from_string(md5_content)
 
 
 def run(
@@ -185,7 +162,6 @@ def make_download_job(
     that boilerplate lives.
     """
     job = initialise_python_job(job_name=job_name, target=sequencing_group, tool_name='ICA-Python')
-    job.image(image=get_driver_image())
     job.storage('8Gi')
     job.memory('8Gi')
     job.spot(is_spot=False)

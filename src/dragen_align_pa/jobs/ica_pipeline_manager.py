@@ -70,25 +70,19 @@ def _process_succeeded_transition(
 ) -> bool:
     """Run the transactional on_succeeded callback with a per-target failure cap.
 
-    Returns True if the caller should proceed to mark the target SUCCEEDED
-    (callback succeeded, or no callback configured). Returns False if the
-    caller should leave the target as-is for the next poll cycle — either
-    because the callback raised below the cap, or because it tripped the
-    cap and has already been transitioned to FAILED_FINAL.
-
-    Without a cap, a persistently broken callback (e.g. permanent IAM error
-    on passfail.json fetch) would spin the polling loop forever, re-firing
-    on every iteration and never escalating.
+    Returns True if the caller should mark the target SUCCEEDED (callback
+    succeeded, or none configured). Returns False to leave the target as-is for
+    the next poll cycle — the callback raised below the cap, or tripped the cap
+    and was already transitioned to FAILED_FINAL. The cap stops a persistently
+    broken callback spinning the loop forever.
     """
     if on_succeeded is None:
         return True
     try:
         on_succeeded(target)
     except PassfailStatusError:
-        # A malformed passfail value is deterministic, not transient: every retry
-        # re-reads the same file and re-raises. Propagate immediately so the cohort
-        # aborts with this error instead of spinning to the cap and condemning the
-        # whole batch to FAILED_FINAL.
+        # A malformed passfail value is deterministic (re-reads re-raise); propagate
+        # immediately instead of spinning to the cap and condemning the batch.
         raise
     except Exception as exc:  # noqa: BLE001
         target.on_succeeded_failure_count += 1
@@ -132,6 +126,28 @@ def _failed_final_target_names(monitored_targets: Sequence['MonitoredTarget']) -
     return [t.name for t in monitored_targets if t.status == PipelineStatus.FAILED_FINAL]
 
 
+def _log_status_counts(pipeline_name: str, status_counts: Counter[PipelineStatus]) -> None:
+    """Log the target status breakdown for one poll cycle."""
+    logger.info(
+        f'{pipeline_name} pipeline status: '
+        f'{status_counts[PipelineStatus.SUCCEEDED]} completed, '
+        f'{status_counts[PipelineStatus.INPROGRESS]} in progress, '
+        f'{status_counts[PipelineStatus.FAILED_FINAL]} failed, '
+        f'{status_counts[PipelineStatus.CANCELLED]} cancelled.'
+    )
+
+
+def _flush_error_log(error_log_path: cpg_utils.Path, *, mode: str, on_error: str) -> None:
+    """Copy tmp_errors.log into the GCS error log (best-effort; failures are logged)."""
+    try:
+        with open('tmp_errors.log') as tmp_log_handle:
+            lines = tmp_log_handle.readlines()
+            with error_log_path.open(mode) as gcp_error_log_file:
+                gcp_error_log_file.write('\n'.join(lines))
+    except (OSError, gcs_exceptions.GoogleCloudError) as e:
+        logger.error(f'{on_error}: {e}')
+
+
 def manage_ica_pipeline_loop(  # noqa: PLR0915
     targets_to_process: Sequence[ProcessingTarget],
     outputs: dict[str, cpg_utils.Path],
@@ -147,76 +163,33 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
     on_status_change: Callable[[MonitoredTarget, PipelineStatus], None] | None = None,
     raise_on_failed_final: bool = True,
 ) -> None:
-    """
-    Generic loop to manage ICA pipeline execution for a cohort.
+    """Generic loop to manage ICA pipeline execution for a cohort.
 
     Args:
-        targets_to_process: The list of targets (Cohort, SequencingGroup, or IcaBatch) to process.
+        targets_to_process: Targets (Cohort, SequencingGroup, or IcaBatch) to process.
         outputs: The outputs dictionary for the stage.
-        api_root: The ICA API root endpoint.
-        pipeline_name: Name of the pipeline (e.g., "Dragen", "MLR") for logging.
-        is_mlr_pipeline: Flag for monitor/cancel functions.
-        success_file_key_template: String template for the success file key
-                                   (e.g., '{sg_name}_success').
-        pipeline_id_file_key_template: String template for the pipeline ID file key
-                                        (e.g., '{sg_name}_pipeline_id').
-        error_log_key: The key in 'outputs' for the final error log
-                       (e.g., 'cohort_name_errors').
-        submit_function_factory: A function that takes an sg_name (str) and
-                                 returns a no-argument Callable which, when
-                                 called, submits the job and returns the
-                                 pipeline_id (str).
+        pipeline_name: Pipeline name (e.g. "Dragen", "MLR") for logging.
+        is_mlr_pipeline: Flag for the monitor/cancel functions.
+        success_file_key_template: Template for the success file key (e.g. '{sg_name}_success').
+        pipeline_id_file_key_template: Template for the pipeline ID file key.
+        error_log_key: The `outputs` key for the final error log.
+        submit_function_factory: Given a target name, returns a no-arg Callable
+            that submits the job and returns the pipeline_id.
         allow_retry: Whether to retry a failed pipeline once.
         sleep_time_seconds: Time to sleep between polling loops.
-        on_succeeded: Optional callback invoked when a target transitions to
-                      SUCCEEDED. The callback runs FIRST; only after it returns
-                      successfully is `target.set_status(SUCCEEDED)` and the
-                      success marker file written. If the callback raises, the
-                      target stays INPROGRESS, the next poll cycle re-fires the
-                      callback. This makes the SUCCEEDED transition transactional:
-                      the orchestrator never persists "the batch finished" if
-                      post-success bookkeeping (e.g. downloading passfail.json)
-                      failed.
-
-                      Per-batch `error_strategy` is plumbed via the
-                      `submit_function_factory` closure: the DRAGEN orchestrator
-                      builds a factory that captures the per-batch error_strategy
-                      recorded in `{cohort}_batches.json`, so retry batches with
-                      `error_strategy='continue'` submit correctly without
-                      changing the factory's `Callable[[str], Callable[[], str]]`
-                      signature. MLR's factory ignores this dimension entirely.
-
-                      Note: `on_succeeded` receives the `MonitoredTarget` wrapper,
-                      not the wrapped `IcaBatch` / `SequencingGroup`. Access
-                      `monitored.target.sg_names` (for `IcaBatch`) to reach the
-                      underlying domain object.
-
-                      MLR omits `on_succeeded` — its behaviour is unchanged.
-
-        on_status_change: Optional notification callback invoked when a target
-                      reaches a TERMINAL non-success status (`FAILED_FINAL` or
-                      `CANCELLED`). Fires AFTER `target.set_status(new_status)`,
-                      so it's pure notification — exceptions are caught and
-                      logged but do not roll back the transition. DRAGEN uses
-                      this to mirror the loop's in-memory terminal status into
-                      `{cohort}_batches.json` (without this, the batches file
-                      would forever say `INPROGRESS` for batches that ICA
-                      reported as failed (mapped to `PipelineStatus.FAILED_FINAL`)
-                      or that the operator cancelled via `cancel_cohort_run`,
-                      breaking the per-sample retry
-                      path's `elif b['status'] == BATCH_STATUS_FAILED:` branch).
-                      `SUCCEEDED` is intentionally NOT routed through this
-                      callback — that transition is transactional and goes
-                      through `on_succeeded` instead.
-
-                      MLR omits this callback (default `None`); its in-memory
-                      target state is sufficient because MLR has no equivalent
-                      cohort-level state file.
-
-        raise_on_failed_final: When True (default), the loop raises as soon as
-                      any target reaches `FAILED_FINAL` (after its retry, if
-                      `allow_retry`). When False, FAILED_FINAL targets are
-                      returned to the caller without raising.
+        on_succeeded: Optional callback run when a target reaches SUCCEEDED. Runs
+            FIRST and transactionally: only on clean return is the target marked
+            SUCCEEDED and the success file written; if it raises, the target stays
+            INPROGRESS and the next poll re-fires it. Receives the `MonitoredTarget`
+            wrapper. MLR omits it.
+        on_status_change: Optional notification callback for a TERMINAL non-success
+            status (FAILED_FINAL / CANCELLED), fired AFTER `set_status` (exceptions
+            logged, not rolled back). DRAGEN mirrors terminal status into
+            `{cohort}_batches.json`; SUCCEEDED goes through `on_succeeded` instead.
+            MLR omits it.
+        raise_on_failed_final: When True (default), the loop raises as soon as any
+            target reaches FAILED_FINAL (after its retry if `allow_retry`). When
+            False, FAILED_FINAL targets are returned without raising.
     """
     if not targets_to_process:
         raise ValueError(f'Cannot run {pipeline_name} pipeline management loop with an empty list of targets.')
@@ -275,10 +248,9 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
         return target.status in {PipelineStatus.SUCCEEDED, PipelineStatus.CANCELLED, PipelineStatus.FAILED_FINAL}
 
     def _fire_status_change(target: MonitoredTarget, new_status: PipelineStatus) -> None:
-        """Best-effort notification of a terminal transition. Exceptions are
-        logged and swallowed — the in-memory transition has already happened
-        and we do NOT want to roll it back. Distinct from `on_succeeded`
-        (which is transactional for the SUCCEEDED transition)."""
+        """Best-effort terminal-transition notification; exceptions are logged and
+        swallowed (the in-memory transition stands). Distinct from transactional
+        `on_succeeded`."""
         if on_status_change is None:
             return
         try:
@@ -309,13 +281,9 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
             # Cancel a pipeline if requested
             if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False) and target.pipeline_id:
                 logger.info(f'Cancelling {pipeline_name} pipeline run: {target.pipeline_id} for {target_name}')
-                # Match `_handle_management_flags`'s pre-loop cancel behaviour:
-                # if the ICA abort API fails, log it but still mark the target
-                # CANCELLED locally. User intent (cancel_cohort_run=true) takes
-                # precedence over the API result — without this catch, an ICA
-                # blip during cancel would propagate out of the loop as a
-                # generic exception, bypassing the orchestrator's CohortCancelled
-                # translation at the end of run().
+                # If the ICA abort API fails, log but still mark CANCELLED locally:
+                # user intent overrides the API result, and an uncaught blip here
+                # would bypass run()'s CohortCancelled translation.
                 try:
                     cancel_ica_pipeline_run.run(
                         ica_pipeline_id=target.pipeline_id,
@@ -351,17 +319,10 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                     target.set_status(new_status=PipelineStatus.INPROGRESS)
 
                 elif pipeline_status == 'SUCCEEDED':
-                    # Transactional SUCCEEDED transition: run the post-success callback
-                    # FIRST (e.g. fetch passfail.json + persist into the cohort batches
-                    # file). Only when it returns cleanly do we mark the target SUCCEEDED
-                    # and write the success marker. If the callback raises, leave state
-                    # as INPROGRESS so the next poll cycle re-fires it — this prevents
-                    # divergent state where the loop has set SUCCEEDED but the caller's
-                    # side-state (e.g. batches.json) was not updated.
-                    #
-                    # Capped at MAX_CONSECUTIVE_ON_SUCCEEDED_FAILURES per target: a
-                    # persistently failing callback (e.g. permanent IAM error) escalates
-                    # to FAILED_FINAL rather than spinning the loop forever.
+                    # Transactional SUCCEEDED: run on_succeeded FIRST; only on clean
+                    # return mark SUCCEEDED + write the marker, else stay INPROGRESS and
+                    # re-fire next poll. Capped per target so a persistently failing
+                    # callback escalates to FAILED_FINAL instead of spinning forever.
                     if not _process_succeeded_transition(target, on_succeeded, on_status_change):
                         continue
                     target.set_status(new_status=PipelineStatus.SUCCEEDED)
@@ -373,11 +334,8 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                         )
 
                 elif pipeline_status in ['ABORTING', 'ABORTED']:
-                    # Treated as a user-initiated cancellation: by workflow policy an
-                    # ICA analysis is only ever aborted via our own `cancel_cohort_run`
-                    # flow, never externally through the ICA GUI. If that ever changed,
-                    # an involuntary ABORTED would land here (CANCELLED → cohort halt)
-                    # rather than the retryable FAILED path.
+                    # Treated as user-initiated cancellation: by policy an ICA analysis
+                    # is only aborted via our cancel_cohort_run flow, never the ICA GUI.
                     logger.info(f'{pipeline_name} pipeline {target.pipeline_id} has been cancelled for {target_name}.')
                     target.set_status(new_status=PipelineStatus.CANCELLED)
                     target.pipeline_id = None
@@ -413,64 +371,37 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
             ]
             logger.warning(f'Cancelled {pipeline_name} pipelines: {", ".join(cancelled_pipelines)}')
             if status_counts[PipelineStatus.FAILED_FINAL] > 0:
-                try:
-                    with open('tmp_errors.log') as tmp_log_handle:
-                        lines: list[str] = tmp_log_handle.readlines()
-                        with outputs[error_log_key].open('a') as gcp_error_log_file:
-                            gcp_error_log_file.write('\n'.join(lines))
-                except (OSError, gcs_exceptions.GoogleCloudError) as e:
-                    logger.error(f'Error reading tmp_errors.log: {e}')
-            logger.info(
-                f'{pipeline_name} pipeline status: '
-                f'{status_counts[PipelineStatus.SUCCEEDED]} completed, '
-                f'{status_counts[PipelineStatus.INPROGRESS]} in progress, '
-                f'{status_counts[PipelineStatus.FAILED_FINAL]} failed, '
-                f'{status_counts[PipelineStatus.CANCELLED]} cancelled. '
-            )
+                _flush_error_log(outputs[error_log_key], mode='a', on_error='Error reading tmp_errors.log')
+            _log_status_counts(pipeline_name, status_counts)
             raise Exception(
                 f'The following {pipeline_name} pipelines have been cancelled: {", ".join(cancelled_pipelines)}'
             )
 
         # A target reaches FAILED_FINAL only after its retry is exhausted (or
-        # immediately, when allow_retry=False). Unless the caller opts out
-        # (raise_on_failed_final=False), any such unrecoverable failure aborts
-        # the run — this is the old behaviour minus the 5%-rate gate, so a
-        # single failure halts rather than being tolerated up to a threshold.
-        # DRAGEN opts out: its initial-pass batch failures must survive to the
-        # orchestrator's per-sample retry, and the orchestrator raises on any
-        # SG still failed after that pass.
-        # `status_counts` from above is still current — no target status changes
-        # between there and here (the CANCELLED branch raises).
+        # immediately when allow_retry=False). Unless raise_on_failed_final=False,
+        # any such failure aborts the run (no rate tolerance). DRAGEN opts out so
+        # batch failures survive to its per-sample retry. status_counts is still
+        # current (no status changes since; the CANCELLED branch raises).
         failed_pipelines = _failed_final_target_names(monitored_targets)
         if raise_on_failed_final and failed_pipelines:
             logger.error(
                 f'{pipeline_name} pipelines failed after retries: {" ".join(failed_pipelines)}'
             )
-            try:
-                with open('tmp_errors.log') as tmp_log_handle:
-                    lines = tmp_log_handle.readlines()
-                    with outputs[error_log_key].open('w') as gcp_error_log_file:
-                        gcp_error_log_file.write('\n'.join(lines))
-            except (OSError, gcs_exceptions.GoogleCloudError) as e:
-                logger.error(f'Failed to persist tmp_errors.log to {error_log_key} before failure exit: {e}')
+            _flush_error_log(
+                outputs[error_log_key],
+                mode='w',
+                on_error=f'Failed to persist tmp_errors.log to {error_log_key} before failure exit',
+            )
             raise Exception(
                 f'{pipeline_name} pipelines have failed (FAILED_FINAL): {" ".join(failed_pipelines)}'
             )
-        logger.info(
-            f'{pipeline_name} pipeline status: '
-            f'{status_counts[PipelineStatus.SUCCEEDED]} completed, '
-            f'{status_counts[PipelineStatus.INPROGRESS]} in progress, '
-            f'{status_counts[PipelineStatus.FAILED_FINAL]} failed, '
-            f'{status_counts[PipelineStatus.CANCELLED]} cancelled.'
-        )
+        _log_status_counts(pipeline_name, status_counts)
         if all(is_finished(target) for target in monitored_targets):
             break
         time.sleep(sleep_time_seconds)
 
-    try:
-        with open('tmp_errors.log') as tmp_log_handle:
-            lines = tmp_log_handle.readlines()
-            with outputs[error_log_key].open('w') as gcp_error_log_file:
-                gcp_error_log_file.write('\n'.join(lines))
-    except (OSError, gcs_exceptions.GoogleCloudError) as e:
-        logger.error(f'Failed to persist tmp_errors.log to {error_log_key} on loop exit: {e}')
+    _flush_error_log(
+        outputs[error_log_key],
+        mode='w',
+        on_error=f'Failed to persist tmp_errors.log to {error_log_key} on loop exit',
+    )

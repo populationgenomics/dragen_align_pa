@@ -53,15 +53,11 @@ class IcaPath:
     def under_bucket(cls, *segments: str) -> 'IcaPath':
         """`IcaPath` rooted at the GCS bucket: `/{BUCKET_NAME}/…`.
 
-        The bucket-rooted primitive behind `output_root`. Use it directly for ICA folders
-        that hang off a non-output config folder (e.g. the upload staging area, which roots
-        at `upload_folder` rather than `output_folder`).
+        The primitive behind `output_root`; use it directly for ICA folders that hang off a
+        non-output config folder (e.g. the upload staging area, rooted at `upload_folder`).
 
         Args:
             segments: Path segments below the bucket; each may contain `/`, empties dropped.
-
-        Returns:
-            An `IcaPath` rooted at `{BUCKET_NAME}/…`.
         """
         return cls(cls._split(BUCKET_NAME, *segments))
 
@@ -69,11 +65,8 @@ class IcaPath:
     def output_root(cls) -> 'IcaPath':
         """Build the ICA output root `/{BUCKET_NAME}/{output_folder}`.
 
-        `[ica.data_prep][output_folder]` is read at call time, so the root stays
-        monkeypatchable in tests and configurable per run.
-
-        Returns:
-            An `IcaPath` rooted at `{BUCKET_NAME}/{output_folder}`.
+        `[ica.data_prep][output_folder]` is read at call time, so the root stays monkeypatchable
+        in tests and configurable per run.
 
         Raises:
             cpg_utils.config.ConfigError: If `[ica.data_prep][output_folder]` is unset.
@@ -82,47 +75,28 @@ class IcaPath:
 
     @classmethod
     def from_relpath(cls, relpath: str) -> 'IcaPath':
-        """Build an `IcaPath` from a project-relative path.
-
-        Args:
-            relpath: A project-relative path such as `data/ref/hashtable/...`. Leading,
-                trailing, and repeated slashes are ignored.
-
-        Returns:
-            An `IcaPath` holding the segments of `relpath`.
-        """
+        """Build an `IcaPath` from a project-relative path; leading/trailing/repeated slashes are ignored."""
         return cls(cls._split(relpath))
 
     def __truediv__(self, segment: str) -> 'IcaPath':
         """Return a new `IcaPath` with `segment` appended — the `/` operator.
 
-        Args:
-            segment: A path segment to append. A value containing `/` is split into
-                several segments, and empty parts are dropped so joins never produce `//`.
-
-        Returns:
-            A new `IcaPath`; the original is left unchanged (the type is frozen).
+        A `segment` containing `/` is split into several segments; empty parts are dropped so
+        joins never produce `//`. The original is left unchanged (the type is frozen).
         """
         return IcaPath(self._segments + self._split(segment))
 
     def as_folder(self) -> str:
-        """Render the ICA REST folder form, with a leading and a trailing slash.
-
-        Returns:
-            The path as `/a/b/`, or `/` when the path has no segments.
-        """
+        """Render the ICA REST folder form `/a/b/` (leading + trailing slash), or `/` when empty."""
         if not self._segments:
             return '/'
         return '/' + '/'.join(self._segments) + '/'
 
     def as_file(self, filename: str) -> str:
-        """Render the ICA REST file form: this folder with `filename` appended.
+        """Render the ICA REST file form `/a/b/filename` (leading, no trailing slash).
 
         Args:
             filename: The file's basename; surrounding slashes are stripped.
-
-        Returns:
-            The path as `/a/b/filename`, with a leading but no trailing slash.
 
         Raises:
             ValueError: If `filename` is empty once surrounding slashes are stripped.
@@ -133,20 +107,16 @@ class IcaPath:
         return self.as_folder() + name
 
     def as_url(self, project_role: str) -> str:
-        """Render the `ica://` URL for this path under a configured project.
+        """Render the `ica://<project-name>/a/b` URL for this path (no trailing slash).
 
-        The role resolves to the ICA project *name* via `ica_project_name` (which reads the
-        configured `[ica.projects].project_root` family and picks the role's project) — not the
-        numeric project ID that REST `path_params` use, and not via `resolve_ica_project_id`.
-        Resolution fails loud on a missing/unknown family rather than producing an
+        The role resolves to the ICA project *name* via `ica_project_name` (reads the configured
+        `[ica.projects].project_root` family) — not the numeric project ID REST `path_params`
+        use. Resolution fails loud on a missing/unknown family rather than producing an
         `ica://None/...` URL that fails opaquely inside ICA.
 
         Args:
             project_role: The ICA role (a `constants_registry.REQUIRED_ICA_ROLES` value, e.g.
                 `ROLE_DRAGEN_MLR`) to resolve to an ICA project name.
-
-        Returns:
-            The path as `ica://<project-name>/a/b`, with no trailing slash.
 
         Raises:
             cpg_utils.config.ConfigError: If `[ica.projects].project_root` is unset.
@@ -169,9 +139,8 @@ class IcaPath:
 def gcs_bucket_and_key(path: cpg_utils.Path | str) -> tuple[str, str]:
     """Split a `gs://` path into its bucket and object key.
 
-    The single implementation behind the ad-hoc `removeprefix('gs://…')` string surgery in
-    the download jobs. The `gs://` scheme is required so a malformed path fails loud here
-    rather than silently yielding a wrong split.
+    The `gs://` scheme is required so a malformed path fails loud here rather than silently
+    yielding a wrong split.
 
     Args:
         path: A `gs://bucket/key` path (a `cpg_utils.Path` or its string form).
