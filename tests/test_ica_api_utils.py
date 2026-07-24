@@ -48,12 +48,26 @@ def _fake_access_secret_version_response(payload: dict) -> MagicMock:
     return response
 
 
+def _patch_secret_client(monkeypatch, *, payload=None, side_effect=None) -> MagicMock:
+    """Install a stubbed `_secret_client` whose `access_secret_version` is mocked.
+
+    Pass `payload` for a single happy-path response, or `side_effect` for a
+    sequence/exception (transient-then-success lists, or a raised error).
+    Returns the mock client so callers can assert on `access_secret_version`.
+    """
+    mock_client = MagicMock()
+    if side_effect is not None:
+        mock_client.access_secret_version.side_effect = side_effect
+    else:
+        mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
+    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
+    return mock_client
+
+
 def test__fetch_ica_secrets_returns_parsed_payload(monkeypatch):
     """Happy-path regression: secret JSON → parsed dict."""
     payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}
-    mock_client = MagicMock()
-    mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
-    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
+    _patch_secret_client(monkeypatch, payload=payload)
 
     result = ica_api_utils._fetch_ica_secrets()
 
@@ -66,9 +80,7 @@ def test__fetch_ica_secrets_caches_across_calls(monkeypatch):
     hit Secret Manager exactly once — otherwise a single transient 504 takes
     down the whole monitor job."""
     payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}
-    mock_client = MagicMock()
-    mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
-    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
+    mock_client = _patch_secret_client(monkeypatch, payload=payload)
 
     first = ica_api_utils._fetch_ica_secrets()
     second = ica_api_utils._fetch_ica_secrets()
@@ -85,12 +97,13 @@ def test__fetch_ica_secrets_retries_on_deadline_exceeded(monkeypatch):
     DeadlineExceeded on a transient blip. The retry layer must absorb it and
     return the value on the second attempt."""
     payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}
-    mock_client = MagicMock()
-    mock_client.access_secret_version.side_effect = [
-        gax_exceptions.DeadlineExceeded('Secret Manager 504'),
-        _fake_access_secret_version_response(payload),
-    ]
-    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
+    mock_client = _patch_secret_client(
+        monkeypatch,
+        side_effect=[
+            gax_exceptions.DeadlineExceeded('Secret Manager 504'),
+            _fake_access_secret_version_response(payload),
+        ],
+    )
 
     result = ica_api_utils._fetch_ica_secrets()
 
@@ -102,12 +115,13 @@ def test__fetch_ica_secrets_retries_on_service_unavailable(monkeypatch):
     """ServiceUnavailable (gRPC UNAVAILABLE / HTTP 503) is the other
     transient class — must also be retried."""
     payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}
-    mock_client = MagicMock()
-    mock_client.access_secret_version.side_effect = [
-        gax_exceptions.ServiceUnavailable('Secret Manager 503'),
-        _fake_access_secret_version_response(payload),
-    ]
-    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
+    mock_client = _patch_secret_client(
+        monkeypatch,
+        side_effect=[
+            gax_exceptions.ServiceUnavailable('Secret Manager 503'),
+            _fake_access_secret_version_response(payload),
+        ],
+    )
 
     result = ica_api_utils._fetch_ica_secrets()
 
@@ -119,9 +133,7 @@ def test__fetch_ica_secrets_gives_up_after_persistent_failures(monkeypatch):
     """Persistent (non-transient) Secret Manager unavailability eventually
     propagates after the retry budget is exhausted. The caller (cpg-flow
     job) sees a real failure rather than silent infinite retry."""
-    mock_client = MagicMock()
-    mock_client.access_secret_version.side_effect = gax_exceptions.DeadlineExceeded('persistent 504')
-    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
+    mock_client = _patch_secret_client(monkeypatch, side_effect=gax_exceptions.DeadlineExceeded('persistent 504'))
 
     with pytest.raises(gax_exceptions.DeadlineExceeded):
         ica_api_utils._fetch_ica_secrets()
@@ -137,9 +149,7 @@ def test__fetch_ica_secrets_does_not_retry_non_transient_errors(monkeypatch):
     NotFound — IAM or config errors) must propagate immediately, not be
     retried. Retrying a permanent error would just hammer Secret Manager
     and delay the real failure signal."""
-    mock_client = MagicMock()
-    mock_client.access_secret_version.side_effect = gax_exceptions.PermissionDenied('forbidden')
-    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
+    mock_client = _patch_secret_client(monkeypatch, side_effect=gax_exceptions.PermissionDenied('forbidden'))
 
     with pytest.raises(gax_exceptions.PermissionDenied):
         ica_api_utils._fetch_ica_secrets()
@@ -153,17 +163,14 @@ def test__fetch_ica_secrets_cache_skips_retry_layer_on_subsequent_calls(monkeypa
     swapped for one that would raise. Belt-and-braces against the regression
     Copilot warned about for #8 (loops re-firing callbacks)."""
     payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}
-    happy_client = MagicMock()
-    happy_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
-    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: happy_client)
+    _patch_secret_client(monkeypatch, payload=payload)
     first = ica_api_utils._fetch_ica_secrets()
     assert first == payload
 
-    angry_client = MagicMock()
-    angry_client.access_secret_version.side_effect = AssertionError(
-        'cache must short-circuit; _secret_client must not be called on cache hit',
+    angry_client = _patch_secret_client(
+        monkeypatch,
+        side_effect=AssertionError('cache must short-circuit; _secret_client must not be called on cache hit'),
     )
-    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: angry_client)
     second = ica_api_utils._fetch_ica_secrets()
 
     assert second == payload
@@ -174,9 +181,7 @@ def test_get_ica_api_key_returns_key_when_present(monkeypatch):
     """get_ica_api_key() returns the configured family's key — the default family (conftest:
     `project_root='ourdna'`) authenticates with the base `apiKey`, which the payload carries."""
     payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}
-    mock_client = MagicMock()
-    mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
-    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
+    _patch_secret_client(monkeypatch, payload=payload)
 
     assert ica_api_utils.get_ica_api_key() == 'key-xyz'
 
@@ -186,9 +191,7 @@ def test_get_ica_api_key_raises_when_family_field_missing(monkeypatch):
     field — instead of a bare KeyError at the client call site or an `x-api-key: null` written
     by the CLI. Configuring the tenk10k family needs `tenk10k_apiKey`, absent below."""
     payload = {'projectID': 'proj-abc', 'apiKey': 'key-xyz'}  # no tenk10k_apiKey
-    mock_client = MagicMock()
-    mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
-    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
+    _patch_secret_client(monkeypatch, payload=payload)
     monkeypatch.setattr(
         'dragen_align_pa.constants.constants_registry.config_retrieve',
         lambda key, default=None: 'tenk10k',  # noqa: ARG005
@@ -202,9 +205,7 @@ def test_get_ica_api_key_raises_when_field_blank(monkeypatch):
     """An empty-string key value is treated the same as missing, so it must fail here rather
     than producing a silently-broken client. Default family `ourdna` uses `apiKey`."""
     payload = {'projectID': 'proj-abc', 'apiKey': ''}
-    mock_client = MagicMock()
-    mock_client.access_secret_version.return_value = _fake_access_secret_version_response(payload)
-    monkeypatch.setattr(ica_api_utils, '_secret_client', lambda: mock_client)
+    _patch_secret_client(monkeypatch, payload=payload)
 
     with pytest.raises(KeyError, match=r'apiKey'):
         ica_api_utils.get_ica_api_key()
@@ -295,13 +296,19 @@ def test_check_ica_pipeline_status_retries_on_503_then_succeeds():
     assert api.get_analysis.call_count == 2
 
 
-def test_check_ica_pipeline_status_does_not_retry_409():
-    """409 is retryable only for create-data (via `ica_retry_create`, behind an
+@pytest.mark.parametrize('status', [409, 404])
+def test_check_ica_pipeline_status_does_not_retry_non_transient_status(status):
+    """Any non-(429|503) ApiException must propagate on the first occurrence.
+
+    409: retryable only for create-data (via `ica_retry_create`, behind an
     existence re-check). A status poll goes through the base `ica_retry`, which
-    must propagate 409 on the first occurrence rather than retry a non-idempotent
-    conflict it cannot recover."""
+    must propagate 409 rather than retry a non-idempotent conflict it cannot
+    recover.
+    404 (analysis not found): a real not-retryable error — retrying just delays
+    the failure signal.
+    """
     api = MagicMock()
-    api.get_analysis.side_effect = ApiException(status=409, reason='Conflict')
+    api.get_analysis.side_effect = ApiException(status=status, reason='non-transient')
 
     with pytest.raises(ApiException) as exc_info:
         ica_api_utils.check_ica_pipeline_status(
@@ -309,24 +316,7 @@ def test_check_ica_pipeline_status_does_not_retry_409():
             path_params={'projectId': 'p', 'analysisId': 'a'},
         )
 
-    assert exc_info.value.status == 409
-    assert api.get_analysis.call_count == 1
-
-
-def test_check_ica_pipeline_status_does_not_retry_non_transient_status():
-    """A 404 (analysis not found) is a real not-retryable error — retrying
-    just delays the failure signal. Other non-(429|503) ApiExceptions must
-    propagate on the first occurrence."""
-    api = MagicMock()
-    api.get_analysis.side_effect = ApiException(status=404, reason='Not Found')
-
-    with pytest.raises(ApiException) as exc_info:
-        ica_api_utils.check_ica_pipeline_status(
-            api_instance=api,
-            path_params={'projectId': 'p', 'analysisId': 'a'},
-        )
-
-    assert exc_info.value.status == 404
+    assert exc_info.value.status == status
     assert api.get_analysis.call_count == 1
 
 

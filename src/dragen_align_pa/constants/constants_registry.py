@@ -1,15 +1,13 @@
 """Resolvers over the ICA registry tables in `dragen_align_pa.constants.ica_constants`.
 
-`ica_constants` holds only data (the `ICA_PROJECT_SETUP` and `ICA_FILE_IDS` tables and the
-placeholder marker). The functions here are the logic that reads those tables: project /
-API-key / MLR-config lookups and reference-file-ID resolution. They reference the tables via
-the `ica_constants` module (not `from ica_constants import …`) so a test that patches
+`ica_constants` holds only data; the functions here read those tables (project / API-key /
+MLR-config lookups and reference-file-ID resolution). They reference the tables via the
+`ica_constants` module (not `from ica_constants import …`) so a test that patches
 `dragen_align_pa.constants.ica_constants.<TABLE>` is seen here at call time.
 
 A run operates within one dataset *family*, named by `[ica.projects].project_root`.
-`ICA_PROJECT_SETUP[family]` holds everything that family needs: its per-role projects
-(`projects[role]` → name + id), its API-key secret field, and its MLR config JSON file id. A
-role resolves by direct indexing — there is no inference from project names.
+`ICA_PROJECT_SETUP[family]` holds that family's per-role projects (`projects[role]` → name +
+id), API-key secret field, and MLR config JSON file id. A role resolves by direct indexing.
 """
 
 from typing import Final
@@ -39,12 +37,9 @@ def configured_family() -> str:
 def _family_setup(project_root: str) -> ica_constants.IcaFamilySetup:
     """Return the full `ICA_PROJECT_SETUP` block for family `project_root`.
 
-    Args:
-        project_root: The dataset family — a top-level key of `ICA_PROJECT_SETUP`.
-
     Raises:
-        KeyError: If `project_root` is not a registered family. The message lists the registered
-            families so a `[ica.projects].project_root` typo is immediately actionable.
+        KeyError: If `project_root` is not a registered family (the message lists the registered
+            families).
     """
     try:
         return ica_constants.ICA_PROJECT_SETUP[project_root]
@@ -58,13 +53,9 @@ def _family_setup(project_root: str) -> ica_constants.IcaFamilySetup:
 def _project_entry(project_root: str, role: str) -> ica_constants.IcaProject:
     """Return the `{project_name, project_id}` entry for `role` in family `project_root`.
 
-    Args:
-        project_root: The dataset family.
-        role: One of `REQUIRED_ICA_ROLES`.
-
     Raises:
         KeyError: If `project_root` is not a registered family, or the family has no entry for
-            `role`. The message lists what is registered so a config/table typo is actionable.
+            `role` (the message lists what is registered).
     """
     projects = _family_setup(project_root)['projects']
     try:
@@ -78,29 +69,17 @@ def _project_entry(project_root: str, role: str) -> ica_constants.IcaProject:
 def resolve_ica_project_name(project_root: str, role: str) -> str:
     """Return the ICA project name registered for `role` in family `project_root`.
 
-    Args:
-        project_root: The dataset family (e.g. `ourdna`).
-        role: One of `REQUIRED_ICA_ROLES`.
-
-    Returns:
-        The ICA project name.
-
     Raises:
         KeyError: If the family or role is not registered.
     """
     return _project_entry(project_root, role)['project_name']
 
 
+# A `None` id is deliberate: it marks a project whose data we can't address by ID here (a
+# collaborator-managed FASTQ upload area). Callers that can act on the absence decide what
+# `None` means for them; `resolve_ica_project_id` treats it as an error.
 def resolve_ica_project_id_or_none(project_root: str, role: str) -> str | None:
     """Return the ICA project ID for `role`, or `None` if registered without one.
-
-    A `None` id is deliberate: it marks a project whose data we can't address by ID here (a
-    collaborator-managed FASTQ upload area). Callers that can act on the absence decide what
-    `None` means for them; `resolve_ica_project_id` treats it as an error.
-
-    Args:
-        project_root: The dataset family.
-        role: One of `REQUIRED_ICA_ROLES`.
 
     Raises:
         KeyError: If the family or role is not registered.
@@ -111,18 +90,13 @@ def resolve_ica_project_id_or_none(project_root: str, role: str) -> str | None:
 def resolve_ica_project_id(project_root: str, role: str) -> str:
     """Return the ICA project ID for `role` in family `project_root`, requiring one.
 
-    Args:
-        project_root: The dataset family.
-        role: One of `REQUIRED_ICA_ROLES`.
-
     Returns:
         The ICA project ID (UUID).
 
     Raises:
         KeyError: If the family or role is not registered.
         ValueError: If the role is registered with an explicit `None` id (collaborator-managed;
-            use `resolve_ica_project_id_or_none`). This mirrors the placeholder-file-id path:
-            both mean "registered but unusable", distinct from "not registered" (`KeyError`).
+            use `resolve_ica_project_id_or_none`).
     """
     project_id = resolve_ica_project_id_or_none(project_root, role)
     if project_id is None:
@@ -137,12 +111,8 @@ def resolve_ica_project_id(project_root: str, role: str) -> str:
 def resolve_ica_api_key_field(project_root: str) -> str:
     """Return the `illumina_cpg_workbench_api` secret field holding `project_root`'s API key.
 
-    The secret carries one API-key field per dataset family (OurDNA's `apiKey`, tenk10k's
-    `tenk10k_apiKey`, …). Selecting per family keeps one dataset's key from being used against
-    another's project.
-
-    Args:
-        project_root: The dataset family.
+    One API-key field per dataset family (OurDNA's `apiKey`, tenk10k's `tenk10k_apiKey`, …);
+    selecting per family keeps one dataset's key from being used against another's project.
 
     Returns:
         The secret field name (e.g. `apiKey`).
@@ -156,15 +126,6 @@ def resolve_ica_api_key_field(project_root: str) -> str:
 def resolve_mlr_config_file_id(project_root: str) -> str:
     """Return the ICA file ID of family `project_root`'s MLR config JSON.
 
-    The config JSON lives in the family's MLR project; its file id is registered under
-    `ICA_PROJECT_SETUP[family]['mlr_config_json']`.
-
-    Args:
-        project_root: The dataset family.
-
-    Returns:
-        The ICA file ID of that family's MLR config JSON.
-
     Raises:
         KeyError: If `project_root` is not a registered family.
         ValueError: If the registered value is still the `fil.TODO_…` placeholder (not yet uploaded).
@@ -176,13 +137,9 @@ def resolve_mlr_config_file_id(project_root: str) -> str:
 def resolve_ica_can_delete_fastq(project_root: str) -> bool:
     """Return whether we may delete uploaded FASTQ data for family `project_root`.
 
-    This is the authoritative in-repo call on FASTQ-deletion authority (ICA enforces the same
-    permission independently, so a `True` here still can't delete from a collaborator project).
-    A family we don't control the upload area for registers `can_delete_fastq = False`, and
-    `DeleteDataInIca` skips its FASTQ deletion.
-
-    Args:
-        project_root: The dataset family.
+    The authoritative in-repo call on FASTQ-deletion authority (ICA enforces the same permission
+    independently, so a `True` here still can't delete from a collaborator project). A family
+    whose upload area we don't control registers `can_delete_fastq = False`.
 
     Returns:
         `True` if the pipeline may attempt FASTQ deletion for this family, else `False`.
@@ -246,8 +203,7 @@ def resolve_ica_file_id(name: str) -> str:
         The ICA `fil.…`/`fol.…` ID for `name`.
 
     Raises:
-        KeyError: If `name` is not registered. The message lists the registered basenames, so a
-            config typo surfaces at submitter startup with an immediately actionable message.
+        KeyError: If `name` is not registered (the message lists the registered basenames).
         ValueError: If the registered value is still the `fil.TODO_…` placeholder (not yet uploaded).
     """
     try:
@@ -276,17 +232,14 @@ def resolve_cnv_normals_panel(panel_name: str) -> tuple[str, list[str]]:
 
     Returns:
         A `(normals_list_basename, file_ids)` tuple: the basename DRAGEN reads via
-        `--cnv-normals-list` (`<panel>.normals.txt`, derived from `panel_name`
-        because the builder always names it that way), and every ICA file ID in
-        the panel (the list file first, then the per-SG count files) to pass as
+        `--cnv-normals-list` (`<panel>.normals.txt`, derived from `panel_name`), and every ICA
+        file ID in the panel (the list file first, then the per-SG count files) to pass as
         analysis data inputs.
 
     Raises:
-        KeyError: If `panel_name` is not registered. The message lists the
-            registered panels so a config typo surfaces at submitter startup.
-        ValueError: If the panel has no `pon_list_file` entry, its `count_file_ids`
-            is not a list, or any registered file ID is still a `fil.TODO_…`
-            placeholder.
+        KeyError: If `panel_name` is not registered (the message lists the registered panels).
+        ValueError: If the panel has no `pon_list_file` entry, its `count_file_ids` is not a
+            list, or any registered file ID is still a `fil.TODO_…` placeholder.
     """
     try:
         panel = ica_constants.ICA_PON_FILE_IDS[panel_name]

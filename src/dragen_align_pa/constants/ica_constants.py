@@ -12,26 +12,20 @@ BUCKET: Final = cpg_utils.to_path(output_path(suffix=''))
 BUCKET_NAME: Final = str(BUCKET).removeprefix('gs://').removesuffix('/')
 DRAGEN_VERSION: Final = config_retrieve(['ica', 'pipelines', 'dragen_version'])
 
-# Placeholder marker for ICA file IDs that haven't been minted yet (i.e. the
-# files exist in GCS but haven't been uploaded to ICA). Replace per-entry with
-# the real `fil.…` ID once the corresponding upload lands. Any value starting
-# with this prefix is rejected by the file-ID resolvers in constants_registry
-# (which reads TODO_FID_PREFIX) to keep stock-config submissions from passing
-# the literal sentinel to ICA and failing opaquely there.
+# Placeholder marker for ICA file IDs not yet minted (the files exist in GCS but aren't uploaded
+# to ICA). Replace per-entry with the real `fil.…` ID once the upload lands. The file-ID
+# resolvers in constants_registry reject any value with this prefix, so a stock-config
+# submission fails loud here rather than opaquely inside ICA.
 TODO_FID_PREFIX: Final = 'fil.TODO_'
 _TODO_FID: Final = f'{TODO_FID_PREFIX}REPLACE_AFTER_ICA_UPLOAD'
 
 
-# The config-free DRAGEN batch / pipeline-management constants (batch status +
-# passfail vocabulary, schema version, chunking width, ICA status vocabulary)
-# live in `batch_constants.py` so they can be imported without a loaded config.
+# The config-free DRAGEN batch / pipeline-management constants live in `batch_constants.py` so
+# they can be imported without a loaded config.
 
 
-# ICA project setup
-# Contains the following:
-# A project block informing the user of the project names and IDs for running pipelines in ICA
-# An api key dict recording the name of the apikey secret in secretsmanager
-# An ICA file ID for the MLR config JSON
+# ICA project setup: per-family project names+IDs, the apikey secret name, and the MLR config
+# JSON file ID.
 class IcaProject(TypedDict):
     project_name: str
     project_id: str | None
@@ -85,11 +79,10 @@ ICA_PROJECT_SETUP: Final[dict[str, IcaFamilySetup]] = {
     },
 }
 
-# MLR setup information.
-# Project-relative MLR hash table path; the ICA project is the configured family's `dragen_mlr`
-# project, resolved at use time via `IcaPath.from_relpath(MLR_HASH_TABLE_RELPATH).as_url(ROLE_DRAGEN_MLR)`.
-# The hashtable is provided as a part of the popgen cli package in every ICA project and always exists at this path.
-# We always use an 'economy' instance.
+# MLR setup. Project-relative MLR hash table path, resolved at use time via
+# `IcaPath.from_relpath(MLR_HASH_TABLE_RELPATH).as_url(ROLE_DRAGEN_MLR)`. The hashtable ships
+# with the popgen cli package in every ICA project and always exists at this path. We always use
+# an 'economy' instance.
 MLR_HASH_TABLE_RELPATH: Final = 'data/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9'
 ANALYSIS_INSTANCE_TIER: Final[str] = 'economy'
 
@@ -458,14 +451,11 @@ DESIGN_TO_CANONICAL: Final[dict[str, str]] = {
     'AgilentCREv2WES': CANONICAL_DESIGN_CREV2,
 }
 
-# Per canonical design: the BED basenames known to belong to it. The validator
-# in validator.assert_cohort_design_matches_configured_bed uses this to check that
-# the basenames named in [presets.exome.bed_names] match the cohort's resolved
-# design. All entries must also be registered in ICA_FILE_IDS above.
-# CRE (v1) intentionally has no entry: Agilent doesn't distribute a Regions
-# BED for CRE, and the Covered BED hasn't been uploaded yet. A CRE cohort run
-# will fail at the validator with "No DESIGN_TO_BEDS entry for design 'CRE'"
-# until the Covered BED is registered.
+# Per canonical design: the BED basenames known to belong to it, used by
+# validator.assert_cohort_design_matches_configured_bed to check [presets.exome.bed_names]
+# against the cohort's resolved design. All entries must also be in ICA_FILE_IDS above.
+# CRE (v1) intentionally has no entry (Agilent ships no Regions BED for CRE and the Covered BED
+# isn't uploaded yet), so a CRE cohort fails at the validator until the Covered BED is registered.
 DESIGN_TO_BEDS: Final[dict[str, frozenset[str]]] = {
     CANONICAL_DESIGN_CREV2: frozenset({'S30409818_Regions.bed', 'S30409818_Covered.bed'}),
     CANONICAL_DESIGN_TWIST: frozenset({'Twist_VCGS_Exome_Covered_Targets_hg38.bed'}),

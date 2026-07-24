@@ -174,15 +174,11 @@ def get_batch_artefacts_root() -> cpg_utils.Path:
 
 
 def get_batch_artefacts_path(cohort_name: str, batch_index: int) -> cpg_utils.Path:
-    """GCS folder for this cohort's outputs. Each batch gets a subfolder containing
-    `passfail.json`, `summary.json`, and a `reports/` directory.
+    """GCS folder for this cohort+batch's outputs (`passfail.json`, `summary.json`, `reports/`).
 
-    Note: the GCS subdirectory uses **underscore** (`{cohort}_batch{NN}`) — distinct
-    from `IcaBatch.name`, which uses **hyphen** (`{cohort}-batch{NN}`) as the
-    cpg-flow target identifier. The two are deliberately split: hyphen for the
-    in-process target name (cpg-flow Stage identifier convention), underscore
-    for the GCS path (filesystem-friendly, won't be confused with the cohort name).
-    Both forms zero-pad `batch_index` to width 4.
+    Uses underscore (`{cohort}_batch{NN}`), deliberately distinct from `IcaBatch.name`'s
+    hyphen (`{cohort}-batch{NN}`, the cpg-flow target identifier): hyphen for the in-process
+    target name, underscore for the filesystem-friendly GCS path. Both zero-pad to width 4.
     """
     return get_batch_artefacts_root() / f'{cohort_name}_batch{batch_index:04d}'
 

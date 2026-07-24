@@ -25,17 +25,11 @@ from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
 
 @dataclass
 class _StreamStats:
-    """Per-cohort marker-payload tracking.
+    """Per-cohort marker payload: failure *identities* (for targeted retry), not just counts.
 
-    Tracks *identities* (not just counts) for failures so an operator reading
-    the marker payload can see which specific files failed and run a targeted
-    retry instead of having to scrape job logs.
-
-    `lookup_failure` and `stream_failure` are split so a cohort-wide auth /
-    connectivity outage (lookup-heavy) is distinguishable from a transfer /
-    GCS outage (stream-heavy). `FileNotFoundError` at lookup is legitimate
-    absence and is NOT recorded as a failure. `skipped` counts files already
-    present in GCS from a previous (partial) run.
+    `lookup_failures` vs `stream_failures` separates a lookup-heavy auth/connectivity
+    outage from a transfer/GCS outage. `skipped` counts files already present in GCS from
+    a prior (partial) run; legitimate `FileNotFoundError` at lookup is NOT a failure.
     """
 
     success: int = 0
@@ -60,20 +54,15 @@ def _stream_silently(
 ) -> None:
     """Stream one file to GCS; warn-and-skip on transient ICA / HTTP / GCS errors.
 
-    Skips outright if the GCS blob already exists, supporting a 'delete the
-    marker and re-run' retry workflow that re-attempts only previously-failed
-    files. GCS resumable uploads only finalize on completion, so a stream
-    failure in a previous run won't leave a partial blob — an existing blob
-    means a previous run committed successfully.
-
-    Wraps `stream_ica_file_to_gcs` so one transient blip doesn't abort the
-    whole cohort mid-loop. MD5-mismatch (`ValueError`) is intentionally not
-    caught — we pass `expected_md5_hash=None` here so it's unreachable, but a
-    future caller passing a hash should crash hard on integrity violations.
-    If MD5 verification is ever wired through this function, the skip-if-exists
-    branch above needs to be gated on a "verified" sidecar or removed —
-    trusting an existing blob is only safe in the no-hash regime.
+    Skips if the GCS blob already exists, supporting a 'delete the marker and re-run'
+    retry that re-attempts only failed files (GCS resumable uploads finalize only on
+    completion, so an existing blob means a prior run committed successfully).
     """
+    # MD5-mismatch (ValueError) is deliberately NOT caught: unreachable here with
+    # expected_md5_hash=None, but a future caller passing a hash must crash on an
+    # integrity violation. Wiring MD5 through here also means the skip-if-exists branch
+    # must be gated on a "verified" sidecar — trusting an existing blob is only safe
+    # in the no-hash regime.
     gcs_blob_path = f'{gcs_prefix}/{file_name}'
     if gcs_bucket.blob(gcs_blob_path).exists():
         stats.skipped += 1
@@ -112,10 +101,9 @@ def _stream_named_file(
 ) -> None:
     """Find one named file in `parent_folder` and stream it to `gcs_prefix/file_name`.
 
-    `FileNotFoundError` at lookup is legitimate absence — passfail.json and
-    summary.json may be missing on a catastrophically-failed batch — and is
-    NOT counted as a failure. ICA `ApiException` is `lookup_failure` (the
-    file may exist; we couldn't address it).
+    `FileNotFoundError` at lookup is legitimate absence (passfail/summary may be missing
+    on a catastrophically-failed batch) and isn't counted; ICA `ApiException` is a
+    `lookup_failure` (the file may exist; we couldn't address it).
     """
     try:
         file_id = ica_api_utils.find_file_id_by_name(

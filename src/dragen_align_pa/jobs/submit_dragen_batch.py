@@ -237,23 +237,15 @@ def _load_per_sg_fastq_lists(
     sg_names: list[str],
     per_sg_fastq_list_paths: dict[str, cpg_utils.Path],
 ) -> tuple[list[str], pd.DataFrame]:
-    """Loads per-SG FASTQ list CSVs (output of MakeFastqFileList) and returns:
-    - the concatenated DataFrame (one CSV per batch),
-    - the union of all FASTQ filenames referenced across those CSVs.
+    """Load per-SG FASTQ list CSVs (output of MakeFastqFileList).
+
+    Returns the concatenated batch DataFrame and the union of FASTQ filenames.
 
     Raises:
-        ValueError: if any per-SG CSV has a different column header than the
-                    first one (`pd.concat` would otherwise silently fill the
-                    missing columns with NaN and produce a malformed batch CSV).
-        ValueError: if a SG's CSV has zero data rows — the batch would silently
-                    omit that SG's reads and surface only as a passfail Fail
-                    much later.
-        ValueError: if two SGs in the same batch reference the same FASTQ
-                    filename — same physical file as R1/R2 for distinct
-                    samples is a programmer error. Silently dedup-via-set
-                    would pass the downstream count-mismatch check while
-                    DRAGEN sees more rows in the fastq_list CSV than the
-                    matched dataIds, a hidden corruption mode.
+        ValueError: a per-SG CSV has a header differing from the first (concat
+            would fill NaN and corrupt the batch CSV); a CSV has zero data rows
+            (the SG's reads would be silently omitted); or two SGs reference the
+            same FASTQ filename (a programmer error that hides a count mismatch).
     """
     fastq_filenames: list[str] = []
     fastq_filename_owner: dict[str, str] = {}
@@ -365,14 +357,9 @@ def _build_fastq_data_inputs(
 ) -> tuple[list[AnalysisDataInput], str]:
     """Construct ICA data inputs for a FASTQ-mode batch.
 
-    Returns (data_inputs, fastq_list_fid). The per-batch combined CSV is uploaded inline.
-
-    Duplicate handling: a FASTQ filename may appear in {cohort}_fastq_ids.json
-    more than once (re-upload after a transient failure leaves both rows in
-    the manifest, with distinct ICA IDs). We deterministically keep the LAST
-    row per fastq_name (most recent upload wins) and log when collapsing —
-    sending all matched IDs would push duplicates into dataIds and silently
-    submit the wrong/stale file.
+    Returns (data_inputs, fastq_list_fid); the per-batch combined CSV is uploaded
+    inline. A fastq_name duplicated in {cohort}_fastq_ids.json (re-upload) is
+    collapsed to the LAST (most recent) row, logging the discards.
     """
     sg_fastq_names, combined_csv = _load_per_sg_fastq_lists(batch.sg_names, per_sg_fastq_list_paths)
     fastq_ids_df: pd.DataFrame = _read_fastq_ids(fastq_ids_path)
@@ -431,9 +418,8 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
             f'{len(coverage_region_bed_names)} entries; DRAGEN supports at most '
             f'{_MAX_COVERAGE_REGION_BEDS}. Trim the list in your TOML.',
         )
-    # Resolve human-readable BED basenames to ICA file IDs. Doing this at the
-    # data-inputs assembly step (rather than mid-submission) makes a typo or
-    # unstaged BED fail fast with a clear error, before any ICA round-trip.
+    # Resolve BED basenames to ICA file IDs here so a typo/unstaged BED fails fast
+    # before any ICA round-trip.
     coverage_region_bed_ids = [resolve_ica_file_id(name) for name in coverage_region_bed_names]
 
     # Cross-contamination VCF is seqtype-agnostic, so it stays at [ica.qc]. Like
@@ -507,34 +493,13 @@ def run(
         fastq_list_fid: only set in FASTQ mode (str)
         cram_fids: only set in CRAM mode (list[str])
 
-    Caller is responsible for persisting the result into the cohort batches file.
-
-    Persistence boundary (caller contract):
-
-    1. `run` does NOT touch state files. It returns the submission identity to
-       the caller. If `run` raises (network blip, ICA 5xx, etc.), no state has
-       been written and the caller can safely retry.
-    2. If `submit_nextflow_analysis` returns successfully, an ICA analysis
-       exists. If the caller then crashes BEFORE persisting per-SG state files
-       + `{cohort}_batches.json`, the next orchestrator pass sees status
-       PENDING and re-submits — generating a new pipeline_id and orphaning
-       the previous analysis (it will eventually be cleaned up by ICA's
-       retention policy). This is intentional: we prefer at-least-once
-       submission with idempotent reconciliation over a multi-write
-       transaction.
-    3. The caller (`manage_dragen_pipeline.py::_build_submit_callable`)
-       persists in this order: per-SG state files first (best-effort
-       projections of batches.json) → `batches.json` (the commit point).
-       The order is intentional: if we crash between the two writes,
-       batches.json still shows the batch as PENDING, the next pass
-       re-submits, and per-SG state gets overwritten — reconverging
-       cleanly rather than presenting downstream readers with a state
-       file referencing an unacknowledged batch.
+    Persistence boundary: `run` writes no state — it returns the submission identity
+    and, on raise, leaves nothing written so the caller can safely retry. The caller
+    persists per-SG state then batches.json (at-least-once submission with idempotent
+    reconciliation; see BatchesFile "Note on atomic writes").
     """
-    # Fail-fast input-mode validation, BEFORE any GCS / ICA / secrets IO,
-    # so misuse surfaces cheaply at the orchestrator layer. Exactly one of
-    # CRAM mode (cram_state_paths) or FASTQ mode (fastq_ids_path +
-    # per_sg_fastq_list_paths) must be populated.
+    # Fail-fast input-mode validation BEFORE any IO: exactly one of CRAM mode
+    # (cram_state_paths) or FASTQ mode (fastq_ids_path + per_sg_fastq_list_paths).
     validate_error_strategy(error_strategy, context=f'submit_dragen_batch.run(batch={batch.name})')
     cram_mode = cram_state_paths is not None
     fastq_mode = fastq_ids_path is not None or per_sg_fastq_list_paths is not None

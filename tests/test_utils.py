@@ -9,17 +9,7 @@ import pytest
 
 from dragen_align_pa import utils
 from dragen_align_pa.utils import get_bed_names_for_seqtype
-
-
-def _config_factory(sequencing_type='exome', bed_names=None):
-    cfg: dict[tuple[str, ...], object] = {('workflow', 'sequencing_type'): sequencing_type}
-    if bed_names is not None:
-        cfg[('dragen_align_pa', 'manage_dragen_pipeline', 'presets', 'exome', 'bed_names')] = bed_names
-
-    def fake_retrieve(key, default=None):
-        return cfg.get(tuple(key), default)
-
-    return fake_retrieve
+from tests._config_helpers import _config_factory
 
 
 def test_get_bed_names_returns_empty_for_genome(monkeypatch):

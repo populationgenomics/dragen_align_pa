@@ -1,17 +1,15 @@
 """Delete cohort outputs + source CRAMs/FASTQs from ICA to release storage.
 
-Two deletion passes share one ICA client — both projects are in the same dataset family, so the
-family API key authenticates both and only the `projectId` differs:
-- DRAGEN-align project: the cohort-level analysis output folder (cascades to per-batch analyses,
-  per-SG outputs, per-batch FASTQ list CSVs) + the per-SG uploaded CRAM file IDs.
-- FASTQ-upload project (FASTQ mode only): the linked FASTQ file IDs from `FastqIntakeQc`'s
-  outpath. Skipped when the family's `can_delete_fastq` is false (collaborator-managed).
+Two passes share one ICA client (both projects are in the same dataset family, so the
+family API key authenticates both and only the `projectId` differs):
+- DRAGEN-align project: the cohort-level analysis output folder (cascades to per-batch
+  analyses, per-SG outputs, per-batch FASTQ list CSVs) + the per-SG uploaded CRAM file IDs.
+- FASTQ-upload project (FASTQ mode only): the linked FASTQ file IDs; skipped when the
+  family's `can_delete_fastq` is false (collaborator-managed).
 
-Each pass fires all deletes, sleeps `settle_seconds` (default 60) for ICA's async delete state
-machine, then verifies via `get_project_data` (404 or `status='DELETING'` is success). Failures
-across both passes are aggregated into a TSV log at
-`get_pipeline_path('{cohort}_delete_errors.log')`; on any failure the job raises so the cpg-flow
-stage shows red.
+Each pass fires all deletes, sleeps `settle_seconds` (default 60) for ICA's async delete
+state machine, then verifies via `get_project_data` (404 or `status='DELETING'` is success).
+Failures across both passes are aggregated into a TSV log and the job raises on any failure.
 """
 
 import json
@@ -150,15 +148,9 @@ def _write_success_marker(
 ) -> None:
     """Write the audit marker recording what this run deleted.
 
-    Args:
-        output_path: Where to write the marker JSON.
-        cohort_name: The cohort processed.
-        cohort_folder_fid: The deleted cohort-level analysis output folder id.
-        cram_count: Number of per-SG CRAM file ids deleted from the DRAGEN project.
-        fastq_count: Number of FASTQ file ids in scope, or `None` in CRAM-only mode. When the
-            FASTQ pass was skipped, these were not deleted (see `fastq_skipped`).
-        fastq_skipped: `True` if the FASTQ pass was skipped (collaborator-managed family), so
-            `fastq_count` reflects files left for the collaborator to delete, not files deleted.
+    `fastq_count` is `None` in CRAM-only mode. When `fastq_skipped` is True
+    (collaborator-managed family), `fastq_count` reflects files left for the
+    collaborator to delete, not files deleted.
     """
     payload: dict[str, Any] = {
         'cohort_name': cohort_name,

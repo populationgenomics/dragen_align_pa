@@ -31,40 +31,24 @@ def parse_passfail_file(path: Path | cpg_utils.Path) -> dict[str, str]:
         return json.load(fh)
 
 
+# Returns None ONLY on genuine absence — never on a transient blip. The
+# transactional on_succeeded caller leaves the batch INPROGRESS and re-fires on a
+# raised error; treating a blip as "no passfail.json" would instead mark every SG
+# Fail and wastefully retry samples that actually succeeded.
 def fetch_passfail_from_ica(
     api_instance: project_data_api.ProjectDataApi,
     path_parameters: dict[str, str],
     ica_folder_path: str,
 ) -> dict[str, str] | None:
-    """Fetch passfail.json from an ICA folder and parse it in-memory.
+    """Fetch and parse passfail.json from an ICA folder in-memory (KB-scale, no staging).
 
-    Returns the parsed `{sample_id: status}` mapping on success, or `None`
-    **only** when passfail.json is legitimately absent (a catastrophically-
-    failed batch that didn't produce one). The file is small (KB-scale), so
-    we never stage to GCS or disk.
+    Returns the `{sample_id: status}` mapping, or `None` only when passfail.json is
+    legitimately absent (a catastrophically-failed batch that didn't produce one).
 
-    Transient errors **raise** so the caller (the transactional `on_succeeded`
-    in `manage_dragen_pipeline.py`) leaves the batch's status as INPROGRESS
-    and re-fires on the next poll cycle — eventually escalating to
-    FAILED_FINAL via the on_succeeded failure cap if the issue is persistent.
-    Without this distinction, a transient network blip would be silently
-    treated as "no passfail.json", marking every SG in the batch as Fail and
-    triggering a wasted retry pass on samples that actually succeeded.
-
-    Failure handling:
-    - `FileNotFoundError` from the lookup → return None (legitimate absence).
-    - `icasdk.ApiException` from lookup, URL minting, or any other ICA call
-      → log and re-raise.
-    - `requests.RequestException` from the GET (network, timeout, etc.) →
-      log and re-raise.
-    - `requests.HTTPError` with 403 → presigned URL expired between minting
-      and reading; mint a fresh URL once and retry. A second 403 surfaces
-      via `response.raise_for_status()` and is re-raised by the
-      `RequestException` catch.
-    - `json.JSONDecodeError` on `response.json()` → the presigned URL
-      occasionally serves a non-JSON body (e.g. an upstream proxy returning
-      a maintenance HTML page with status 200, slipping past
-      `raise_for_status`). Log and re-raise.
+    Raises:
+        icasdk.ApiException / requests.RequestException / json.JSONDecodeError: On
+            transient ICA, network, or non-JSON-body (200 from a proxy maintenance
+            page) errors.
     """
     try:
         file_id = ica_api_utils.find_file_id_by_name(

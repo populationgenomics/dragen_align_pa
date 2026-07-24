@@ -68,11 +68,8 @@ def normalise_passfail_status(value: str, *, context: str) -> str:
 class IcaBatch:
     """Internal target representing a batch of SGs for the unified DRAGEN pipeline.
 
-    Not a cpg-flow target type — only `.name` is consumed by
-    `manage_ica_pipeline_loop`. Named `IcaBatch` (rather than the more
-    natural `Batch`) to avoid confusion with `hailtop.batch.Batch` —
-    `cpg_utils.hail_batch.Batch` shows up in submit-time code paths and
-    the unqualified `Batch` symbol there means the Hail concept.
+    Not a cpg-flow target type — only `.name` is consumed by the pipeline loop.
+    Named `IcaBatch` (not `Batch`) to avoid confusion with `hailtop.batch.Batch`.
     """
 
     cohort_name: str
@@ -126,79 +123,30 @@ def chunk_sgs_into_batches(
 
 
 class BatchesFile:
-    """Reader/writer for `{cohort_name}_batches.json`.
+    """Authoritative reader/writer for `{cohort_name}_batches.json`.
 
-    Both FASTQ and CRAM modes are batched identically (N SGs per ICA analysis);
-    only the input-bundle shape at submission time differs. The schema records
-    everything needed to identify "what was in this batch" so future cleanup
-    or audit can use a single source of truth.
+    FASTQ and CRAM modes are batched identically (N SGs per ICA analysis); only
+    the submit-time input bundle differs. The per-batch schema is defined by
+    `_new_batch_entry` and enforced on read by `_REQUIRED_BATCH_KEYS`. Per-SG
+    `_pipeline_id_and_arguid.json` files are derived projections of this file.
 
-    Schema (top-level):
-        {
-            "schema_version": int,
-            "batch_size": int,
-            "n_batches": int,
-            "batches": [
-                {
-                    "batch_index": int,
-                    "retry_generation": int,           # 0 for initial, 1 for retry batches
-                    "sg_names": [str, ...],
-                    "retried_sgs": [str, ...],         # subset of sg_names pulled into retry batches
-                    "user_reference": str | null,
-                    "pipeline_id": str | null,
-                    "ar_guid": str | null,
-                    "analysis_output_folder_fid": str | null,   # populated lazily by `_on_succeeded`
-                    "fastq_list_fid": str | null,      # FASTQ mode: combined per-batch CSV ID
-                    "cram_fids": [str, ...] | null,    # CRAM mode: ordered list of per-SG CRAM IDs
-                    "status": "PENDING" | "INPROGRESS" | "SUCCEEDED" | "FAILED" | "CANCELLED",
-                    "passfail": {sg_name: "Success" | "Fail"} | null,
-                    "passfail_seen": bool,             # True iff passfail.json was fetched + recorded
-                    "has_been_retried": bool,          # action gate; pre-set True for retry_generation=1
-                    "error_strategy": "auto" | "continue" | "terminate",
-                }
-            ],
-        }
+    retry_generation / has_been_retried / retried_sgs:
+    - retry_generation 0 = initial batch; 1 = spawned by `add_retry_batch`.
+    - `retried_sgs` (via `mark_sgs_retried`) is the per-SG audit trail.
+    - `has_been_retried` is the action gate: `_build_retry_batches` skips it,
+      and it flips True on the first retry of any SG (single-retry-per-batch).
+      Retry batches pre-set it True so a second pass short-circuits.
+    - Resume keys on retry_generation + status (NOT has_been_retried) so
+      in-flight retry batches survive a crash.
 
-    Authoritative state. Per-SG `_pipeline_id_and_arguid.json` files are derived
-    projections of this file, materialised eagerly to satisfy the cpg-flow per-SG
-    I/O contract. If a per-SG projection is missing or stale, it can be
-    reconstructed from this file (the consumer of `get_ica_sample_folder` is
-    responsible for the fallback).
-
-    Note on `retry_generation` / `has_been_retried` / `retried_sgs`:
-    - `retry_generation = 0`: initial batch.
-    - `retry_generation = 1`: spawned by `add_retry_batch` from failed SGs.
-    - `retried_sgs`: which of *this* batch's `sg_names` have been pulled into a
-      retry batch. Maintained by `mark_sgs_retried`; the per-SG audit record
-      complements the batch-level `has_been_retried` flag.
-    - `has_been_retried` is the action gate (`_build_retry_batches` skips
-      batches where it's True). `mark_sgs_retried` flips it True on the first
-      retry of any SG from this batch — the "single retry only" rule applies
-      at the batch level, so partial retries still consume the batch's retry
-      allowance. Retry batches have `has_been_retried = True` set at creation
-      so a hypothetical second retry pass short-circuits.
-    - Resume uses `retry_generation` + `status` to decide what to re-monitor
-      (NOT `has_been_retried`) so in-flight retry batches survive a crash.
-
-    Note on atomic writes:
-    - GCS object PUTs are atomic at the object level — `cpg_utils.Path.open('w')`
-      uploads the file in a single PUT on close, so readers either see the old
-      content or the new content, never a partial. We do NOT use a `.tmp`
-      sidecar + rename: that pattern is broken on GCS (rename = copy+delete,
-      not atomic) and unnecessary given the single-PUT guarantee.
-    - Multi-file writes (batches.json + per-SG state files) are not atomic
-      across files. The submitter writes per-SG state files first (best-effort
-      projections), then batches.json (the commit point). On crash between
-      writes, the batches file still shows the batch as PENDING/INPROGRESS,
-      the next orchestrator pass re-submits, and the per-SG state files get
-      overwritten with the new pipeline_id.
-
-    Note on input file IDs:
-    - **FASTQ mode**: `fastq_list_fid` holds the per-batch combined CSV ID
-      (constructed and uploaded at submission time).
-    - **CRAM mode**: `cram_fids` holds the ordered list of per-SG CRAM IDs.
-      Each is also persisted per-SG in `UploadDataToIca`'s `{sg_name}_fids.json`;
-      keeping a per-batch copy here gives cleanup a single source of truth.
+    Note on atomic writes (canonical):
+    - GCS object PUTs are atomic per object — `open('w')` uploads in a single
+      PUT on close, so readers see old-or-new, never partial. No `.tmp`+rename
+      (broken on GCS, unnecessary here).
+    - Multi-file writes (batches.json + per-SG state) are NOT atomic across
+      files. Submitter writes per-SG state first (best-effort), then
+      batches.json (the commit point); a crash between leaves the batch
+      PENDING/INPROGRESS to re-submit, overwriting per-SG state.
     """
 
     def __init__(self, path: cpg_utils.Path | Path):
@@ -207,10 +155,8 @@ class BatchesFile:
         self.batches: list[dict[str, Any]] = []
 
     def initialise(self, batch_size: int, batches: list[IcaBatch]) -> None:
-        # Mirror add_retry_batch's heuristic: DRAGEN's `auto` strategy
-        # terminates single-sample runs before passfail.json is written,
-        # so any 1-SG batch (initial cohort of 1, or trailing batch when
-        # len(sgs) % batch_size == 1) must use 'continue'.
+        # DRAGEN's `auto` strategy terminates single-sample runs before passfail.json,
+        # so any 1-SG batch must use 'continue' (mirrors add_retry_batch).
         self.batch_size = batch_size
         self.batches = [
             self._new_batch_entry(
@@ -242,11 +188,8 @@ class BatchesFile:
             'error_strategy': error_strategy,
         }
 
-    # Required keys on every per-batch entry. Kept in sync with `_new_batch_entry`
-    # — anything written there at construction time is required to be present
-    # on read, so a truncated / hand-edited file fails fast at load with a
-    # clear message naming the missing field rather than as a bare KeyError
-    # much later from `failed_sg_names()` / `find_batch_for_sg()` etc.
+    # Required keys on every per-batch entry, kept in sync with `_new_batch_entry`, so
+    # a truncated / hand-edited file fails fast at load naming the missing field.
     _REQUIRED_BATCH_KEYS = frozenset(
         {
             'batch_index',
@@ -291,13 +234,9 @@ class BatchesFile:
                 )
         self.batch_size = data['batch_size']
         self.batches = data['batches']
-        # Migrate the passfail vocabulary on read. A batches.json written by an
-        # earlier build stored DRAGEN's raw "Failed" verbatim (record_passfail did
-        # not normalise yet). Re-normalising here means resuming an already-SUCCEEDED
-        # batch does not silently drop a "Failed" sample from the retry path — the
-        # write-time fix, applied to state persisted before it existed. Idempotent
-        # for already-canonical values; an unrecognised status fails loud, matching
-        # the write path.
+        # Migrate the passfail vocabulary on read: older files stored DRAGEN's raw
+        # "Failed" verbatim. Re-normalising means resuming a SUCCEEDED batch doesn't
+        # drop a failed sample from the retry path. Idempotent; unknown status fails loud.
         for i, b in enumerate(self.batches):
             if b['passfail'] is not None:
                 b['passfail'] = {
@@ -306,13 +245,7 @@ class BatchesFile:
                 }
 
     def write(self) -> None:
-        """Single-PUT atomic write — GCS object PUTs are atomic per object.
-
-        `cpg_utils.Path.open('w')` uploads on close in a single PUT, so readers
-        see either the old content or the new, never partial. No `.tmp` sidecar
-        is needed; the previous tmp+rename pattern was broken on GCS (rename =
-        copy+delete) and is intentionally removed here.
-        """
+        """Single-PUT atomic write (see the class "Note on atomic writes")."""
         payload = {
             'schema_version': BATCHES_SCHEMA_VERSION,
             'batch_size': self.batch_size,
@@ -392,14 +325,9 @@ class BatchesFile:
         self.batch_entry(batch_index)['error_strategy'] = error_strategy
 
     def mark_sgs_retried(self, source_batch_idx: int, sg_names: list[str]) -> None:
-        """Record that these SGs from `source_batch_idx` have been pulled into a retry batch.
+        """Record that these SGs from `source_batch_idx` were pulled into a retry batch.
 
-        Per-SG audit trail complementing the batch-level `has_been_retried` flag.
-        `has_been_retried` is the "no second retry" action gate: it flips True
-        as soon as ANY of this batch's SGs has been pulled into a retry,
-        because only one retry pass is allowed per cohort (so the source batch
-        has used up its retry allowance regardless of how many SGs were
-        involved).
+        Also flips `has_been_retried` True (the single-retry-per-batch gate).
         """
         b = self.batch_entry(source_batch_idx)
         if not sg_names:
@@ -436,9 +364,7 @@ class BatchesFile:
             error_strategy = 'continue' if len(sg_names) == 1 else 'auto'
         validate_error_strategy(error_strategy, context='add_retry_batch')
         new_index = len(self.batches)
-        # The cohort_name on IcaBatch is not written into the entry; the entry
-        # only carries batch_index + sg_names. Pass an empty string to keep
-        # `_new_batch_entry` signature uniform.
+        # cohort_name isn't written into the entry; empty string keeps _new_batch_entry uniform.
         seed = IcaBatch(cohort_name='', batch_index=new_index, sg_names=list(sg_names))
         self.batches.append(
             self._new_batch_entry(seed, retry_generation=1, error_strategy=error_strategy),
