@@ -26,6 +26,9 @@ _ORIGINAL_OUTPUT_PATH = cpg_utils.config.output_path
 
 _TEST_CONFIG: dict[tuple, object] = {
     ('workflow', 'reads_type'): 'cram',
+    # Read by `utils.single_input_cohort_id()`; scopes every `get_prep_path` /
+    # `get_pipeline_path` state path. Matches DEMO_COHORT_NAME below.
+    ('workflow', 'input_cohorts'): ['COH0001'],
     # Match the production TOML value verbatim so any future test that doesn't
     # explicitly monkeypatch DRAGEN_VERSION still gets a path-shape match.
     ('ica', 'pipelines', 'dragen_version'): 'dragen_3_7_8',

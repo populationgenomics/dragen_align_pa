@@ -129,7 +129,11 @@ def _submit_mlr_run(
     Submits the DRAGEN MLR pipeline by running individual CLI commands
     and parsing the JSON output file.
     """
-    data = load_per_sg_state(pipeline_id_arguid_path, required_keys=('pipeline_id', 'user_reference'))
+    data = load_per_sg_state(
+        pipeline_id_arguid_path,
+        required_keys=('pipeline_id', 'user_reference'),
+        expected_cohort_name=cohort_name,
+    )
     pipeline_id = data['pipeline_id']
     user_reference = data['user_reference']
 

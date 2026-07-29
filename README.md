@@ -146,6 +146,21 @@ When successful, the pipeline downloads all results to your dataset's GCS bucket
   * **Pipeline Batch Metrics:**
       * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/dragen_batch_metrics/`
 
+Final outputs above are keyed by sequencing group, because a sequencing group has one CRAM
+and one gVCF regardless of which cohort produced it. The pipeline's own state files are
+instead scoped by cohort id:
+
+  * **Per-cohort state:**
+      * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/prepare/{COHORT_ID}/`
+      * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/pipelines/{COHORT_ID}/`
+
+`{COHORT_ID}` is the single entry in `[workflow].input_cohorts`, which the submit-time
+validator requires to name exactly one cohort. The scoping matters because a sequencing
+group can belong to more than one cohort — a panel-of-normals cohort is drawn from the
+production cohorts that realign the same samples. Without it, both cohorts share one
+`{SG}_pipeline_id_and_arguid.json`, and the later run repoints the earlier cohort's
+downloads at a batch that does not exist for it.
+
 ## Panel of Normals (Exome CNV)
 **Generation**
 - The standalone `scripts/build_cnv_panel_of_normals.py`
