@@ -37,11 +37,33 @@ def validate_configuration() -> None:
     Raises:
         KeyError / ValueError: If `[ica.projects].project_root` isn't a registered family whose
             projects cover every required role.
-        RuntimeError: If any cohort's exome design doesn't match the configured BEDs.
+        RuntimeError: If `[workflow].input_cohorts` doesn't name exactly one cohort, or if any
+            cohort's exome design doesn't match the configured BEDs.
     """
+    assert_single_input_cohort()
     assert_ica_project_root_resolves()
     for cohort in get_multicohort().get_cohorts():
         assert_cohort_design_matches_configured_bed(cohort)
+
+
+# Every GCS state file is written under a prefix keyed on the single configured cohort id
+# (`utils.single_input_cohort_id`), which `get_prep_path` / `get_pipeline_path` read without
+# re-checking. A second cohort in one run would write both cohorts' state into the first
+# cohort's prefix, so the two would clobber each other's per-SG pointers.
+def assert_single_input_cohort() -> None:
+    """Fail loud at submit unless `[workflow].input_cohorts` names exactly one cohort.
+
+    Raises:
+        RuntimeError: If `[workflow].input_cohorts` is missing, empty, or holds more than one id.
+    """
+    input_cohorts: list[str] = config_retrieve(['workflow', 'input_cohorts'], default=[])
+    if len(input_cohorts) != 1:
+        raise RuntimeError(
+            f'[workflow].input_cohorts must name exactly one cohort, got {input_cohorts!r}. '
+            f'This pipeline scopes its GCS state by cohort id and submits one cohort per run; '
+            f'launch a separate run per cohort.',
+        )
+    logger.info(f'Single-cohort check passed: {input_cohorts[0]}.')
 
 
 def assert_ica_project_root_resolves() -> None:

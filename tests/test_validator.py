@@ -14,6 +14,7 @@ from dragen_align_pa.validator import (
     _resolve_sg_canonical_design,
     assert_cohort_design_matches_configured_bed,
     assert_ica_project_root_resolves,
+    assert_single_input_cohort,
 )
 from tests._config_helpers import _config_factory
 
@@ -35,6 +36,35 @@ class _FakeCohort:
 
 def _make_sg(sg_id: str, sequencing_library: str) -> _FakeSG:
     return _FakeSG(id=sg_id, meta={'sequencing_library': sequencing_library})
+
+
+# ----- assert_single_input_cohort -----
+
+
+def _patch_input_cohorts(monkeypatch, input_cohorts) -> None:
+    cfg: dict[tuple[str, ...], object] = {}
+    if input_cohorts is not None:
+        cfg[('workflow', 'input_cohorts')] = input_cohorts
+    monkeypatch.setattr(validator, 'config_retrieve', lambda key, default=None: cfg.get(tuple(key), default))
+
+
+def test_single_input_cohort_accepts_exactly_one(monkeypatch):
+    _patch_input_cohorts(monkeypatch, ['COH0001'])
+    assert_single_input_cohort()  # no raise
+
+
+def test_single_input_cohort_rejects_two_cohorts(monkeypatch):
+    """Two cohorts in one run would write both cohorts' state under the first
+    cohort's prefix, reintroducing the per-SG pointer clobbering."""
+    _patch_input_cohorts(monkeypatch, ['COH0001', 'COH0002'])
+    with pytest.raises(RuntimeError, match=r'exactly one cohort'):
+        assert_single_input_cohort()
+
+
+def test_single_input_cohort_rejects_missing_config(monkeypatch):
+    _patch_input_cohorts(monkeypatch, None)
+    with pytest.raises(RuntimeError, match=r'exactly one cohort'):
+        assert_single_input_cohort()
 
 
 # ----- assert_ica_project_root_resolves -----

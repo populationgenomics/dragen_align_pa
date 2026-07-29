@@ -602,6 +602,7 @@ def test_repoint_per_sg_state_points_download_at_succeeded_generation(tmp_path: 
     state_path = tmp_path / 'SYN_A_pipeline_id_and_arguid.json'
     _write_per_sg_state(
         state_path,
+        cohort_name='COH0001',
         pipeline_id='pid-1',
         ar_guid='guid-1',
         user_reference='COH0001-batch0001_guid-1_',
@@ -609,9 +610,13 @@ def test_repoint_per_sg_state_points_download_at_succeeded_generation(tmp_path: 
     )
     outputs = {'SYN_A_pipeline_id_and_arguid': state_path}
 
-    _repoint_per_sg_state_to_winning_generation(outputs, bf)
+    _repoint_per_sg_state_to_winning_generation(outputs, bf, 'COH0001')
 
-    state = load_per_sg_state(state_path, required_keys=('pipeline_id', 'user_reference', 'batch_index'))
+    state = load_per_sg_state(
+        state_path,
+        required_keys=('pipeline_id', 'user_reference', 'batch_index'),
+        expected_cohort_name='COH0001',
+    )
     assert state['batch_index'] == 0
     assert state['pipeline_id'] == 'pid-0'
     folder = get_ica_sample_folder(state_path, sg_name='SYN_A', cohort_name='COH0001')
@@ -624,7 +629,7 @@ def test_repoint_per_sg_state_skips_sg_dropped_from_cohort(tmp_path: Path):
     skipped, not raised on — no download stage runs for it."""
     bf = _submitted_batch_file(tmp_path, ['SYN_A'], status='SUCCEEDED')
     bf.record_passfail(0, {'SYN_A': 'Success'})
-    _repoint_per_sg_state_to_winning_generation({}, bf)  # no output for SYN_A; does not raise
+    _repoint_per_sg_state_to_winning_generation({}, bf, 'COH0001')  # no output for SYN_A; does not raise
 
 
 def test_on_status_change_failed_final_clears_passfail(tmp_path: Path):

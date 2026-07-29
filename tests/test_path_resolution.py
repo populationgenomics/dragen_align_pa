@@ -14,6 +14,8 @@ from dragen_align_pa.paths import gcs_bucket_and_key, gcs_relative_key
 from dragen_align_pa.utils import (
     PER_SG_STATE_SCHEMA_VERSION,
     get_batch_artefacts_path,
+    get_pipeline_path,
+    get_prep_path,
     load_per_sg_state,
 )
 
@@ -21,6 +23,7 @@ from dragen_align_pa.utils import (
 def _write_state(path: Path, **fields) -> None:
     payload = {
         'schema_version': PER_SG_STATE_SCHEMA_VERSION,
+        'cohort_name': 'COH0001',
         'pipeline_id': '00000000-1111-2222-3333-444444444444',
         'ar_guid': 'test-guid',
         'user_reference': 'COH0001-batch0000_test-guid_',
@@ -42,6 +45,48 @@ def test_get_ica_sample_folder_renders_expected_path(tmp_path: Path):
         'COH0001-batch0000_test-guid_-00000000-1111-2222-3333-444444444444/SYN00001/'
     )
     assert result == expected
+
+
+def test_get_pipeline_path_is_cohort_scoped():
+    """State files must sit under a per-cohort prefix: an SG in two cohorts
+    otherwise shares one file and the later run clobbers the earlier one."""
+    result = get_pipeline_path(filename='SYN00001_pipeline_id_and_arguid.json')
+    assert str(result) == (
+        'gs://cpg-test-dataset-test/ica/dragen_3_7_8/pipelines/COH0001/SYN00001_pipeline_id_and_arguid.json'
+    )
+
+
+def test_get_prep_path_is_cohort_scoped():
+    result = get_prep_path(filename='SYN00001_fids.json')
+    assert str(result) == 'gs://cpg-test-dataset-test/ica/dragen_3_7_8/prepare/COH0001/SYN00001_fids.json'
+
+
+def test_load_per_sg_state_rejects_state_written_by_another_cohort(tmp_path: Path):
+    """The cohort recorded in the file must match the cohort being run, so a
+    mis-migrated or hand-copied file fails loudly instead of resolving to a
+    foreign cohort's batch folder."""
+    state_path = tmp_path / 'SYN00001_pipeline_id_and_arguid.json'
+    _write_state(state_path, cohort_name='COH_PON')
+
+    with pytest.raises(ValueError, match=r'COH_PON'):
+        load_per_sg_state(state_path, expected_cohort_name='COH_PROD')
+
+
+def test_get_ica_sample_folder_rejects_state_written_by_another_cohort(tmp_path: Path):
+    """Regression test: an SG belonging to two cohorts had its pointer
+    overwritten by the second cohort's run, so the download stage resolved a
+    batch index that did not exist for the cohort being run. Resolution must
+    raise rather than build an impossible folder."""
+    state_path = tmp_path / 'SYN00001_pipeline_id_and_arguid.json'
+    _write_state(
+        state_path,
+        cohort_name='COH_PON',
+        user_reference='COH_PON-batch0014_test-guid_',
+        batch_index=14,
+    )
+
+    with pytest.raises(ValueError, match=r'COH_PON'):
+        get_ica_sample_folder(state_path, sg_name='SYN00001', cohort_name='COH_PROD')
 
 
 def test_get_ica_sample_folder_rejects_old_schema(tmp_path: Path):
@@ -101,6 +146,7 @@ def test_load_per_sg_state_reports_all_missing_keys(tmp_path: Path):
         load_per_sg_state(
             state_path,
             required_keys=('user_reference', 'pipeline_id', 'batch_index'),
+            expected_cohort_name='COH0001',
         )
     message = str(excinfo.value)
     assert "'user_reference'" in message

@@ -89,6 +89,7 @@ def get_ica_sample_folder(
     state = load_per_sg_state(
         pipeline_id_arguid_path,
         required_keys=('user_reference', 'pipeline_id', 'batch_index'),
+        expected_cohort_name=cohort_name,
     )
     return (ica_run_path(cohort_name, state['user_reference'], state['pipeline_id']) / sg_name).as_folder()
 

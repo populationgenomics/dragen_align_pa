@@ -20,7 +20,7 @@ from dragen_align_pa.constants.ica_constants import (
     DRAGEN_VERSION,
 )
 
-PER_SG_STATE_SCHEMA_VERSION = 1
+PER_SG_STATE_SCHEMA_VERSION = 2
 
 if TYPE_CHECKING:
     from graphql import DocumentNode
@@ -148,14 +148,27 @@ def initialise_python_job(
     return py_job
 
 
+# `validator.assert_single_input_cohort` guarantees the list holds exactly one id, so this
+# reads it without re-checking.
+def single_input_cohort_id() -> str:
+    """Gets the cohort id from `[workflow].input_cohorts`."""
+    return config_retrieve(['workflow', 'input_cohorts'])[0]
+
+
+# Both state directories are scoped by cohort because a sequencing group may belong to more
+# than one cohort (a panel-of-normals cohort is drawn from the production cohorts that
+# realign the same samples). Keyed on SG name alone, the two cohorts share one state file
+# and the later submission silently repoints the earlier cohort's downloads at a batch index
+# that does not exist for it. The cohort comes from config rather than an argument so a call
+# site cannot forget to scope it.
 def get_prep_path(filename: str) -> cpg_utils.Path:
-    """Gets a path in the 'prepare' directory."""
-    return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/prepare/{filename}'))
+    """Gets a path in the cohort's 'prepare' directory."""
+    return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/prepare/{single_input_cohort_id()}/{filename}'))
 
 
 def get_pipeline_path(filename: str) -> cpg_utils.Path:
-    """Gets a path in the 'pipelines' (state) directory."""
-    return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/pipelines/{filename}'))
+    """Gets a path in the cohort's 'pipelines' (state) directory."""
+    return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/pipelines/{single_input_cohort_id()}/{filename}'))
 
 
 def get_output_path(filename: str, category: str | None = None) -> cpg_utils.Path:
@@ -205,15 +218,29 @@ def get_per_sg_state_path(
     return cohort, state_path
 
 
+# The single place the schema_version, cohort-ownership and required-key checks live, so
+# the three cannot drift between callers. `required_keys` exists so a malformed file raises
+# here, naming the field, rather than several frames deeper at the point of use.
 def load_per_sg_state(
     pipeline_id_arguid_path: cpg_utils.Path,
     required_keys: tuple[str, ...] = (),
+    *,
+    expected_cohort_name: str,
 ) -> dict[str, Any]:
     """Read + validate a per-SG state file, returning the parsed JSON dict.
 
-    Single source of truth for the schema_version check and required-key
-    validation. Callers that need specific fields pass them in `required_keys`
-    so a malformed file raises `KeyError` here rather than several frames deeper.
+    Args:
+        pipeline_id_arguid_path: Path to the SG's per-SG state file.
+        required_keys: Keys the caller will read, validated as present.
+        expected_cohort_name: Cohort currently being run.
+
+    Returns:
+        The parsed state dict.
+
+    Raises:
+        ValueError: If the file predates the current schema, or records a
+            different cohort than `expected_cohort_name`.
+        KeyError: If any `required_keys` entry is absent.
     """
     with pipeline_id_arguid_path.open('r') as fh:
         state: dict[str, Any] = json.load(fh)
@@ -225,11 +252,21 @@ def load_per_sg_state(
             f'force_resubmit=true (or manually delete the file) to rewrite it under '
             f'the new schema.',
         )
-    missing = [key for key in required_keys if key not in state]
+    missing = [key for key in ('cohort_name', *required_keys) if key not in state]
     if missing:
         raise KeyError(
             f'Per-SG state file {pipeline_id_arguid_path} missing required key(s): '
             f'{", ".join(repr(k) for k in missing)}.',
+        )
+    # The path is already cohort-scoped, so a mismatch means the file was copied or migrated
+    # into the wrong cohort's prefix. Resolving it would build an ICA folder under the running
+    # cohort naming a foreign cohort's batch, which cannot exist.
+    if state['cohort_name'] != expected_cohort_name:
+        raise ValueError(
+            f'Per-SG state file {pipeline_id_arguid_path} records cohort '
+            f'{state["cohort_name"]!r}, but the cohort being run is {expected_cohort_name!r}. '
+            f'Delete the file (or rerun that cohort with force_resubmit=true) to rewrite '
+            f'it against the correct cohort.',
         )
     return state
 

@@ -128,6 +128,7 @@ def _build_submit_callable(
 def _write_per_sg_state(
     path: cpg_utils.Path,
     *,
+    cohort_name: str,
     pipeline_id: str,
     ar_guid: str,
     user_reference: str,
@@ -137,6 +138,7 @@ def _write_per_sg_state(
 
     Args:
         path: Destination per-SG state file.
+        cohort_name: Cohort the batch belongs to, checked on read by `load_per_sg_state`.
         pipeline_id: The SG's ICA analysis (pipeline) id.
         ar_guid: The submission's analysis-runner GUID.
         user_reference: The batch's ICA `user_reference` (names the folder).
@@ -146,6 +148,7 @@ def _write_per_sg_state(
         json.dump(
             {
                 'schema_version': PER_SG_STATE_SCHEMA_VERSION,
+                'cohort_name': cohort_name,
                 'pipeline_id': pipeline_id,
                 'ar_guid': ar_guid,
                 'user_reference': user_reference,
@@ -180,6 +183,7 @@ def _persist_per_sg_state_for_batch(
             )
         _write_per_sg_state(
             outputs[key],
+            cohort_name=batch.cohort_name,
             pipeline_id=submission_result['pipeline_id'],
             ar_guid=submission_result['ar_guid'],
             user_reference=submission_result['user_reference'],
@@ -498,6 +502,7 @@ def _reconcile_batches_with_ica(cohort_name: str, batches_file: BatchesFile) -> 
 def _repoint_per_sg_state_to_winning_generation(
     outputs: dict[str, cpg_utils.Path],
     batches_file: BatchesFile,
+    cohort_name: str,
 ) -> None:
     """Repoint each succeeded SG's per-SG state file at its winning generation.
 
@@ -507,6 +512,7 @@ def _repoint_per_sg_state_to_winning_generation(
     Args:
         outputs: The stage's declared outputs, holding per-SG state file paths.
         batches_file: The reconciled cohort batches file (read from memory).
+        cohort_name: Cohort being run, written into each rewritten state file.
     """
     for sg_name in batches_file.successful_sg_names():
         # successful_sg_names() derives from the same batches, so a winner exists.
@@ -524,12 +530,17 @@ def _repoint_per_sg_state_to_winning_generation(
             continue
         state_path = outputs[key]
         try:
-            current = load_per_sg_state(state_path, required_keys=('batch_index',))
+            current = load_per_sg_state(
+                state_path,
+                required_keys=('batch_index',),
+                expected_cohort_name=cohort_name,
+            )
         except (FileNotFoundError, ValueError, KeyError) as e:
-            # A missing / old-schema / truncated file still needs repointing at
-            # the winner so the download can find the CRAM: rewrite, don't skip.
+            # A missing / old-schema / truncated file, or one recording another cohort, still
+            # needs repointing at the winner so the download can find the CRAM: rewrite,
+            # don't skip.
             logger.warning(
-                f'SG {sg_name}: per-SG state at {state_path} unreadable ({e}); '
+                f'SG {sg_name}: per-SG state at {state_path} unusable ({e}); '
                 f'rewriting to winning generation batch {winner["batch_index"]}.',
             )
             current = None
@@ -537,6 +548,7 @@ def _repoint_per_sg_state_to_winning_generation(
             continue
         _write_per_sg_state(
             state_path,
+            cohort_name=cohort_name,
             pipeline_id=winner['pipeline_id'],
             ar_guid=winner['ar_guid'],
             user_reference=winner['user_reference'],
@@ -1083,7 +1095,7 @@ def run(
     # retry failed and overwrote the SG's state file; repoint each succeeded SG at its
     # winning generation before completing (Download* resolves the folder from it).
     if force_retry:
-        _repoint_per_sg_state_to_winning_generation(outputs, batches_file)
+        _repoint_per_sg_state_to_winning_generation(outputs, batches_file, cohort.name)
 
     # failed_sg_names() excludes CANCELLED by design. Any SG still failed after the
     # retry pass aborts the run — no rate tolerance, a single failure halts.
