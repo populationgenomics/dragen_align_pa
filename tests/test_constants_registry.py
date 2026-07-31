@@ -11,6 +11,7 @@ read it off that module at call time.
 import pytest
 
 from dragen_align_pa.constants import constants_registry
+from dragen_align_pa.constants.ica_constants import _TODO_FID
 
 
 def test_resolve_ica_file_id_returns_registered_id(monkeypatch):
@@ -54,8 +55,12 @@ def test_resolve_mlr_config_file_id_raises_on_unknown_family():
         constants_registry.resolve_mlr_config_file_id('no-such-family')
 
 
-def test_resolve_mlr_config_file_id_rejects_placeholder():
+def test_resolve_mlr_config_file_id_rejects_placeholder(monkeypatch):
     """tenk10k's MLR config JSON is the _TODO_FID sentinel until minted — fail loud."""
+    monkeypatch.setattr(
+        'dragen_align_pa.constants.ica_constants.ICA_PROJECT_SETUP',
+        {'tenk10k': {'mlr_config_json': {'ica_file_id': _TODO_FID}}},
+    )
     with pytest.raises(ValueError, match=r'tenk10k'):
         constants_registry.resolve_mlr_config_file_id('tenk10k')
 
@@ -68,7 +73,7 @@ def test_resolve_ica_project_name_by_role():
     )
     assert (
         constants_registry.resolve_ica_project_name('tenk10k', constants_registry.ROLE_DRAGEN_MLR)
-        == 'Tenk10K_Dragen_MLR_Jobs'
+        == 'tenk10k-dragen-mlr-jobs'
     )
     assert (
         constants_registry.resolve_ica_project_name('tenk10k', constants_registry.ROLE_FASTQ_UPLOAD)
@@ -94,7 +99,7 @@ def test_resolve_ica_project_id_by_role():
     )
     assert (
         constants_registry.resolve_ica_project_id('tenk10k', constants_registry.ROLE_DRAGEN_MLR)
-        == '16bb091c-5866-4e39-929f-2b678457b772'
+        == 'e36073ab-3d21-4c0d-8385-1368d9b56a3e'
     )
 
 
