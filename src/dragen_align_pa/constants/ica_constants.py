@@ -65,8 +65,8 @@ ICA_PROJECT_SETUP: Final[dict[str, IcaFamilySetup]] = {
                 'project_id': 'b9e2edbd-6ff8-4e76-b839-bb029e59fb73',
             },
             'dragen_mlr': {
-                'project_name': 'Tenk10K_Dragen_MLR_Jobs',
-                'project_id': '16bb091c-5866-4e39-929f-2b678457b772',
+                'project_name': 'tenk10k-dragen-mlr-jobs',
+                'project_id': 'e36073ab-3d21-4c0d-8385-1368d9b56a3e',
             },
             'fastq_upload': {
                 'project_name': 'tenk10k_fastq_upload',
@@ -74,7 +74,7 @@ ICA_PROJECT_SETUP: Final[dict[str, IcaFamilySetup]] = {
             },
         },
         'api_key': {'name': 'tenk10k_apiKey'},
-        'mlr_config_json': {'ica_file_id': _TODO_FID},
+        'mlr_config_json': {'ica_file_id': 'fil.bd65126a81fa4f5a158808deee98715c'},
         'can_delete_fastq': False,  # Controlled by collaborators
     },
 }

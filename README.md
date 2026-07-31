@@ -1,4 +1,4 @@
-# Dragen Align PA Pipeline v4.1.0
+# Dragen Align PA Pipeline v4.1.1
 
 ## Purpose
 
