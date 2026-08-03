@@ -29,6 +29,12 @@ def patched_job(monkeypatch):
     """Patch the job's collaborators and return the mocks the tests assert on."""
     mocks = MagicMock()
     mocks.bucket = MagicMock()
+    # Without this the real `get_ica_api_client` runs, which fetches the ICA API key from
+    # Secret Manager: a network call needing credentials the test has no business holding.
+    ica_client = MagicMock()
+    ica_client.__enter__ = MagicMock(return_value=ica_client)
+    ica_client.__exit__ = MagicMock(return_value=False)
+    monkeypatch.setattr('dragen_align_pa.ica_api_utils.get_ica_api_client', lambda: ica_client)
     monkeypatch.setattr(
         'dragen_align_pa.ica_utils.get_ica_sample_folder',
         MagicMock(return_value='/ica/folder/'),
