@@ -1,0 +1,108 @@
+"""Tests for the bulk per-SG output download.
+
+The stage declares only the parent folder as its expected output, so cpg-flow cannot
+tell a part-way download from a complete one: recovering from a mid-run connection
+failure means re-running the stage for every sequencing group. These tests pin the
+behaviour that makes that re-run cheap — files already in GCS are filtered out
+*before* any pre-signed URL is minted, so a re-run neither re-mints (rate-limited)
+URLs nor re-downloads bytes it already has.
+"""
+
+from unittest.mock import MagicMock
+
+import pytest
+
+from dragen_align_pa.jobs import download_ica_pipeline_outputs
+
+_ICA_FILES = [
+    ('SYN00001.qc.csv', 'fil.a'),
+    ('SYN00001.metrics.csv', 'fil.b'),
+    ('SYN00001.cram', 'fil.cram'),
+]
+
+
+@pytest.fixture
+def patched_job(monkeypatch):
+    """Patch the job's collaborators and return the mocks the tests assert on."""
+    mocks = MagicMock()
+    mocks.bucket = MagicMock()
+    monkeypatch.setattr(
+        'dragen_align_pa.ica_utils.get_ica_sample_folder',
+        MagicMock(return_value='/ica/folder/'),
+    )
+    monkeypatch.setattr(
+        'dragen_align_pa.ica_utils.list_ica_files',
+        MagicMock(return_value=_ICA_FILES),
+    )
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.download_ica_pipeline_outputs.storage.Client',
+        MagicMock(return_value=MagicMock(bucket=MagicMock(return_value=mocks.bucket))),
+    )
+    monkeypatch.setattr('dragen_align_pa.ica_utils.batch_create_download_urls', mocks.mint)
+    monkeypatch.setattr('dragen_align_pa.ica_utils.stream_ica_file_to_gcs', mocks.stream)
+    mocks.mint.return_value = {'fil.a': 'https://u/a', 'fil.b': 'https://u/b'}
+    return mocks
+
+
+def _run(sg_name='SYN00001'):
+    sequencing_group = MagicMock()
+    sequencing_group.name = sg_name
+    download_ica_pipeline_outputs.run(
+        sequencing_group=sequencing_group,
+        pipeline_id_arguid_path=MagicMock(),
+        cohort_name='COH0001',
+    )
+
+
+def test_downloads_everything_when_gcs_is_empty(patched_job, monkeypatch):
+    """Nothing present: both non-CRAM files are minted and streamed (CRAM/gVCF are
+    sibling stages' work)."""
+    monkeypatch.setattr('dragen_align_pa.ica_utils.list_existing_gcs_names', MagicMock(return_value=set()))
+
+    _run()
+
+    assert patched_job.mint.call_args.kwargs['file_ids'] == ['fil.a', 'fil.b']
+    assert patched_job.stream.call_count == 2
+
+
+def test_already_present_files_are_not_reminted_or_restreamed(patched_job, monkeypatch):
+    """The point of the pre-filter: a re-run after a part-way failure mints URLs for
+    the missing file only, instead of re-minting all of them."""
+    monkeypatch.setattr(
+        'dragen_align_pa.ica_utils.list_existing_gcs_names',
+        MagicMock(return_value={'SYN00001.qc.csv'}),
+    )
+
+    _run()
+
+    assert patched_job.mint.call_args.kwargs['file_ids'] == ['fil.b']
+    assert patched_job.stream.call_count == 1
+
+
+def test_fully_downloaded_sg_makes_no_ica_url_calls(patched_job, monkeypatch):
+    """A complete SG must cost zero rate-limited mint calls on a re-run."""
+    monkeypatch.setattr(
+        'dragen_align_pa.ica_utils.list_existing_gcs_names',
+        MagicMock(return_value={'SYN00001.qc.csv', 'SYN00001.metrics.csv'}),
+    )
+
+    _run()
+
+    patched_job.mint.assert_not_called()
+    patched_job.stream.assert_not_called()
+
+
+def test_force_redownload_ignores_what_is_already_in_gcs(patched_job, monkeypatch):
+    """With force_redownload set, GCS isn't consulted and everything is re-fetched."""
+    listing = MagicMock(return_value={'SYN00001.qc.csv', 'SYN00001.metrics.csv'})
+    monkeypatch.setattr('dragen_align_pa.ica_utils.list_existing_gcs_names', listing)
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.download_ica_pipeline_outputs.config_retrieve',
+        lambda key, default=None: True if key == ['ica', 'download', 'force_redownload'] else default,
+    )
+
+    _run()
+
+    listing.assert_not_called()
+    assert patched_job.stream.call_count == 2
+    assert all(call.kwargs['force'] is True for call in patched_job.stream.call_args_list)

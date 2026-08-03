@@ -44,6 +44,16 @@ def run(
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
+    force_redownload = bool(config_retrieve(['ica', 'download', 'force_redownload'], default=False))
+    # One list_blobs, not one exists() per file, and done BEFORE any URL is minted: a rerun
+    # after a part-way failure then mints URLs only for what's missing instead of re-minting
+    # (and re-downloading) all 100+ files. The stage declares the parent folder as its single
+    # expected output, so cpg-flow cannot tell a partial download from a complete one — this
+    # is what makes the forced rerun cheap.
+    already_in_gcs = (
+        set() if force_redownload else ica_utils.list_existing_gcs_names(gcs_bucket, gcs_output_path_prefix)
+    )
+
     with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         # --- List + inline filter for CRAM/gVCF (handled by sibling stages) ---
         files = ica_utils.list_ica_files(
@@ -51,9 +61,18 @@ def run(
             path_parameters=path_parameters,
             base_ica_folder_path=ica_folder_path,
         )
-        files_to_download = [
+        wanted = [
             (name, fid) for name, fid in files if not name.endswith(('.cram', '.cram.crai', '.gvcf.gz', '.gvcf.gz.tbi'))
         ]
+        files_to_download = [(name, fid) for name, fid in wanted if name not in already_in_gcs]
+        if skipped := len(wanted) - len(files_to_download):
+            logger.info(
+                f'{sg_name}: {skipped} of {len(wanted)} files already in GCS; '
+                f'downloading the remaining {len(files_to_download)}.',
+            )
+        if not files_to_download:
+            logger.info(f'{sg_name}: all bulk ICA outputs already present in GCS; nothing to download.')
+            return
 
         # Mint pre-signed URLs in batches via the :createDownloadUrls endpoint
         # rather than one :createDownloadUrl POST per file. This collapses the
@@ -80,6 +99,7 @@ def run(
                     gcs_prefix=gcs_output_path_prefix,
                     expected_md5_hash=None,
                     download_url=urls.get(file_id),
+                    force=force_redownload,
                 )
 
     logger.info('All files streamed to GCS successfully.')

@@ -6,10 +6,9 @@ MD5 Checksum pipeline in ICA.
 import json
 
 import cpg_utils.config
-import requests
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils, ica_utils
+from dragen_align_pa import http_utils, ica_api_utils, ica_utils
 from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
 
 
@@ -47,9 +46,9 @@ def run(
             path_params=path_parameters | {'dataId': md5sum_results_id},  # pyright: ignore[reportArgumentType]
         )  # type: ignore  # noqa: PGH003
 
-        md5_file_contents = requests.get(  # pyright: ignore[reportUnknownVariableType]
+        md5_file_contents = http_utils.download_session().get(  # pyright: ignore[reportUnknownVariableType]
             url=url_api_response.body['url'],  # pyright: ignore[reportUnknownArgumentType]
-            timeout=60,
+            timeout=http_utils.SMALL_FILE_TIMEOUT,
         ).text  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
 
         with md5_outpath.open('w') as md5_path_fh:

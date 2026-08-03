@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import cpg_utils.config
 from cpg_flow.targets import SequencingGroup
+from cpg_utils.config import config_retrieve
 from google.cloud import storage
 from google.cloud.storage.bucket import Bucket
 from icasdk.apis.tags import project_data_api
@@ -32,8 +33,22 @@ def _orchestrate_download(
     index_file_name: str,
     md5_file_name: str,
     md5_gcp_name: str,
+    force: bool,
 ) -> None:
-    """Find, download+MD5-verify, and upload the CRAM/index/MD5 file set to GCS."""
+    """Find, download+MD5-verify, and upload the CRAM/index/MD5 file set to GCS.
+
+    Args:
+        api_instance: An instance of the ProjectDataApi.
+        path_parameters: Dict with the projectId.
+        base_ica_folder_path: ICA folder holding the file set.
+        gcs_bucket: Destination bucket.
+        gcs_output_path_prefix: Destination prefix within the bucket.
+        main_file_name: Name of the CRAM/GVCF to download.
+        index_file_name: Name of its index.
+        md5_file_name: Name of the MD5 file in ICA.
+        md5_gcp_name: Name to save the MD5 file under in GCS.
+        force: Re-download even when GCS already holds a complete copy.
+    """
     # --- 1. Find all three file IDs ---
     main_file_id, index_file_id, md5_file_id = (
         ica_api_utils.find_file_id_by_name(api_instance, path_parameters, base_ica_folder_path, name)
@@ -57,6 +72,7 @@ def _orchestrate_download(
         gcs_bucket=gcs_bucket,
         gcs_prefix=gcs_output_path_prefix,
         expected_md5_hash=expected_hash,
+        force=force,
     )
 
     # --- 4. Stream index file (no verification) ---
@@ -68,6 +84,7 @@ def _orchestrate_download(
         gcs_bucket=gcs_bucket,
         gcs_prefix=gcs_output_path_prefix,
         expected_md5_hash=None,
+        force=force,
     )
 
     # --- 5. Upload the MD5 file itself ---
@@ -106,6 +123,7 @@ def run(
     gcs_bucket = storage_client.bucket(gcs_output_bucket_name)
 
     # --- 5. Run Orchestration ---
+    force_redownload = bool(config_retrieve(['ica', 'download', 'force_redownload'], default=False))
     with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         _orchestrate_download(
             api_instance=api_instance,
@@ -117,6 +135,7 @@ def run(
             index_file_name=index_file_name,
             md5_file_name=md5_file_name,
             md5_gcp_name=md5_gcp_name,
+            force=force_redownload,
         )
 
     logger.info(f'Successfully downloaded and verified all files for {sg_name}.')

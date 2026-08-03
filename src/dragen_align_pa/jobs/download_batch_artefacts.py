@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import cpg_utils.config
 import icasdk
 import requests
+from cpg_utils.config import config_retrieve
 from google.cloud import exceptions as gcs_exceptions
 from google.cloud import storage
 from icasdk.apis.tags import project_data_api
@@ -51,24 +52,19 @@ def _stream_silently(
     gcs_prefix: str,
     context: str,
     stats: _StreamStats,
+    force: bool,
 ) -> None:
     """Stream one file to GCS; warn-and-skip on transient ICA / HTTP / GCS errors.
 
-    Skips if the GCS blob already exists, supporting a 'delete the marker and re-run'
-    retry that re-attempts only failed files (GCS resumable uploads finalize only on
-    completion, so an existing blob means a prior run committed successfully).
+    Files already present in GCS are skipped by `stream_ica_file_to_gcs` (unless
+    `force`), supporting a 'delete the marker and re-run' retry that re-attempts only
+    the files that failed.
     """
     # MD5-mismatch (ValueError) is deliberately NOT caught: unreachable here with
     # expected_md5_hash=None, but a future caller passing a hash must crash on an
-    # integrity violation. Wiring MD5 through here also means the skip-if-exists branch
-    # must be gated on a "verified" sidecar — trusting an existing blob is only safe
-    # in the no-hash regime.
-    gcs_blob_path = f'{gcs_prefix}/{file_name}'
-    if gcs_bucket.blob(gcs_blob_path).exists():
-        stats.skipped += 1
-        return
+    # integrity violation.
     try:
-        ica_utils.stream_ica_file_to_gcs(
+        streamed = ica_utils.stream_ica_file_to_gcs(
             api_instance=api_instance,
             path_parameters=path_parameters,
             file_id=file_id,
@@ -76,6 +72,7 @@ def _stream_silently(
             gcs_bucket=gcs_bucket,
             gcs_prefix=gcs_prefix,
             expected_md5_hash=None,
+            force=force,
         )
     except (icasdk.ApiException, requests.RequestException, gcs_exceptions.GoogleCloudError) as e:
         logger.warning(f'{context}: streaming {file_name} failed ({e}); skipping.')
@@ -87,7 +84,10 @@ def _stream_silently(
             }
         )
         return
-    stats.success += 1
+    if streamed:
+        stats.success += 1
+    else:
+        stats.skipped += 1
 
 
 def _stream_named_file(
@@ -98,6 +98,7 @@ def _stream_named_file(
     gcs_bucket: storage.Bucket,
     gcs_prefix: str,
     stats: _StreamStats,
+    force: bool,
 ) -> None:
     """Find one named file in `parent_folder` and stream it to `gcs_prefix/file_name`.
 
@@ -137,6 +138,7 @@ def _stream_named_file(
         gcs_prefix=gcs_prefix,
         context=f'lookup={parent_folder}',
         stats=stats,
+        force=force,
     )
 
 
@@ -179,6 +181,7 @@ def run(
         )
     stats = _StreamStats()
     batches_processed = 0
+    force_redownload = bool(config_retrieve(['ica', 'download', 'force_redownload'], default=False))
 
     with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         for batch_entry in batches_file.batches:
@@ -211,6 +214,7 @@ def run(
                     gcs_bucket=gcs_bucket,
                     gcs_prefix=gcs_prefix,
                     stats=stats,
+                    force=force_redownload,
                 )
 
             # Recursive: DRAGEN's reports/ has nested subdirs; non-recursive would
@@ -247,6 +251,7 @@ def run(
                     gcs_prefix=f'{gcs_prefix}/reports',
                     context=f'batch {batch_name} reports/',
                     stats=stats,
+                    force=force_redownload,
                 )
 
     if stats.success == 0 and stats.total_failure > 0:

@@ -75,6 +75,12 @@ batch_size = 15
 # before they're streamed; keep comfortably inside the pre-signed URL TTL.
 [ica.download]
 url_batch_size = 50
+# Re-download files that GCS already holds a complete copy of. Normally false, so a stage
+# re-run after a part-way failure resumes instead of re-fetching everything: a finalized GCS
+# object means a prior run wrote that file end to end, and where ICA supplies an MD5 (CRAM /
+# gVCF) the stored object's checksum is compared rather than trusted. Set true to rebuild
+# outputs from ICA regardless of what is already there.
+force_redownload = false
 
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]

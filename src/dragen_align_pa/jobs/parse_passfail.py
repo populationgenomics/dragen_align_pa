@@ -20,7 +20,7 @@ import requests
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils
+from dragen_align_pa import http_utils, ica_api_utils
 
 _HTTP_FORBIDDEN = 403
 
@@ -69,7 +69,7 @@ def fetch_passfail_from_ica(
             path_params=path_parameters | {'dataId': file_id},
         )
         download_url: str = url_response.body['url']
-        return requests.get(download_url, timeout=60)
+        return http_utils.download_session().get(download_url, timeout=http_utils.SMALL_FILE_TIMEOUT)
 
     try:
         response = _mint_and_fetch()

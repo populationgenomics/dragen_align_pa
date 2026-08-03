@@ -4,6 +4,7 @@ interacting with ICA. It orchestrates calls to the low-level ica_api
 and ica_cli modules.
 """
 
+import base64
 import hashlib
 import json
 import time
@@ -18,11 +19,12 @@ from icasdk.model.create_data import CreateData
 from icasdk.model.data_id_or_path_list import DataIdOrPathList
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils
+from dragen_align_pa import http_utils, ica_api_utils
 from dragen_align_pa.paths import IcaPath
 from dragen_align_pa.utils import load_per_sg_state
 
 if TYPE_CHECKING:
+    from google.cloud.storage.blob import Blob
     from google.cloud.storage.bucket import Bucket
     from icasdk.apis.tags import project_data_api
 
@@ -185,9 +187,9 @@ def get_md5_from_ica(
         )
         download_url = url_response.body['url']  # pyright: ignore[reportUnknownVariableType]
 
-        response = requests.get(
+        response = http_utils.download_session().get(
             download_url,
-            timeout=300,
+            timeout=http_utils.SMALL_FILE_TIMEOUT,
         )  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
         response.raise_for_status()
 
@@ -231,6 +233,79 @@ def batch_create_download_urls(
     }
 
 
+def _gcs_md5_hex(blob: 'Blob') -> str | None:
+    """Return an object's GCS-recorded MD5 as lowercase hex.
+
+    Args:
+        blob: A blob whose properties have been loaded (e.g. from `Bucket.get_blob`).
+
+    Returns:
+        The hex digest, or None if GCS holds no MD5 for the object (composite
+        objects, which our resumable uploads never produce).
+    """
+    if not blob.md5_hash:
+        return None
+    return base64.b64decode(blob.md5_hash).hex()
+
+
+# A finalized GCS object means a prior run wrote that file end to end: BlobWriter.__exit__
+# calls terminate() on error, so an interrupted stream abandons its resumable session and
+# never finalizes. Where ICA also gives us a hash we don't have to lean on that argument —
+# GCS records each object's MD5, so the existing copy is checked rather than trusted.
+def existing_gcs_object_is_complete(
+    gcs_bucket: 'Bucket',
+    gcs_blob_path: str,
+    expected_md5_hash: str | None = None,
+) -> bool:
+    """Report whether GCS already holds a complete copy of an object.
+
+    Args:
+        gcs_bucket: Bucket to look in.
+        gcs_blob_path: Full object key within the bucket.
+        expected_md5_hash: Hex MD5 the stored object must match. When None, any
+            finalized object counts as complete.
+
+    Returns:
+        True if the object exists and, when `expected_md5_hash` is given, matches it.
+    """
+    existing = gcs_bucket.get_blob(gcs_blob_path)  # pyright: ignore[reportUnknownVariableType]
+    if existing is None:
+        return False
+    if expected_md5_hash is None:
+        return True
+
+    stored_md5_hash = _gcs_md5_hex(existing)  # pyright: ignore[reportUnknownArgumentType]
+    if stored_md5_hash is None:
+        logger.warning(
+            f'{gcs_blob_path} exists but GCS holds no MD5 for it; re-downloading rather than trusting it.',
+        )
+        return False
+    if stored_md5_hash != expected_md5_hash:
+        logger.warning(
+            f'{gcs_blob_path} exists but its MD5 {stored_md5_hash} does not match the expected '
+            f'{expected_md5_hash}; re-downloading.',
+        )
+        return False
+    return True
+
+
+def list_existing_gcs_names(gcs_bucket: 'Bucket', gcs_prefix: str) -> set[str]:
+    """List the objects already under a prefix, named relative to it.
+
+    Args:
+        gcs_bucket: Bucket to list.
+        gcs_prefix: Prefix to list under, without a trailing slash.
+
+    Returns:
+        Object names relative to `gcs_prefix`, e.g. `{'a.csv', 'reports/b.html'}`.
+    """
+    prefix = f'{gcs_prefix}/'
+    return {
+        blob.name.removeprefix(prefix)  # pyright: ignore[reportUnknownMemberType]
+        for blob in gcs_bucket.list_blobs(prefix=prefix)  # pyright: ignore[reportUnknownVariableType]
+    }
+
+
 def stream_ica_file_to_gcs(
     api_instance: 'project_data_api.ProjectDataApi',
     path_parameters: dict[str, str],
@@ -240,18 +315,42 @@ def stream_ica_file_to_gcs(
     gcs_prefix: str,
     expected_md5_hash: str | None = None,
     download_url: str | None = None,
-) -> None:
-    """
-    Streams a file from ICA to GCS and optionally verifies its MD5.
-    (Used by download_specific_files_from_ica.py and download_ica_pipeline_outputs.py)
+    *,
+    force: bool = False,
+) -> bool:
+    """Stream a file from ICA to GCS, optionally verifying its MD5.
 
-    If `download_url` is supplied (e.g. pre-minted in bulk via
-    `batch_create_download_urls`), the per-file `:createDownloadUrl` call is
-    skipped. Otherwise a URL is minted for this single file.
+    Args:
+        api_instance: An instance of the ProjectDataApi.
+        path_parameters: Dict with the projectId.
+        file_id: ICA data id of the file to stream.
+        file_name: Object name to write under `gcs_prefix`; may contain slashes.
+        gcs_bucket: Destination bucket.
+        gcs_prefix: Destination prefix within the bucket.
+        expected_md5_hash: Hex MD5 to verify the transfer against. A mismatch
+            deletes the uploaded object and raises.
+        download_url: A pre-minted pre-signed URL (e.g. from
+            `batch_create_download_urls`). When None, one is minted for this file.
+        force: Re-download even when GCS already holds a complete copy.
+
+    Raises:
+        icasdk.ApiException: Minting the download URL failed.
+        requests.RequestException: The transfer failed.
+        google.cloud.exceptions.GoogleCloudError: The upload to GCS failed.
+        ValueError: The transferred bytes did not match `expected_md5_hash`.
+
+    Returns:
+        True if the file was streamed, False if it was already present and skipped.
     """
     gcs_blob_path = f'{gcs_prefix}/{file_name}'
     blob = gcs_bucket.blob(gcs_blob_path)
     bucket_name = gcs_bucket.name  # pyright: ignore[reportUnknownVariableType]
+
+    if not force and existing_gcs_object_is_complete(gcs_bucket, gcs_blob_path, expected_md5_hash):
+        logger.info(
+            f'Skipping {file_name}: gs://{bucket_name}/{gcs_blob_path} already holds a complete copy.',
+        )
+        return False
 
     logger.info(
         f'Streaming {file_name} (ID: {file_id}) to gs://{bucket_name}/{gcs_blob_path}',
@@ -269,10 +368,10 @@ def stream_ica_file_to_gcs(
 
         # 2. Download and upload as a stream
         md5_hasher = hashlib.md5()  # noqa: S324
-        with requests.get(
+        with http_utils.download_session().get(
             resolved_url,
             stream=True,
-            timeout=600,
+            timeout=http_utils.STREAM_TIMEOUT,
         ) as r:  # pyright: ignore[reportUnknownVariableType]
             r.raise_for_status()
 
@@ -316,6 +415,8 @@ def stream_ica_file_to_gcs(
     except gcs_exceptions.GoogleCloudError as e:
         logger.error(f'An error occurred uploading to GCS for {file_name}: {e}')
         raise
+
+    return True
 
 
 def list_ica_files(
