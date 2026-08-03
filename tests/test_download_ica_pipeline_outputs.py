@@ -112,6 +112,27 @@ def test_force_redownload_ignores_what_is_already_in_gcs(patched_job, monkeypatc
     assert patched_job.stream.call_count == 2
 
 
+def test_neither_the_outputs_nor_the_provenance_marker_are_namespaced_by_cohort(patched_job, monkeypatch):
+    """Outputs are keyed by sequencing group alone, so an SG belonging to two cohorts (a
+    panel-of-normals cohort drawn from a production one) has ONE copy, never a per-cohort
+    duplicate. Only state paths are cohort-scoped — see `utils.get_pipeline_path`.
+
+    The marker has to be SG-keyed for the same reason it exists: a per-cohort marker would let
+    each cohort believe it owns the shared prefix, and each would then treat the other's files
+    as its own already-downloaded output.
+    """
+    _patch_listing(monkeypatch, set())
+
+    _run()
+
+    marker_key = patched_job.claim.call_args.args[1]
+    gcs_prefix = patched_job.stream.call_args.kwargs['gcs_prefix']
+
+    assert 'SYN00001' in marker_key
+    for path in (marker_key, gcs_prefix):
+        assert 'COH0001' not in path, f'{path} is namespaced by cohort; outputs must be keyed by SG alone'
+
+
 def test_the_prefix_is_claimed_for_this_ica_run_before_it_is_listed(patched_job, monkeypatch):
     """Provenance gates the skip: the listing must be asked only for objects written since
     this run took ownership, so a previous analysis's outputs are never mistaken for ours."""
