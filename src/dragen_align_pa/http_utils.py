@@ -10,7 +10,17 @@ import functools
 from typing import Final
 
 import requests
+from cpg_utils.config import config_retrieve
+from loguru import logger
 from requests.adapters import HTTPAdapter
+from tenacity import (
+    RetryCallState,
+    Retrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_fixed,
+    wait_random_exponential,
+)
 from urllib3.util.retry import Retry
 
 # (connect, read) rather than a single scalar: a scalar applies the same budget to both,
@@ -59,3 +69,41 @@ def download_session() -> requests.Session:
     session = requests.Session()
     session.mount('https://', HTTPAdapter(max_retries=retry))
     return session
+
+
+_DEFAULT_MAX_TRANSFER_ATTEMPTS: Final = 4
+
+
+def _log_transfer_retry(retry_state: RetryCallState) -> None:
+    """tenacity `before_sleep` hook: log every scheduled transfer retry."""
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    sleep = retry_state.next_action.sleep if retry_state.next_action else 0.0
+    logger.warning(
+        f'Transfer failed ({exc}); retrying (attempt {retry_state.attempt_number}) after {sleep:.1f}s',
+    )
+
+
+# The adapter Retry above can only replay a request that failed before its response body
+# started arriving. A reset part-way through a body — the common failure on a multi-GB CRAM
+# over a long-haul link — surfaces from `iter_content` with the stream already partly
+# consumed and unrewindable, so recovering means restarting the whole transfer from the
+# caller. Backoff is fully jittered to desynchronise concurrent per-SG jobs retrying against
+# the same throttled endpoint, with a hard floor so a reset is never answered instantly.
+def transfer_retrying() -> Retrying:
+    """Build the tenacity controller for restarting a whole file transfer.
+
+    Returns:
+        A `Retrying` that retries `requests.RequestException` with jittered
+        exponential backoff, re-raising the last error once attempts are exhausted.
+        Attempt count comes from `[ica.download] max_transfer_attempts`.
+    """
+    max_attempts = int(
+        config_retrieve(['ica', 'download', 'max_transfer_attempts'], default=_DEFAULT_MAX_TRANSFER_ATTEMPTS),
+    )
+    return Retrying(
+        retry=retry_if_exception_type(requests.RequestException),
+        stop=stop_after_attempt(max_attempts),
+        wait=wait_random_exponential(multiplier=1, min=2, max=60) + wait_fixed(2),
+        before_sleep=_log_transfer_retry,
+        reraise=True,
+    )

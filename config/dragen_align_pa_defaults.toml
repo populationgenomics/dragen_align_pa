@@ -81,6 +81,10 @@ url_batch_size = 50
 # gVCF) the stored object's checksum is compared rather than trusted. Set true to rebuild
 # outputs from ICA regardless of what is already there.
 force_redownload = false
+# How many times to attempt one file transfer before giving up (1 = no retry). A reset
+# part-way through a response body can't be replayed at the HTTP layer, so recovery means
+# re-fetching the whole file; each attempt mints a fresh pre-signed URL.
+max_transfer_attempts = 4
 
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]

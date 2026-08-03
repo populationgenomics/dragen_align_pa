@@ -333,9 +333,12 @@ def stream_ica_file_to_gcs(
             `batch_create_download_urls`). When None, one is minted for this file.
         force: Re-download even when GCS already holds a complete copy.
 
+    A failed transfer is restarted from the beginning (with a freshly minted URL) up to
+    `[ica.download] max_transfer_attempts` times before the error propagates.
+
     Raises:
         icasdk.ApiException: Minting the download URL failed.
-        requests.RequestException: The transfer failed.
+        requests.RequestException: Every transfer attempt failed.
         google.cloud.exceptions.GoogleCloudError: The upload to GCS failed.
         ValueError: The transferred bytes did not match `expected_md5_hash`.
 
@@ -356,20 +359,20 @@ def stream_ica_file_to_gcs(
         f'Streaming {file_name} (ID: {file_id}) to gs://{bucket_name}/{gcs_blob_path}',
     )
 
-    try:
-        # 1. Get pre-signed URL (mint per-file only if one wasn't pre-supplied)
-        resolved_url: str = download_url  # type: ignore[assignment]
-        if download_url is None:
-            url_response = ica_api_utils.ica_retry(
-                api_instance.create_download_url_for_data,  # pyright: ignore[reportUnknownVariableType]
-                path_params=path_parameters | {'dataId': file_id},  # pyright: ignore[reportArgumentType]
-            )
-            resolved_url = url_response.body['url']  # pyright: ignore[reportUnknownVariableType]
+    def _mint_download_url() -> str:
+        url_response = ica_api_utils.ica_retry(
+            api_instance.create_download_url_for_data,  # pyright: ignore[reportUnknownVariableType]
+            path_params=path_parameters | {'dataId': file_id},  # pyright: ignore[reportArgumentType]
+        )
+        return url_response.body['url']  # pyright: ignore[reportUnknownVariableType]
 
-        # 2. Download and upload as a stream
+    # Restarting writes the object from the beginning rather than resuming: an interrupted
+    # BlobWriter terminates its resumable session, so there is no partial upload to resume
+    # and no half-written object left behind for the next attempt to append to.
+    def _transfer(url: str) -> str:
         md5_hasher = hashlib.md5()  # noqa: S324
         with http_utils.download_session().get(
-            resolved_url,
+            url,
             stream=True,
             timeout=http_utils.STREAM_TIMEOUT,
         ) as r:  # pyright: ignore[reportUnknownVariableType]
@@ -382,13 +385,27 @@ def stream_ica_file_to_gcs(
                 ):  # pyright: ignore[reportUnknownVariableType] # 8MB chunks
                     gcs_file.write(chunk)  # pyright: ignore[reportUnknownArgumentType]
                     md5_hasher.update(chunk)  # pyright: ignore[reportUnknownArgumentType]
+        return md5_hasher.hexdigest()
 
-        actual_md5_hash = md5_hasher.hexdigest()
+    attempts_made = 0
+
+    def _mint_and_transfer() -> str:
+        nonlocal attempts_made
+        attempts_made += 1
+        # A pre-minted URL (the batch path) is only good for the first attempt: a retry can
+        # be a minute or more later, by which point the URL may have expired (ICA answers an
+        # expired pre-signed URL with 403).
+        url = download_url if download_url is not None and attempts_made == 1 else _mint_download_url()
+        return _transfer(url)
+
+    try:
+        actual_md5_hash = http_utils.transfer_retrying()(_mint_and_transfer)
+
         logger.info(
             f'Finished streaming {file_name}. Actual MD5: {actual_md5_hash}',
         )
 
-        # 3. Verify MD5 if provided
+        # Verify MD5 if provided
         if expected_md5_hash:
             if actual_md5_hash != expected_md5_hash:
                 logger.error(f'MD5 MISMATCH for {file_name}!')

@@ -14,6 +14,7 @@ import hashlib
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 from dragen_align_pa import ica_utils
 from icasdk.exceptions import ApiException
@@ -208,6 +209,98 @@ def test_stream_redownloads_when_stored_object_has_no_md5(monkeypatch):
 
     assert result is True
     session.get.assert_called_once()
+
+
+# --- whole-transfer retry ---------------------------------------------------------------
+
+
+def _reset_mid_body() -> MagicMock:
+    """A response that dies part-way through the body, as a long-haul CRAM transfer does."""
+    resp = MagicMock()
+    resp.__enter__.return_value = resp
+    resp.iter_content.side_effect = requests.ConnectionError(
+        'Connection aborted.',
+        ConnectionResetError(104, 'Connection reset by peer'),
+    )
+    return resp
+
+
+def _stream_with_responses(monkeypatch, responses, *, download_url='https://signed.example/presigned'):
+    """Stream one file, serving `responses` in order; returns (result, api, session)."""
+    session = MagicMock()
+    session.get.side_effect = responses
+    monkeypatch.setattr(ica_utils.http_utils, 'download_session', lambda: session)
+
+    api = MagicMock()
+    api.create_download_url_for_data.return_value.body = {'url': 'https://signed.example/fresh'}
+
+    result = ica_utils.stream_ica_file_to_gcs(
+        api_instance=api,
+        path_parameters={'projectId': 'p'},
+        file_id='fil.abc',
+        file_name='sample.cram',
+        gcs_bucket=_empty_bucket(),
+        gcs_prefix='ica/output',
+        download_url=download_url,
+    )
+    return result, api, session
+
+
+def test_transfer_restarts_after_a_reset_part_way_through_the_body(monkeypatch):
+    """The failure this whole change exists for: a reset mid-body can't be replayed by the
+    HTTP adapter, so the file-level retry must re-fetch it."""
+    result, _api, session = _stream_with_responses(monkeypatch, [_reset_mid_body(), _streaming_response()])
+
+    assert result is True
+    assert session.get.call_count == 2
+
+
+def test_transfer_retry_mints_a_fresh_url(monkeypatch):
+    """A pre-minted batch URL may have expired by the time the retry runs, so the retry
+    must not reuse it."""
+    _result, api, session = _stream_with_responses(monkeypatch, [_reset_mid_body(), _streaming_response()])
+
+    api.create_download_url_for_data.assert_called_once()
+    assert [call.args[0] for call in session.get.call_args_list] == [
+        'https://signed.example/presigned',
+        'https://signed.example/fresh',
+    ]
+
+
+def test_transfer_gives_up_after_configured_attempts(monkeypatch):
+    """Exhausted attempts surface the underlying connection error to the caller."""
+    monkeypatch.setattr(
+        ica_utils.http_utils,
+        'config_retrieve',
+        lambda key, default=None: 2 if key == ['ica', 'download', 'max_transfer_attempts'] else default,
+    )
+
+    with pytest.raises(requests.ConnectionError):
+        _stream_with_responses(monkeypatch, [_reset_mid_body(), _reset_mid_body(), _streaming_response()])
+
+
+def test_md5_mismatch_is_not_retried(monkeypatch):
+    """A checksum mismatch means the bytes were wrong, not that the connection dropped:
+    it stays a loud, immediate failure and the bad object is deleted."""
+    bucket = _empty_bucket()
+    session = MagicMock()
+    session.get.return_value = _streaming_response()
+    monkeypatch.setattr(ica_utils.http_utils, 'download_session', lambda: session)
+
+    with pytest.raises(ValueError, match='MD5 mismatch'):
+        ica_utils.stream_ica_file_to_gcs(
+            api_instance=MagicMock(),
+            path_parameters={'projectId': 'p'},
+            file_id='fil.abc',
+            file_name='sample.cram',
+            gcs_bucket=bucket,
+            gcs_prefix='ica/output',
+            expected_md5_hash='ffffffffffffffffffffffffffffffff',
+            download_url='https://signed.example/presigned',
+        )
+
+    session.get.assert_called_once()
+    bucket.blob.return_value.delete.assert_called_once()
 
 
 def test_list_existing_gcs_names_returns_names_relative_to_prefix():
