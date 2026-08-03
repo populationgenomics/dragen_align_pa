@@ -8,11 +8,14 @@ behaviour that makes that re-run cheap — files already in GCS are filtered out
 URLs nor re-downloads bytes it already has.
 """
 
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
 
 from dragen_align_pa.jobs import download_ica_pipeline_outputs
+
+_OWNED_SINCE = datetime(2026, 8, 1, tzinfo=UTC)
 
 _ICA_FILES = [
     ('SYN00001.qc.csv', 'fil.a'),
@@ -40,8 +43,17 @@ def patched_job(monkeypatch):
     )
     monkeypatch.setattr('dragen_align_pa.ica_utils.batch_create_download_urls', mocks.mint)
     monkeypatch.setattr('dragen_align_pa.ica_utils.stream_ica_file_to_gcs', mocks.stream)
+    monkeypatch.setattr('dragen_align_pa.ica_utils.claim_download_for_run', mocks.claim)
+    mocks.claim.return_value = _OWNED_SINCE
     mocks.mint.return_value = {'fil.a': 'https://u/a', 'fil.b': 'https://u/b'}
     return mocks
+
+
+def _patch_listing(monkeypatch, names):
+    """Stub the provenance-aware listing and return its mock."""
+    listing = MagicMock(return_value=names)
+    monkeypatch.setattr('dragen_align_pa.ica_utils.list_gcs_names_written_since', listing)
+    return listing
 
 
 def _run(sg_name='SYN00001'):
@@ -57,7 +69,7 @@ def _run(sg_name='SYN00001'):
 def test_downloads_everything_when_gcs_is_empty(patched_job, monkeypatch):
     """Nothing present: both non-CRAM files are minted and streamed (CRAM/gVCF are
     sibling stages' work)."""
-    monkeypatch.setattr('dragen_align_pa.ica_utils.list_existing_gcs_names', MagicMock(return_value=set()))
+    _patch_listing(monkeypatch, set())
 
     _run()
 
@@ -68,10 +80,7 @@ def test_downloads_everything_when_gcs_is_empty(patched_job, monkeypatch):
 def test_already_present_files_are_not_reminted_or_restreamed(patched_job, monkeypatch):
     """The point of the pre-filter: a re-run after a part-way failure mints URLs for
     the missing file only, instead of re-minting all of them."""
-    monkeypatch.setattr(
-        'dragen_align_pa.ica_utils.list_existing_gcs_names',
-        MagicMock(return_value={'SYN00001.qc.csv'}),
-    )
+    _patch_listing(monkeypatch, {'SYN00001.qc.csv'})
 
     _run()
 
@@ -81,10 +90,7 @@ def test_already_present_files_are_not_reminted_or_restreamed(patched_job, monke
 
 def test_fully_downloaded_sg_makes_no_ica_url_calls(patched_job, monkeypatch):
     """A complete SG must cost zero rate-limited mint calls on a re-run."""
-    monkeypatch.setattr(
-        'dragen_align_pa.ica_utils.list_existing_gcs_names',
-        MagicMock(return_value={'SYN00001.qc.csv', 'SYN00001.metrics.csv'}),
-    )
+    _patch_listing(monkeypatch, {'SYN00001.qc.csv', 'SYN00001.metrics.csv'})
 
     _run()
 
@@ -94,8 +100,7 @@ def test_fully_downloaded_sg_makes_no_ica_url_calls(patched_job, monkeypatch):
 
 def test_force_redownload_ignores_what_is_already_in_gcs(patched_job, monkeypatch):
     """With force_redownload set, GCS isn't consulted and everything is re-fetched."""
-    listing = MagicMock(return_value={'SYN00001.qc.csv', 'SYN00001.metrics.csv'})
-    monkeypatch.setattr('dragen_align_pa.ica_utils.list_existing_gcs_names', listing)
+    listing = _patch_listing(monkeypatch, {'SYN00001.qc.csv', 'SYN00001.metrics.csv'})
     monkeypatch.setattr(
         'dragen_align_pa.jobs.download_ica_pipeline_outputs.config_retrieve',
         lambda key, default=None: True if key == ['ica', 'download', 'force_redownload'] else default,
@@ -105,4 +110,14 @@ def test_force_redownload_ignores_what_is_already_in_gcs(patched_job, monkeypatc
 
     listing.assert_not_called()
     assert patched_job.stream.call_count == 2
-    assert all(call.kwargs['force'] is True for call in patched_job.stream.call_args_list)
+
+
+def test_the_prefix_is_claimed_for_this_ica_run_before_it_is_listed(patched_job, monkeypatch):
+    """Provenance gates the skip: the listing must be asked only for objects written since
+    this run took ownership, so a previous analysis's outputs are never mistaken for ours."""
+    listing = _patch_listing(monkeypatch, set())
+
+    _run()
+
+    assert patched_job.claim.call_args.args[2] == '/ica/folder/'
+    assert listing.call_args.args[2] is _OWNED_SINCE

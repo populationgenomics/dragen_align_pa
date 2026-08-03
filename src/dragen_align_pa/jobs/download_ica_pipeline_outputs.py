@@ -45,13 +45,22 @@ def run(
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
     force_redownload = bool(config_retrieve(['ica', 'download', 'force_redownload'], default=False))
+    # Claim the destination before listing it: `dragen_metrics/{sg}` is not scoped to an ICA
+    # run, so objects left by a *previous* analysis of this SG sit at the same paths and must
+    # not count as already-downloaded. Anything written since we took ownership is ours. The
+    # marker is keyed per-SG like the prefix it guards, and sits outside that prefix so it
+    # can't make the stage's declared output folder exist before anything is downloaded.
+    marker_key = paths.gcs_relative_key(utils.get_output_path(filename=f'download_provenance/{sg_name}.json'))
+    owned_since = ica_utils.claim_download_for_run(gcs_bucket, marker_key, ica_folder_path)
     # One list_blobs, not one exists() per file, and done BEFORE any URL is minted: a rerun
     # after a part-way failure then mints URLs only for what's missing instead of re-minting
     # (and re-downloading) all 100+ files. The stage declares the parent folder as its single
     # expected output, so cpg-flow cannot tell a partial download from a complete one — this
     # is what makes the forced rerun cheap.
     already_in_gcs = (
-        set() if force_redownload else ica_utils.list_existing_gcs_names(gcs_bucket, gcs_output_path_prefix)
+        set()
+        if force_redownload
+        else ica_utils.list_gcs_names_written_since(gcs_bucket, gcs_output_path_prefix, owned_since)
     )
 
     with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
@@ -99,7 +108,9 @@ def run(
                     gcs_prefix=gcs_output_path_prefix,
                     expected_md5_hash=None,
                     download_url=urls.get(file_id),
-                    force=force_redownload,
+                    # The pre-filter above already decided this file must be written, and it
+                    # knows about run provenance where the per-file existence check does not.
+                    skip_existing=False,
                 )
 
     logger.info('All files streamed to GCS successfully.')

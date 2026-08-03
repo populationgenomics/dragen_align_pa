@@ -85,6 +85,10 @@ force_redownload = false
 # part-way through a response body can't be replayed at the HTTP layer, so recovery means
 # re-fetching the whole file; each attempt mints a fresh pre-signed URL.
 max_transfer_attempts = 4
+# Ceiling on the retry *window* for one file, in seconds. Checked between attempts only, so a
+# legitimately slow multi-GB transfer already running is never cut off — this stops a sick
+# endpoint turning a job into an unbounded hang, since nothing else caps job wall clock.
+max_transfer_seconds = 7200
 
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]

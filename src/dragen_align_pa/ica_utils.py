@@ -24,6 +24,8 @@ from dragen_align_pa.paths import IcaPath
 from dragen_align_pa.utils import load_per_sg_state
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from google.cloud.storage.blob import Blob
     from google.cloud.storage.bucket import Bucket
     from icasdk.apis.tags import project_data_api
@@ -289,12 +291,103 @@ def existing_gcs_object_is_complete(
     return True
 
 
-def list_existing_gcs_names(gcs_bucket: 'Bucket', gcs_prefix: str) -> set[str]:
-    """List the objects already under a prefix, named relative to it.
+# `requests` transparently decodes a Content-Encoding'd body, so Content-Length — which
+# describes the *encoded* size — would not match the bytes we count. Only an identity-encoded
+# response carries a length we can compare against.
+def _declared_content_length(response: requests.Response) -> int | None:
+    """Return the body length the server declared, if it is comparable to bytes received.
+
+    Args:
+        response: A streamed response whose headers have arrived.
+
+    Returns:
+        The `Content-Length` value, or None when it is absent (e.g. chunked transfer
+        encoding) or not comparable.
+    """
+    encoding: str = response.headers.get('Content-Encoding', 'identity').strip().lower()
+    if encoding not in ('', 'identity'):
+        return None
+    declared: str | None = response.headers.get('Content-Length')
+    if declared is None:
+        return None
+    try:
+        return int(declared)
+    except ValueError:
+        logger.warning(f'Ignoring malformed Content-Length header {declared!r}')
+        return None
+
+
+# GCS output prefixes are not scoped to an ICA run (`dragen_metrics/{sg}` carries no cohort or
+# pipeline id), so re-analysing an SG writes new outputs over the same prefix. Without a record
+# of which run the existing objects came from, skip-if-exists cannot tell "already fetched this
+# run" from "left over from the previous analysis", and would silently keep stale outputs. The
+# marker's own GCS creation time is the reference instant, so the comparison never depends on
+# the client clock. The marker deliberately lives OUTSIDE the prefix it describes: a stage
+# declares that prefix as its expected output, and an object inside it would make the folder
+# exist — and so look complete to cpg-flow — before a single file had been downloaded.
+def claim_download_for_run(gcs_bucket: 'Bucket', marker_key: str, ica_folder_path: str) -> 'datetime':
+    """Record which ICA run owns a download destination, and report when ownership began.
+
+    Writes a fresh marker when the destination is unclaimed or was last written by a
+    different ICA run; keeps the existing marker when it already names `ica_folder_path`.
+
+    Args:
+        gcs_bucket: Bucket holding both the marker and the destination prefix.
+        marker_key: Object key for the marker, outside the prefix it describes.
+        ica_folder_path: The ICA folder being downloaded, which identifies the run.
+
+    Returns:
+        The marker's GCS creation time. Objects older than this were written by some
+        other run and must not be treated as already-downloaded.
+    """
+    existing = gcs_bucket.get_blob(marker_key)  # pyright: ignore[reportUnknownVariableType]
+    if existing is not None:
+        recorded = json.loads(existing.download_as_bytes()).get('ica_folder')  # pyright: ignore[reportUnknownMemberType]
+        if recorded == ica_folder_path:
+            return _marker_created_time(existing, marker_key)  # pyright: ignore[reportUnknownArgumentType]
+        logger.warning(
+            f'Previous download of gs://{gcs_bucket.name}/{marker_key} came from a different '
+            f'ICA run ({recorded}); re-downloading everything for {ica_folder_path}.',
+        )
+
+    marker = gcs_bucket.blob(marker_key)
+    marker.upload_from_string(
+        json.dumps({'ica_folder': ica_folder_path}, indent=2),
+        content_type='application/json',
+    )
+    return _marker_created_time(marker, marker_key)
+
+
+def _marker_created_time(marker: 'Blob', marker_path: str) -> 'datetime':
+    """Return a provenance marker's GCS creation time, reloading it once if unset.
+
+    Args:
+        marker: The marker blob.
+        marker_path: Its object key, for the error message.
+
+    Raises:
+        ValueError: If GCS reports no creation time for the marker.
+
+    Returns:
+        The marker's creation time.
+    """
+    if marker.time_created is None:
+        marker.reload()
+    if marker.time_created is None:
+        raise ValueError(
+            f'GCS reports no creation time for provenance marker {marker_path}; cannot tell '
+            f'which objects belong to this run, so refusing to skip any as already-downloaded.',
+        )
+    return marker.time_created
+
+
+def list_gcs_names_written_since(gcs_bucket: 'Bucket', gcs_prefix: str, since: 'datetime') -> set[str]:
+    """List objects under a prefix created at or after `since`, named relative to it.
 
     Args:
         gcs_bucket: Bucket to list.
         gcs_prefix: Prefix to list under, without a trailing slash.
+        since: Cutoff; objects created before this are omitted, being another run's.
 
     Returns:
         Object names relative to `gcs_prefix`, e.g. `{'a.csv', 'reports/b.html'}`.
@@ -303,6 +396,7 @@ def list_existing_gcs_names(gcs_bucket: 'Bucket', gcs_prefix: str) -> set[str]:
     return {
         blob.name.removeprefix(prefix)  # pyright: ignore[reportUnknownMemberType]
         for blob in gcs_bucket.list_blobs(prefix=prefix)  # pyright: ignore[reportUnknownVariableType]
+        if blob.time_created >= since
     }
 
 
@@ -316,7 +410,7 @@ def stream_ica_file_to_gcs(
     expected_md5_hash: str | None = None,
     download_url: str | None = None,
     *,
-    force: bool = False,
+    skip_existing: bool = True,
 ) -> bool:
     """Stream a file from ICA to GCS, optionally verifying its MD5.
 
@@ -331,7 +425,9 @@ def stream_ica_file_to_gcs(
             deletes the uploaded object and raises.
         download_url: A pre-minted pre-signed URL (e.g. from
             `batch_create_download_urls`). When None, one is minted for this file.
-        force: Re-download even when GCS already holds a complete copy.
+        skip_existing: Return without transferring when GCS already holds a complete copy.
+            Pass False when the caller has already decided this file must be written —
+            it owns the decision and this check would only second-guess it.
 
     A failed transfer is restarted from the beginning (with a freshly minted URL) up to
     `[ica.download] max_transfer_attempts` times before the error propagates.
@@ -349,7 +445,7 @@ def stream_ica_file_to_gcs(
     blob = gcs_bucket.blob(gcs_blob_path)
     bucket_name = gcs_bucket.name  # pyright: ignore[reportUnknownVariableType]
 
-    if not force and existing_gcs_object_is_complete(gcs_bucket, gcs_blob_path, expected_md5_hash):
+    if skip_existing and existing_gcs_object_is_complete(gcs_bucket, gcs_blob_path, expected_md5_hash):
         logger.info(
             f'Skipping {file_name}: gs://{bucket_name}/{gcs_blob_path} already holds a complete copy.',
         )
@@ -377,14 +473,26 @@ def stream_ica_file_to_gcs(
             timeout=http_utils.STREAM_TIMEOUT,
         ) as r:  # pyright: ignore[reportUnknownVariableType]
             r.raise_for_status()
+            expected_bytes = _declared_content_length(r)  # pyright: ignore[reportUnknownArgumentType]
 
             # Stream directly to GCS
             with blob.open('wb', timeout=600) as gcs_file:  # pyright: ignore[reportUnknownArgumentType]
+                written = 0
                 for chunk in r.iter_content(
                     chunk_size=1024 * 1024 * 8,
                 ):  # pyright: ignore[reportUnknownVariableType] # 8MB chunks
                     gcs_file.write(chunk)  # pyright: ignore[reportUnknownArgumentType]
                     md5_hasher.update(chunk)  # pyright: ignore[reportUnknownArgumentType]
+                    written += len(chunk)  # pyright: ignore[reportUnknownArgumentType]
+
+                # Raised INSIDE the writer's context so BlobWriter.__exit__ terminates the
+                # resumable session and nothing is finalized; as a RequestException it also
+                # routes through the transfer retry rather than surfacing as a hard failure.
+                if expected_bytes is not None and written != expected_bytes:
+                    raise requests.exceptions.ChunkedEncodingError(
+                        f'{file_name}: received {written} bytes but the server declared '
+                        f'{expected_bytes}; treating as a truncated transfer.',
+                    )
         return md5_hasher.hexdigest()
 
     attempts_made = 0
@@ -399,7 +507,7 @@ def stream_ica_file_to_gcs(
         return _transfer(url)
 
     try:
-        actual_md5_hash = http_utils.transfer_retrying()(_mint_and_transfer)
+        actual_md5_hash = http_utils.transfer_retrying(f'{file_name} (ID: {file_id})')(_mint_and_transfer)
 
         logger.info(
             f'Finished streaming {file_name}. Actual MD5: {actual_md5_hash}',

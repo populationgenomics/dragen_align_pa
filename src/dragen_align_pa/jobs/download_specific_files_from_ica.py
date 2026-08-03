@@ -72,7 +72,7 @@ def _orchestrate_download(
         gcs_bucket=gcs_bucket,
         gcs_prefix=gcs_output_path_prefix,
         expected_md5_hash=expected_hash,
-        force=force,
+        skip_existing=not force,
     )
 
     # --- 4. Stream index file (no verification) ---
@@ -84,7 +84,7 @@ def _orchestrate_download(
         gcs_bucket=gcs_bucket,
         gcs_prefix=gcs_output_path_prefix,
         expected_md5_hash=None,
-        force=force,
+        skip_existing=not force,
     )
 
     # --- 5. Upload the MD5 file itself ---

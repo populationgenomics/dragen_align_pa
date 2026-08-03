@@ -72,7 +72,7 @@ def _stream_silently(
             gcs_bucket=gcs_bucket,
             gcs_prefix=gcs_prefix,
             expected_md5_hash=None,
-            force=force,
+            skip_existing=not force,
         )
     except (icasdk.ApiException, requests.RequestException, gcs_exceptions.GoogleCloudError) as e:
         logger.warning(f'{context}: streaming {file_name} failed ({e}); skipping.')

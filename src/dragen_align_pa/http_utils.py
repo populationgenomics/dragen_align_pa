@@ -18,6 +18,7 @@ from tenacity import (
     Retrying,
     retry_if_exception_type,
     stop_after_attempt,
+    stop_after_delay,
     wait_fixed,
     wait_random_exponential,
 )
@@ -34,11 +35,31 @@ SMALL_FILE_TIMEOUT: Final[tuple[int, int]] = (30, 120)
 
 _MAX_HTTP_RETRIES: Final = 5
 
+# Deliberately lower than the other budgets. For a streamed GET a "read" error is a failure
+# waiting for response *headers*, and each one can burn the whole STREAM_TIMEOUT read budget
+# (600s) before it is even counted — 5 of those is the single largest term in the worst-case
+# latency of the whole download path.
+_MAX_READ_RETRIES: Final = 1
+
 # 0s, 4s, 8s, 16s, 32s. urllib3 1.x sleeps 0 before the first retry, which suits a one-off
 # reset but not a throttling peer; jittered file-level backoff is the tenacity layer's job.
 _BACKOFF_FACTOR: Final = 2.0
 
 _RETRYABLE_HTTP_STATUSES: Final = frozenset({429, 500, 502, 503, 504})
+
+# urllib3 honours Retry-After verbatim and its BACKOFF_MAX does not apply to it, so an
+# upstream answering `Retry-After: 86400` would park a worker for a day, once per retry.
+_MAX_RETRY_AFTER_SECONDS: Final = 120
+
+
+class _CappedRetryAfter(Retry):
+    """`Retry` that clamps a server-supplied `Retry-After` to `_MAX_RETRY_AFTER_SECONDS`."""
+
+    def get_retry_after(self, response: object) -> float | None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        retry_after = super().get_retry_after(response)  # pyright: ignore[reportArgumentType]
+        if retry_after is None:
+            return None
+        return min(retry_after, _MAX_RETRY_AFTER_SECONDS)
 
 
 # Cached, so a job that downloads 200 files pays one TCP+TLS handshake per host instead of
@@ -49,17 +70,18 @@ _RETRYABLE_HTTP_STATUSES: Final = frozenset({429, 500, 502, 503, 504})
 def download_session() -> requests.Session:
     """Return the process-wide session used for all pre-signed URL downloads.
 
+    Read retries cover failures up to and including response headers; a reset part-way
+    through a response body cannot be retried at this layer, because the consumed stream
+    can't be rewound. `transfer_retrying` covers that case.
+
     Returns:
         A `requests.Session` whose HTTPS adapter retries connect, read, and
-        retryable-status failures on GET with exponential backoff. Read retries
-        cover failures up to and including response headers; a reset part-way
-        through a response body cannot be retried at this layer, because the
-        consumed stream can't be rewound.
+        retryable-status failures on GET with exponential backoff.
     """
-    retry = Retry(
+    retry = _CappedRetryAfter(
         total=_MAX_HTTP_RETRIES,
         connect=_MAX_HTTP_RETRIES,
-        read=_MAX_HTTP_RETRIES,
+        read=_MAX_READ_RETRIES,
         status=_MAX_HTTP_RETRIES,
         status_forcelist=_RETRYABLE_HTTP_STATUSES,
         allowed_methods=frozenset({'GET', 'HEAD'}),
@@ -73,13 +95,20 @@ def download_session() -> requests.Session:
 
 _DEFAULT_MAX_TRANSFER_ATTEMPTS: Final = 4
 
+# Bounds the retry *window*, not a single attempt: tenacity checks `stop` between attempts, so
+# a legitimately slow multi-GB transfer already in flight is never cut off. Without it the
+# per-file worst case is unbounded in practice — nothing else in the pipeline caps job wall
+# clock (no `job.timeout()` anywhere), so a sick endpoint makes jobs hang rather than fail.
+_DEFAULT_MAX_TRANSFER_SECONDS: Final = 7200
 
-def _log_transfer_retry(retry_state: RetryCallState) -> None:
+
+def _log_transfer_retry(description: str, max_attempts: int, retry_state: RetryCallState) -> None:
     """tenacity `before_sleep` hook: log every scheduled transfer retry."""
     exc = retry_state.outcome.exception() if retry_state.outcome else None
     sleep = retry_state.next_action.sleep if retry_state.next_action else 0.0
     logger.warning(
-        f'Transfer failed ({exc}); retrying (attempt {retry_state.attempt_number}) after {sleep:.1f}s',
+        f'{description}: transfer attempt {retry_state.attempt_number} of {max_attempts} failed '
+        f'({exc}); retrying in {sleep:.1f}s',
     )
 
 
@@ -89,21 +118,28 @@ def _log_transfer_retry(retry_state: RetryCallState) -> None:
 # consumed and unrewindable, so recovering means restarting the whole transfer from the
 # caller. Backoff is fully jittered to desynchronise concurrent per-SG jobs retrying against
 # the same throttled endpoint, with a hard floor so a reset is never answered instantly.
-def transfer_retrying() -> Retrying:
+def transfer_retrying(description: str) -> Retrying:
     """Build the tenacity controller for restarting a whole file transfer.
+
+    Args:
+        description: What is being transferred, for the retry log line.
 
     Returns:
         A `Retrying` that retries `requests.RequestException` with jittered
         exponential backoff, re-raising the last error once attempts are exhausted.
-        Attempt count comes from `[ica.download] max_transfer_attempts`.
+        Attempts come from `[ica.download] max_transfer_attempts` and the retry window
+        from `[ica.download] max_transfer_seconds`, whichever is reached first.
     """
     max_attempts = int(
         config_retrieve(['ica', 'download', 'max_transfer_attempts'], default=_DEFAULT_MAX_TRANSFER_ATTEMPTS),
     )
+    max_seconds = float(
+        config_retrieve(['ica', 'download', 'max_transfer_seconds'], default=_DEFAULT_MAX_TRANSFER_SECONDS),
+    )
     return Retrying(
         retry=retry_if_exception_type(requests.RequestException),
-        stop=stop_after_attempt(max_attempts),
+        stop=stop_after_attempt(max_attempts) | stop_after_delay(max_seconds),
         wait=wait_random_exponential(multiplier=1, min=2, max=60) + wait_fixed(2),
-        before_sleep=_log_transfer_retry,
+        before_sleep=functools.partial(_log_transfer_retry, description, max_attempts),
         reraise=True,
     )
