@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from loguru import logger as loguru_logger
 
 from dragen_align_pa import ica_cli_utils
 from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
@@ -40,7 +41,7 @@ def test_authenticate_writes_config_in_python_and_enters_project(monkeypatch, tm
     captured: list[list[str]] = []
     monkeypatch.setattr(
         'dragen_align_pa.ica_cli_utils.utils.run_subprocess_with_log',
-        lambda cmd, step_name: captured.append(cmd),  # noqa: ARG005
+        lambda cmd, step_name, log_failure=True: captured.append(cmd),  # noqa: ARG005
     )
 
     # Default family (conftest: project_root='ourdna') → dragen-align id below.
@@ -90,7 +91,8 @@ def test_enter_project_retries_rate_limited_cli_then_succeeds(monkeypatch, tmp_p
 
 def test_upload_retries_rate_limited_cli_then_succeeds(monkeypatch):
     """`icav2 projectdata upload` fetches a JWT too, so it dies the same way
-    without retry. Re-upload overwrites, so retrying is safe."""
+    without retry. A retried upload takes the same recovery path as a stage
+    re-run over a PARTIAL file (see the comment in `upload_local_file`)."""
     upload_cmd = ['icav2', 'projectdata', 'upload', '/io/x.cram', '/upload/x/']
     run = MagicMock(side_effect=[_rate_limited_error(upload_cmd), subprocess.CompletedProcess(upload_cmd, 0)])
     monkeypatch.setattr('dragen_align_pa.ica_cli_utils.utils.run_subprocess_with_log', run)
@@ -118,6 +120,9 @@ def test_cli_retry_does_not_retry_permanent_failures(monkeypatch):
 def test_cli_retry_gives_up_after_persistent_rate_limit(monkeypatch):
     """If every attempt is rate-limited, the original CalledProcessError
     eventually surfaces (default 10 retries => 11 total attempts)."""
+    # Relies on conftest's autouse `_instant_retry_sleeps` (else this really sleeps for
+    # minutes) and on `_TEST_CONFIG` having no [ica.retry] max_retries key, so the
+    # asserted 11 is the production default.
     upload_cmd = ['icav2', 'projectdata', 'upload', '/io/x.cram', '/upload/x/']
     run = MagicMock(side_effect=_rate_limited_error(upload_cmd))
     monkeypatch.setattr('dragen_align_pa.ica_cli_utils.utils.run_subprocess_with_log', run)
@@ -148,16 +153,93 @@ def test_find_ica_file_retries_rate_limited_cli_then_succeeds(monkeypatch):
 def test_cli_retry_matches_503_backend_unavailable(monkeypatch):
     """503 (ICA backend unavailable) is the other transient class the SDK path
     retries; the CLI path must treat it the same."""
-    enter_cmd = ['icav2', 'projects', 'enter', 'p']
+    upload_cmd = ['icav2', 'projectdata', 'upload', '/io/x.cram', '/upload/x/']
     error = subprocess.CalledProcessError(
         1,
-        enter_cmd,
+        upload_cmd,
         output='Error when fetching JWT :  503 Service Unavailable : ICA_API_503 (ref. abc)\n',
         stderr='',
     )
-    run = MagicMock(side_effect=[error, subprocess.CompletedProcess(enter_cmd, 0)])
+    run = MagicMock(side_effect=[error, subprocess.CompletedProcess(upload_cmd, 0)])
     monkeypatch.setattr('dragen_align_pa.ica_cli_utils.utils.run_subprocess_with_log', run)
 
     ica_cli_utils.upload_local_file('/io/x.cram', '/upload/x/')
 
     assert run.call_count == 2
+
+
+def test_download_file_by_id_retries_rate_limited_cli_then_succeeds(monkeypatch):
+    """`icav2 projectdata download` (used by the MLR job for its config JSON)
+    fetches a JWT like every icav2 call, so it needs the same retry."""
+    run = MagicMock(
+        side_effect=[_rate_limited_error(['icav2']), subprocess.CompletedProcess(['icav2'], 0)],
+    )
+    monkeypatch.setattr('dragen_align_pa.ica_cli_utils.utils.run_subprocess_with_log', run)
+
+    ica_cli_utils.download_file_by_id('fid-123', '/io/mlr_config.json')
+
+    assert run.call_count == 2
+    cmd = run.call_args.args[0]
+    assert cmd[:3] == ['icav2', 'projectdata', 'download']
+    assert 'fid-123' in cmd
+    assert '/io/mlr_config.json' in cmd
+    assert '--exclude-source-path' in cmd
+
+
+# --- Retry logging contract ---
+#
+# Log monitoring alerts on ERROR lines: every retried attempt must log its full
+# failure detail at ERROR with a 'RETRYING' marker (so monitoring can note it
+# without acting), and only the final, propagating failure logs ERROR without
+# the marker.
+
+
+def _capture_error_logs():
+    """Attach a loguru sink collecting formatted ERROR-level messages; returns (records, sink_id)."""
+    records: list[str] = []
+    sink_id = loguru_logger.add(lambda message: records.append(str(message)), level='ERROR')
+    return records, sink_id
+
+
+def test_retried_attempts_log_error_with_retrying_marker(monkeypatch):
+    """Two rate-limited attempts before success => two ERROR logs marked
+    RETRYING (with the failure detail), and no unmarked failure ERROR at all —
+    an unmarked ERROR must mean action is needed."""
+    upload_cmd = ['icav2', 'projectdata', 'upload', '/io/x.cram', '/upload/x/']
+    run = MagicMock(
+        side_effect=[
+            _rate_limited_error(upload_cmd),
+            _rate_limited_error(upload_cmd),
+            subprocess.CompletedProcess(upload_cmd, 0),
+        ],
+    )
+    monkeypatch.setattr('dragen_align_pa.ica_cli_utils.utils.run_subprocess_with_log', run)
+    records, sink_id = _capture_error_logs()
+    try:
+        ica_cli_utils.upload_local_file('/io/x.cram', '/upload/x/')
+    finally:
+        loguru_logger.remove(sink_id)
+
+    retrying = [r for r in records if 'RETRYING' in r]
+    assert len(retrying) == 2
+    # The marked log must carry the failure detail monitoring/debugging needs.
+    assert any('ICA_API_429' in r for r in retrying)
+    assert all('RETRYING' in r for r in records)
+
+
+def test_final_failure_logs_single_error_without_retrying_marker(monkeypatch):
+    """When every attempt is rate-limited, attempts 1..10 log RETRYING ERRORs
+    and the final propagating failure logs exactly one unmarked ERROR block."""
+    upload_cmd = ['icav2', 'projectdata', 'upload', '/io/x.cram', '/upload/x/']
+    run = MagicMock(side_effect=_rate_limited_error(upload_cmd))
+    monkeypatch.setattr('dragen_align_pa.ica_cli_utils.utils.run_subprocess_with_log', run)
+    records, sink_id = _capture_error_logs()
+    try:
+        with pytest.raises(subprocess.CalledProcessError):
+            ica_cli_utils.upload_local_file('/io/x.cram', '/upload/x/')
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert len([r for r in records if 'RETRYING' in r]) == 10
+    unmarked_failures = [r for r in records if 'RETRYING' not in r and 'failed with return code' in r]
+    assert len(unmarked_failures) == 1

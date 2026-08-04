@@ -63,15 +63,44 @@ def calculate_needed_storage(
     return f'{final_storage_gb}Gi'
 
 
+def log_subprocess_failure(step_name: str, exc: subprocess.CalledProcessError, note: str = '') -> None:
+    """Log a failed subprocess at ERROR level: return code, command, and captured output.
+
+    Args:
+        step_name: Human-readable step name for logging.
+        exc: The failure to log.
+        note: Appended to the headline line (e.g. a '; RETRYING (attempt N)' marker).
+    """
+    cmd_str = exc.cmd if isinstance(exc.cmd, str) else ' '.join(exc.cmd)
+    # One record per failure, not one per line: log monitoring keys on ERROR records,
+    # and a RETRYING-marked attempt must not leak unmarked detail records beside it.
+    logger.error(
+        f'{step_name} failed with return code {exc.returncode}{note}\n'
+        f'CMD: {cmd_str}\n'
+        f'STDOUT: {exc.stdout}\n'
+        f'STDERR: {exc.stderr}',
+    )
+
+
 def run_subprocess_with_log(
     cmd: str | list[str],
     step_name: str,
     stdin_input: str | None = None,
     shell: bool = False,
+    log_failure: bool = True,
 ) -> subprocess.CompletedProcess[Any]:
     """
     Runs a subprocess command with robust logging.
     Logs the command, its output, and errors if any occur.
+
+    Args:
+        cmd: The command to run.
+        step_name: Human-readable step name for logging.
+        stdin_input: Text passed to the process's stdin.
+        shell: Run through /bin/bash instead of exec'ing the argv directly.
+        log_failure: Log a failure at ERROR level before re-raising. A retrying
+            caller passes False and logs each attempt itself, so intermediate
+            failures carry a RETRYING marker and only the final one is unmarked.
     """
     cmd_str = cmd if isinstance(cmd, str) else ' '.join(cmd)
     executable = '/bin/bash' if shell else None
@@ -93,10 +122,8 @@ def run_subprocess_with_log(
             logger.info(f'{step_name} STDERR:\n{process.stderr.strip()}')
         return process
     except subprocess.CalledProcessError as e:
-        logger.error(f'{step_name} failed with return code {e.returncode}')
-        logger.error(f'CMD: {cmd_str}')
-        logger.error(f'STDOUT: {e.stdout}')
-        logger.error(f'STDERR: {e.stderr}')
+        if log_failure:
+            log_subprocess_failure(step_name, e)
         raise
 
 

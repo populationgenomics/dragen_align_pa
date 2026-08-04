@@ -16,7 +16,7 @@ from dragen_align_pa import ica_api_utils, utils
 from dragen_align_pa.constants.constants_registry import ica_project_id
 
 if TYPE_CHECKING:
-    from subprocess import CompletedProcess
+    from tenacity import RetryCallState
 
 # --- Transient-error retry ---
 
@@ -42,21 +42,39 @@ def _is_transient_cli_error(exc: BaseException) -> bool:
     return any(marker in output for marker in _TRANSIENT_CLI_MARKERS)
 
 
-def _run_icav2_with_retry(cmd: list[str], step_name: str) -> 'CompletedProcess[Any]':
+def _run_icav2_with_retry(cmd: list[str], step_name: str) -> subprocess.CompletedProcess[Any]:
     """Run an icav2 command, retrying transient ICA errors (429/503) with the shared backoff.
+
+    Every failed attempt logs its full detail at ERROR: intermediate (retried) attempts
+    carry a RETRYING marker so log monitoring can note them without acting, and only the
+    final, propagating failure is unmarked.
 
     Args:
         cmd: The full icav2 command line.
         step_name: Human-readable step name for logging.
     """
 
-    def run_icav2() -> 'CompletedProcess[Any]':
-        return utils.run_subprocess_with_log(cmd, step_name)
+    def run_icav2() -> subprocess.CompletedProcess[Any]:
+        # Failure logging is handled here per-attempt (with the RETRYING marker),
+        # not inside run_subprocess_with_log, which can't know whether a retry follows.
+        return utils.run_subprocess_with_log(cmd, step_name, log_failure=False)
 
-    # `_log_ica_retry` names the retried callable in its warning line; the step name is
-    # far more useful there than the literal 'run_icav2'.
-    run_icav2.__name__ = step_name
-    return ica_api_utils.ica_retrying(_is_transient_cli_error)(run_icav2)
+    def log_retrying(retry_state: 'RetryCallState') -> None:
+        exc = retry_state.outcome.exception() if retry_state.outcome else None
+        if not isinstance(exc, subprocess.CalledProcessError):
+            return
+        sleep = retry_state.next_action.sleep if retry_state.next_action else 0.0
+        utils.log_subprocess_failure(
+            step_name,
+            exc,
+            note=f'; RETRYING (attempt {retry_state.attempt_number}) after {sleep:.1f}s',
+        )
+
+    try:
+        return ica_api_utils.ica_retrying(_is_transient_cli_error, before_sleep=log_retrying)(run_icav2)
+    except subprocess.CalledProcessError as exc:
+        utils.log_subprocess_failure(step_name, exc)
+        raise
 
 
 # --- CLI Wrappers ---
@@ -91,6 +109,12 @@ def upload_local_file(local_file_path: str, ica_folder_path: str) -> None:
     Uploads a local file to ICA using the icav2 CLI.
     Assumes the CLI is already authenticated.
     """
+    # Retrying a mid-transfer failure re-runs the upload over whatever state the dead
+    # attempt left (possibly a PARTIAL record) — the same recovery path a stage re-run
+    # takes through `perform_upload_if_needed`, which re-uploads unless the file is
+    # AVAILABLE. Whether icav2 then overwrites the record or creates a duplicate is not
+    # documented by Illumina; `ica_utils.finalise_upload`'s existence check is the
+    # downstream arbiter either way.
     _run_icav2_with_retry(
         [
             'icav2',
@@ -100,6 +124,26 @@ def upload_local_file(local_file_path: str, ica_folder_path: str) -> None:
             ica_folder_path,
         ],
         f'Upload {os.path.basename(local_file_path)} to ICA',
+    )
+
+
+def download_file_by_id(file_id: str, local_file_path: str) -> None:
+    """Downloads a single ICA file (by data ID) to a local path using the icav2 CLI.
+
+    Args:
+        file_id: The ICA data ID of the file (e.g. `fil.xxxx`).
+        local_file_path: The local destination path.
+    """
+    _run_icav2_with_retry(
+        [
+            'icav2',
+            'projectdata',
+            'download',
+            file_id,
+            local_file_path,
+            '--exclude-source-path',
+        ],
+        f'Download ICA file {file_id}',
     )
 
 
@@ -122,7 +166,7 @@ def find_ica_file_path_by_name(parent_folder: str, file_name: str) -> str:
         '-o',
         'json',
     ]
-    result: CompletedProcess[Any] = _run_icav2_with_retry(command, f'Find ICA file {file_name}')
+    result: subprocess.CompletedProcess[Any] = _run_icav2_with_retry(command, f'Find ICA file {file_name}')
     try:
         data = json.loads(result.stdout)
         if not data.get('items'):

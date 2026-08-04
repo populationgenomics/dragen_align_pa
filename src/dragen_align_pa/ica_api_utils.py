@@ -231,12 +231,7 @@ def _is_retryable_ica_error(exc: BaseException, retryable_statuses: frozenset[in
 def _log_ica_retry(retry_state: RetryCallState) -> None:
     """tenacity ``before_sleep`` hook: log every scheduled transient-error retry."""
     exc = retry_state.outcome.exception() if retry_state.outcome else None
-    # SDK ApiExceptions carry `.status`; a rate-limited icav2 CLI call surfaces as a
-    # CalledProcessError, whose `.returncode` is the only numeric signal available.
-    status = getattr(exc, 'status', None)
-    if status is None:
-        returncode = getattr(exc, 'returncode', None)
-        status = '?' if returncode is None else f'exit code {returncode}'
+    status = getattr(exc, 'status', '?')
     fn_name = getattr(retry_state.fn, '__name__', repr(retry_state.fn))
     sleep = retry_state.next_action.sleep if retry_state.next_action else 0.0
     logger.warning(
@@ -244,7 +239,10 @@ def _log_ica_retry(retry_state: RetryCallState) -> None:
     )
 
 
-def ica_retrying(is_retryable: Callable[[BaseException], bool]) -> Retrying:
+def ica_retrying(
+    is_retryable: Callable[[BaseException], bool],
+    before_sleep: Callable[[RetryCallState], None] = _log_ica_retry,
+) -> Retrying:
     """Build the shared tenacity controller for transient ICA errors.
 
     Args:
@@ -253,6 +251,11 @@ def ica_retrying(is_retryable: Callable[[BaseException], bool]) -> Retrying:
             the icav2 CLI callers match rate-limit markers in the captured subprocess
             output (`ica_cli_utils._is_transient_cli_error`), since the CLI's only
             failure signal is exit code 1 plus text.
+        before_sleep: Hook run before each backoff sleep. Defaults to the SDK path's
+            one-line WARNING (`_log_ica_retry`); the CLI path passes its own hook that
+            logs the full subprocess failure at ERROR with a RETRYING marker, because
+            `run_subprocess_with_log`'s own failure logging is suppressed inside the
+            retry boundary.
     """
     # `max_retries` is read at call time (not import) so it can be tuned via config without a
     # rebuild, and to avoid an import-time config_retrieve. It counts retries *after* the
@@ -271,7 +274,7 @@ def ica_retrying(is_retryable: Callable[[BaseException], bool]) -> Retrying:
         # (~32s/retry at the cap), so a large max_retries can exceed a tight polling cycle
         # (e.g. MLR's 330s) — tune both together.
         wait=wait_random_exponential(multiplier=1, min=2, max=30) + wait_fixed(2),
-        before_sleep=_log_ica_retry,
+        before_sleep=before_sleep,
         reraise=True,
     )
 
