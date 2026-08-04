@@ -1,7 +1,7 @@
 FROM australia-southeast1-docker.pkg.dev/cpg-common/images/cpg_hail_gcloud:0.2.138.cpg2-1
 
 # Dragen align pa pipeline version.
-ENV VERSION=4.1.1
+ENV VERSION=4.1.2
 
 ARG ICA_CLI_VERSION="2.46.0"
 ARG SOMALIER_VERSION="0.3.1"
@@ -32,9 +32,14 @@ COPY src src/
 COPY third_party third_party/
 
 
+# popgen_cli is installed BEFORE this package on purpose. It pins requests==2.27.1, which caps
+# urllib3<1.27; installed afterwards it silently downgraded both (pip only warns), so the image
+# shipped urllib3 1.26 / requests 2.27 no matter what this package declared. popgen_cli itself
+# only calls requests.get / requests.request and imports no urllib3, so it is unaffected by the
+# newer versions this package pulls in.
 RUN pip install git+https://github.com/Illumina/ica-sdk-python.git \
-    && pip install . \
     && pip install third_party/popgen_cli-2.1.0-py3-none-any.whl \
+    && pip install . \
     && pip install typing-extensions==4.13.0 \
     && wget https://github.com/brentp/somalier/releases/download/v${SOMALIER_VERSION}/somalier && \
     chmod +x somalier && \

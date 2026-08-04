@@ -84,6 +84,16 @@ DEMO_PIPELINE_ID = '00000000-1111-2222-3333-444444444444'
 DEMO_SAMPLES = ('SYN00001', 'SYN00002')
 
 
+@pytest.fixture(autouse=True)
+def _instant_retry_sleeps(monkeypatch):
+    """Patch tenacity's sleep so retry tests don't burn real wall-clock time.
+
+    Autouse and global: every retry controller in the package waits seconds by design, so a
+    test that forgets this doesn't fail, it just runs slowly and hides the cost.
+    """
+    monkeypatch.setattr('tenacity.nap.time.sleep', lambda _seconds: None)
+
+
 @pytest.fixture
 def demo_bundle(tmp_path: Path) -> Path:
     """Materialise a synthetic ICA analysis output bundle under tmp_path."""

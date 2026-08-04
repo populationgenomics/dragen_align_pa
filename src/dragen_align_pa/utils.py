@@ -132,6 +132,20 @@ def get_bed_names_for_seqtype() -> dict[str, str]:
     return {key: str(name) for key, name in bed_names.items()}
 
 
+# `stop_after_delay` in the transfer retry is only checked *between* attempts, and the read
+# timeout is per socket read — so a peer dribbling one chunk just inside the read budget keeps a
+# single attempt alive indefinitely and no retry layer ever gets a say. This is the outer
+# backstop for that, and for any other way a download job can wedge.
+def download_job_timeout_seconds() -> float:
+    """Wall-clock ceiling for one download job, from `[ica.download] job_timeout_seconds`.
+
+    Returns:
+        The ceiling in seconds. Generous by design — it exists to turn a hang into a
+        failure, not to bound a legitimately slow multi-GB transfer.
+    """
+    return float(config_retrieve(['ica', 'download', 'job_timeout_seconds'], default=21600))
+
+
 def initialise_python_job(
     job_name: str,
     target: Cohort | SequencingGroup,

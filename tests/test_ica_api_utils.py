@@ -20,24 +20,27 @@ from dragen_align_pa import ica_api_utils, ica_utils
 from icasdk.exceptions import ApiException
 
 
+def _clear_caches() -> None:
+    """Clear the module's caches, tolerating a monkeypatched stand-in.
+
+    At teardown a test's `monkeypatch` may not have been undone yet, so these names can be
+    plain functions with no cache to clear. Ordering depends on which autouse fixtures ran
+    first, so this must not assume it.
+    """
+    for cached in (ica_api_utils._fetch_ica_secrets, ica_api_utils._secret_client):
+        clear = getattr(cached, 'cache_clear', None)
+        if clear is not None:
+            clear()
+
+
 @pytest.fixture(autouse=True)
 def _clear_ica_secrets_cache():
     """`_fetch_ica_secrets` is `@lru_cache(maxsize=1)` and `_secret_client` is
     `@cache`d — clear both between tests so caching from one test doesn't
     bleed into the next."""
-    ica_api_utils._fetch_ica_secrets.cache_clear()
-    ica_api_utils._secret_client.cache_clear()
+    _clear_caches()
     yield
-    ica_api_utils._fetch_ica_secrets.cache_clear()
-    ica_api_utils._secret_client.cache_clear()
-
-
-@pytest.fixture(autouse=True)
-def _instant_retry_sleeps(monkeypatch):
-    """Tenacity sleeps between retries — patch time.sleep so the retry tests
-    don't take real wall-clock time. The retry logic is verified by call
-    counts and final outcomes, not by wait timings."""
-    monkeypatch.setattr('tenacity.nap.time.sleep', lambda _seconds: None)
+    _clear_caches()
 
 
 def _fake_access_secret_version_response(payload: dict) -> MagicMock:

@@ -29,6 +29,18 @@ def _api_instance_with_download_url(url: str = 'https://example.com/passfail.jso
     return api
 
 
+def _patched_session(**get_kwargs):
+    """Patch the shared download session, configuring its `.get` from `get_kwargs`.
+
+    Returns:
+        A patcher for `download_session`; binding it with `as` gives that mock, whose
+        `return_value.get` is the configured `.get`.
+    """
+    session = MagicMock()
+    session.get = MagicMock(**get_kwargs)
+    return patch('dragen_align_pa.jobs.parse_passfail.http_utils.download_session', return_value=session)
+
+
 def test_fetch_passfail_returns_parsed_payload_on_happy_path():
     api = _api_instance_with_download_url()
     payload = {'SYN00001': 'Success', 'SYN00002': 'Fail'}
@@ -38,7 +50,7 @@ def test_fetch_passfail_returns_parsed_payload_on_happy_path():
 
     with (
         patch('dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name', return_value='fil.passfail'),
-        patch('dragen_align_pa.jobs.parse_passfail.requests.get', return_value=fake_response),
+        _patched_session(return_value=fake_response),
     ):
         result = fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
 
@@ -91,10 +103,7 @@ def test_fetch_passfail_raises_on_network_error():
             'dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
             return_value='fil.passfail',
         ),
-        patch(
-            'dragen_align_pa.jobs.parse_passfail.requests.get',
-            side_effect=requests.ConnectionError('timeout'),
-        ),
+        _patched_session(side_effect=requests.ConnectionError('timeout')),
         pytest.raises(requests.ConnectionError),
     ):
         fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
@@ -112,14 +121,12 @@ def test_fetch_passfail_retries_once_on_403_then_succeeds():
 
     with (
         patch('dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name', return_value='fil.passfail'),
-        patch(
-            'dragen_align_pa.jobs.parse_passfail.requests.get', side_effect=[first_response, second_response]
-        ) as mock_get,
+        _patched_session(side_effect=[first_response, second_response]) as mock_session,
     ):
         result = fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
 
     assert result == payload
-    assert mock_get.call_count == 2
+    assert mock_session.return_value.get.call_count == 2
     # Both URLs were minted (initial + retry).
     assert api.create_download_url_for_data.call_count == 2
 
@@ -139,10 +146,7 @@ def test_fetch_passfail_raises_on_json_decode_error():
             'dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
             return_value='fil.passfail',
         ),
-        patch(
-            'dragen_align_pa.jobs.parse_passfail.requests.get',
-            return_value=fake_response,
-        ),
+        _patched_session(return_value=fake_response),
         pytest.raises(json.JSONDecodeError),
     ):
         fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)
@@ -160,10 +164,7 @@ def test_fetch_passfail_raises_on_repeated_403():
             'dragen_align_pa.jobs.parse_passfail.ica_api_utils.find_file_id_by_name',
             return_value='fil.passfail',
         ),
-        patch(
-            'dragen_align_pa.jobs.parse_passfail.requests.get',
-            side_effect=[first_response, second_response],
-        ),
+        _patched_session(side_effect=[first_response, second_response]),
         pytest.raises(requests.HTTPError),
     ):
         fetch_passfail_from_ica(api, _PATH_PARAMS, _FOLDER)

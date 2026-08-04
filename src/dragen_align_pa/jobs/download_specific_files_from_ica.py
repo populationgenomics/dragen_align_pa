@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import cpg_utils.config
 from cpg_flow.targets import SequencingGroup
+from cpg_utils.config import config_retrieve
 from google.cloud import storage
 from google.cloud.storage.bucket import Bucket
 from icasdk.apis.tags import project_data_api
@@ -16,7 +17,7 @@ from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
 from dragen_align_pa.file_types import FileTypeSpec
 from dragen_align_pa.ica_utils import get_ica_sample_folder
 from dragen_align_pa.paths import gcs_bucket_and_key
-from dragen_align_pa.utils import initialise_python_job
+from dragen_align_pa.utils import download_job_timeout_seconds, initialise_python_job
 
 if TYPE_CHECKING:
     from hailtop.batch.job import PythonJob
@@ -32,8 +33,22 @@ def _orchestrate_download(
     index_file_name: str,
     md5_file_name: str,
     md5_gcp_name: str,
+    force_redownload: bool,
 ) -> None:
-    """Find, download+MD5-verify, and upload the CRAM/index/MD5 file set to GCS."""
+    """Find, download+MD5-verify, and upload the CRAM/index/MD5 file set to GCS.
+
+    Args:
+        api_instance: An instance of the ProjectDataApi.
+        path_parameters: Dict with the projectId.
+        base_ica_folder_path: ICA folder holding the file set.
+        gcs_bucket: Destination bucket.
+        gcs_output_path_prefix: Destination prefix within the bucket.
+        main_file_name: Name of the CRAM/GVCF to download.
+        index_file_name: Name of its index.
+        md5_file_name: Name of the MD5 file in ICA.
+        md5_gcp_name: Name to save the MD5 file under in GCS.
+        force_redownload: Re-download even when GCS already holds a complete copy.
+    """
     # --- 1. Find all three file IDs ---
     main_file_id, index_file_id, md5_file_id = (
         ica_api_utils.find_file_id_by_name(api_instance, path_parameters, base_ica_folder_path, name)
@@ -49,7 +64,7 @@ def _orchestrate_download(
     logger.info(f'Expected MD5 for {main_file_name} is {expected_hash}')
 
     # --- 3. Stream main file, verifying MD5 ---
-    ica_utils.stream_ica_file_to_gcs(
+    main_streamed = ica_utils.stream_ica_file_to_gcs(
         api_instance=api_instance,
         path_parameters=path_parameters,
         file_id=main_file_id,
@@ -57,9 +72,13 @@ def _orchestrate_download(
         gcs_bucket=gcs_bucket,
         gcs_prefix=gcs_output_path_prefix,
         expected_md5_hash=expected_hash,
+        skip_existing=not force_redownload,
     )
 
     # --- 4. Stream index file (no verification) ---
+    # The index carries no ICA MD5, so on its own it would be kept whenever it exists. Tying it
+    # to the main file's outcome is what stops a re-analysis pairing run B's CRAM with run A's
+    # index: if the main file was re-fetched (its checksum disagreed), this must be too.
     ica_utils.stream_ica_file_to_gcs(
         api_instance=api_instance,
         path_parameters=path_parameters,
@@ -68,6 +87,7 @@ def _orchestrate_download(
         gcs_bucket=gcs_bucket,
         gcs_prefix=gcs_output_path_prefix,
         expected_md5_hash=None,
+        skip_existing=not force_redownload and not main_streamed,
     )
 
     # --- 5. Upload the MD5 file itself ---
@@ -106,6 +126,7 @@ def run(
     gcs_bucket = storage_client.bucket(gcs_output_bucket_name)
 
     # --- 5. Run Orchestration ---
+    force_redownload = bool(config_retrieve(['ica', 'download', 'force_redownload'], default=False))
     with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         _orchestrate_download(
             api_instance=api_instance,
@@ -117,6 +138,7 @@ def run(
             index_file_name=index_file_name,
             md5_file_name=md5_file_name,
             md5_gcp_name=md5_gcp_name,
+            force_redownload=force_redownload,
         )
 
     logger.info(f'Successfully downloaded and verified all files for {sg_name}.')
@@ -165,6 +187,7 @@ def make_download_job(
     job.storage('8Gi')
     job.memory('8Gi')
     job.spot(is_spot=False)
+    job.timeout(download_job_timeout_seconds())
     job.call(
         resolve_and_run,
         sequencing_group=sequencing_group,

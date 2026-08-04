@@ -4,36 +4,78 @@ A transient ICA 429 on `create_download_url_for_data` inside
 `stream_ica_file_to_gcs` previously propagated unhandled and killed the
 download job — the retry was only wired into `check_ica_pipeline_status`,
 never into the download path. These tests pin the download-URL calls to the
-shared `ica_retry` controller.
+shared `ica_retry` controller, the body fetches to the shared retrying
+`requests.Session`, and the skip-if-already-in-GCS contract that lets a
+part-way-failed stage re-run without re-fetching everything.
 """
 
+import base64
+import hashlib
+import json
+import ssl
 from unittest.mock import MagicMock
 
 import pytest
+import requests
+import urllib3.exceptions
 
-from dragen_align_pa import ica_utils
+from dragen_align_pa import gcs_utils, ica_utils
 from icasdk.exceptions import ApiException
 
 
-@pytest.fixture(autouse=True)
-def _instant_retry_sleeps(monkeypatch):
-    """Patch tenacity's sleep so retry tests don't burn real wall-clock time."""
-    monkeypatch.setattr('tenacity.nap.time.sleep', lambda _seconds: None)
+_STREAMED_CHUNK_MD5 = hashlib.md5(b'chunk').hexdigest()  # noqa: S324
+"""MD5 of the body `_response` serves, for tests that stream to completion."""
 
 
-def _streaming_response() -> MagicMock:
-    """A requests.get(...) stand-in usable as a context manager that yields one
-    chunk of content."""
+def _response(*, raises=None, content_length=None, encoding=None) -> MagicMock:
+    """A session.get(...) stand-in usable as a context manager.
+
+    Serves one `b'chunk'` body by default. `raises` makes the body fail part-way;
+    `content_length` / `encoding` set the headers the truncation check reads.
+    """
     resp = MagicMock()
     resp.__enter__.return_value = resp
-    resp.iter_content.return_value = [b'chunk']
+    if raises is None:
+        resp.iter_content.return_value = [b'chunk']
+    else:
+        resp.iter_content.side_effect = raises
+    headers = {}
+    if content_length is not None:
+        headers['Content-Length'] = content_length
+    if encoding is not None:
+        headers['Content-Encoding'] = encoding
+    resp.headers = headers
     return resp
+
+
+def _patch_session(monkeypatch) -> MagicMock:
+    """Swap the shared download session for a mock and return it."""
+    session = MagicMock()
+    session.get.return_value = _response()
+    monkeypatch.setattr(ica_utils.http_utils, 'download_session', lambda: session)
+    return session
+
+
+def _empty_bucket() -> MagicMock:
+    """A bucket mock that reports nothing is present yet."""
+    bucket = MagicMock()
+    bucket.get_blob.return_value = None
+    return bucket
+
+
+def _bucket_holding(md5_hex: str | None) -> MagicMock:
+    """A bucket mock whose objects already exist, with the given GCS-recorded MD5."""
+    bucket = MagicMock()
+    existing = MagicMock()
+    existing.md5_hash = None if md5_hex is None else base64.b64encode(bytes.fromhex(md5_hex)).decode()
+    bucket.get_blob.return_value = existing
+    return bucket
 
 
 def test_stream_ica_file_to_gcs_retries_download_url_on_429(monkeypatch):
     """A 429 on create_download_url_for_data (the production traceback) must be
     retried, not propagated; the second attempt's URL is then streamed."""
-    monkeypatch.setattr(ica_utils.requests, 'get', MagicMock(return_value=_streaming_response()))
+    _patch_session(monkeypatch)
 
     api = MagicMock()
     url_response = MagicMock()
@@ -43,13 +85,17 @@ def test_stream_ica_file_to_gcs_retries_download_url_on_429(monkeypatch):
         url_response,
     ]
 
-    ica_utils.stream_ica_file_to_gcs(
-        api_instance=api,
-        path_parameters={'projectId': 'p'},
-        file_id='fil.abc',
-        file_name='sample.qc.csv',
-        gcs_bucket=MagicMock(),
-        gcs_prefix='ica/output',
+    assert (
+        ica_utils.stream_ica_file_to_gcs(
+            api_instance=api,
+            path_parameters={'projectId': 'p'},
+            file_id='fil.abc',
+            file_name='sample.qc.csv',
+            gcs_bucket=_empty_bucket(),
+            gcs_prefix='ica/output',
+            skip_existing=True,
+        )
+        is True
     )
 
     assert api.create_download_url_for_data.call_count == 2
@@ -62,7 +108,7 @@ def test_stream_ica_file_to_gcs_gives_up_after_persistent_429(monkeypatch):
         'config_retrieve',
         lambda key, default=None: 2 if key == ['ica', 'retry', 'max_retries'] else default,
     )
-    monkeypatch.setattr(ica_utils.requests, 'get', MagicMock(return_value=_streaming_response()))
+    _patch_session(monkeypatch)
 
     api = MagicMock()
     api.create_download_url_for_data.side_effect = ApiException(status=429, reason='Too Many Requests')
@@ -73,8 +119,9 @@ def test_stream_ica_file_to_gcs_gives_up_after_persistent_429(monkeypatch):
             path_parameters={'projectId': 'p'},
             file_id='fil.abc',
             file_name='sample.qc.csv',
-            gcs_bucket=MagicMock(),
+            gcs_bucket=_empty_bucket(),
             gcs_prefix='ica/output',
+            skip_existing=True,
         )
 
     assert exc_info.value.status == 429
@@ -85,7 +132,7 @@ def test_stream_ica_file_to_gcs_gives_up_after_persistent_429(monkeypatch):
 def test_stream_ica_file_to_gcs_uses_provided_url_without_minting(monkeypatch):
     """When a pre-minted URL is supplied (batch path), stream must NOT call the
     per-file create_download_url_for_data endpoint at all."""
-    monkeypatch.setattr(ica_utils.requests, 'get', MagicMock(return_value=_streaming_response()))
+    session = _patch_session(monkeypatch)
     api = MagicMock()
 
     ica_utils.stream_ica_file_to_gcs(
@@ -93,14 +140,430 @@ def test_stream_ica_file_to_gcs_uses_provided_url_without_minting(monkeypatch):
         path_parameters={'projectId': 'p'},
         file_id='fil.abc',
         file_name='sample.qc.csv',
-        gcs_bucket=MagicMock(),
+        gcs_bucket=_empty_bucket(),
         gcs_prefix='ica/output',
         download_url='https://signed.example/presigned',
+        skip_existing=True,
     )
 
     api.create_download_url_for_data.assert_not_called()
-    ica_utils.requests.get.assert_called_once()
-    assert ica_utils.requests.get.call_args.args[0] == 'https://signed.example/presigned'
+    session.get.assert_called_once()
+    assert session.get.call_args.args[0] == 'https://signed.example/presigned'
+
+
+# --- skip-if-already-in-GCS ------------------------------------------------------------
+
+
+def _stream_against(bucket, monkeypatch, *, expected_md5_hash=None, skip_existing=True):
+    """Stream one file against `bucket`, returning (result, session)."""
+    session = _patch_session(monkeypatch)
+    api = MagicMock()
+    result = ica_utils.stream_ica_file_to_gcs(
+        api_instance=api,
+        path_parameters={'projectId': 'p'},
+        file_id='fil.abc',
+        file_name='sample.cram',
+        gcs_bucket=bucket,
+        gcs_prefix='ica/output',
+        expected_md5_hash=expected_md5_hash,
+        download_url='https://signed.example/presigned',
+        skip_existing=skip_existing,
+    )
+    return result, session
+
+
+def test_stream_skips_a_file_already_in_gcs(monkeypatch):
+    """No hash to check: a finalized object means a prior run completed the file,
+    so it is neither re-fetched nor re-uploaded."""
+    result, session = _stream_against(_bucket_holding(None), monkeypatch)
+
+    assert result is False
+    session.get.assert_not_called()
+
+
+def test_stream_redownloads_a_present_file_when_skip_existing_is_off(monkeypatch):
+    """skip_existing=False bypasses the skip so operators can rebuild outputs from ICA."""
+    result, session = _stream_against(_bucket_holding(None), monkeypatch, skip_existing=False)
+
+    assert result is True
+    session.get.assert_called_once()
+
+
+def test_stream_skips_when_stored_md5_matches_ica(monkeypatch):
+    """With an expected hash the existing object is checked, not merely trusted —
+    a match skips a potentially multi-hour CRAM re-download."""
+    md5_hex = '0123456789abcdef0123456789abcdef'
+    result, session = _stream_against(_bucket_holding(md5_hex), monkeypatch, expected_md5_hash=md5_hex)
+
+    assert result is False
+    session.get.assert_not_called()
+
+
+def test_stream_redownloads_when_stored_md5_differs(monkeypatch):
+    """A stored object whose checksum disagrees with ICA is replaced, not trusted."""
+    result, session = _stream_against(
+        _bucket_holding('0123456789abcdef0123456789abcdef'),
+        monkeypatch,
+        expected_md5_hash=_STREAMED_CHUNK_MD5,
+    )
+
+    assert result is True
+    session.get.assert_called_once()
+
+
+def test_stream_redownloads_when_stored_object_has_no_md5(monkeypatch):
+    """An object GCS holds no checksum for cannot be verified, so it is re-fetched."""
+    result, session = _stream_against(
+        _bucket_holding(None),
+        monkeypatch,
+        expected_md5_hash=_STREAMED_CHUNK_MD5,
+    )
+
+    assert result is True
+    session.get.assert_called_once()
+
+
+# --- whole-transfer retry ---------------------------------------------------------------
+
+
+_MID_BODY_RESET = requests.ConnectionError(
+    'Connection aborted.',
+    ConnectionResetError(104, 'Connection reset by peer'),
+)
+"""How a long-haul CRAM transfer dies part-way through the body."""
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        pytest.param(
+            urllib3.exceptions.SSLError('[SSL: DECRYPTION_FAILED_OR_BAD_RECORD_MAC] bad record mac'),
+            id='urllib3-sslerror',
+        ),
+        pytest.param(ssl.SSLError('[SSL: DECRYPTION_FAILED_OR_BAD_RECORD_MAC] bad record mac'), id='raw-sslerror'),
+        pytest.param(urllib3.exceptions.ProtocolError('Connection broken'), id='urllib3-protocolerror'),
+    ],
+)
+def test_transfer_restarts_on_a_non_requests_transport_error(monkeypatch, error):
+    """Whether a mid-body failure arrives wrapped as a `requests` exception depends on the
+    installed `requests`: older versions let urllib3's own SSLError escape `iter_content`, and
+    it then bypassed every `except requests.RequestException` and killed the job. Retrying must
+    not depend on which version resolves."""
+    result, _api, session = _stream_with_responses(monkeypatch, [_response(raises=error), _response()])
+
+    assert result is True
+    assert session.get.call_count == 2
+
+
+def _stream_with_responses(
+    monkeypatch,
+    responses,
+    *,
+    download_url='https://signed.example/presigned',
+    expected_md5_hash=None,
+):
+    """Stream one file, serving `responses` in order; returns (result, api, session)."""
+    session = MagicMock()
+    session.get.side_effect = responses
+    monkeypatch.setattr(ica_utils.http_utils, 'download_session', lambda: session)
+
+    api = MagicMock()
+    api.create_download_url_for_data.return_value.body = {'url': 'https://signed.example/fresh'}
+
+    result = ica_utils.stream_ica_file_to_gcs(
+        api_instance=api,
+        path_parameters={'projectId': 'p'},
+        file_id='fil.abc',
+        file_name='sample.cram',
+        gcs_bucket=_empty_bucket(),
+        gcs_prefix='ica/output',
+        expected_md5_hash=expected_md5_hash,
+        download_url=download_url,
+        skip_existing=True,
+    )
+    return result, api, session
+
+
+def test_transfer_restarts_after_a_reset_part_way_through_the_body(monkeypatch):
+    """The failure this whole change exists for: a reset mid-body can't be replayed by the
+    HTTP adapter, so the file-level retry must re-fetch it."""
+    result, _api, session = _stream_with_responses(monkeypatch, [_response(raises=_MID_BODY_RESET), _response()])
+
+    assert result is True
+    assert session.get.call_count == 2
+
+
+def test_transfer_retry_mints_a_fresh_url(monkeypatch):
+    """A pre-minted batch URL may have expired by the time the retry runs, so the retry
+    must not reuse it."""
+    _result, api, session = _stream_with_responses(monkeypatch, [_response(raises=_MID_BODY_RESET), _response()])
+
+    api.create_download_url_for_data.assert_called_once()
+    assert [call.args[0] for call in session.get.call_args_list] == [
+        'https://signed.example/presigned',
+        'https://signed.example/fresh',
+    ]
+
+
+def test_transfer_gives_up_after_configured_attempts(monkeypatch):
+    """Exhausted attempts surface the underlying connection error to the caller."""
+    monkeypatch.setattr(
+        ica_utils.http_utils,
+        'config_retrieve',
+        lambda key, default=None: 2 if key == ['ica', 'download', 'max_transfer_attempts'] else default,
+    )
+
+    with pytest.raises(requests.ConnectionError):
+        _stream_with_responses(
+            monkeypatch, [_response(raises=_MID_BODY_RESET), _response(raises=_MID_BODY_RESET), _response()]
+        )
+
+
+def test_md5_mismatch_is_not_retried(monkeypatch):
+    """A checksum mismatch means the bytes were wrong, not that the connection dropped:
+    it stays a loud, immediate failure and the bad object is deleted."""
+    bucket = _empty_bucket()
+    session = MagicMock()
+    session.get.return_value = _response()
+    monkeypatch.setattr(ica_utils.http_utils, 'download_session', lambda: session)
+
+    with pytest.raises(ValueError, match='MD5 mismatch'):
+        ica_utils.stream_ica_file_to_gcs(
+            api_instance=MagicMock(),
+            path_parameters={'projectId': 'p'},
+            file_id='fil.abc',
+            file_name='sample.cram',
+            gcs_bucket=bucket,
+            gcs_prefix='ica/output',
+            expected_md5_hash='ffffffffffffffffffffffffffffffff',
+            download_url='https://signed.example/presigned',
+            skip_existing=True,
+        )
+
+    session.get.assert_called_once()
+    bucket.blob.return_value.delete.assert_called_once()
+
+
+# --- truncated transfers -----------------------------------------------------------------
+
+
+def test_a_short_body_is_treated_as_a_failed_transfer(monkeypatch):
+    """The silent failure mode: urllib3 1.x does not enforce Content-Length, so a clean
+    mid-body FIN otherwise finalizes a truncated object that is then skipped forever."""
+    short = _response(content_length='999999')
+    result, _api, session = _stream_with_responses(monkeypatch, [short, _response()])
+
+    assert result is True
+    assert session.get.call_count == 2
+
+
+def test_a_truncated_transfer_never_finalizes_the_gcs_object(monkeypatch):
+    """The check must raise INSIDE the writer's context so BlobWriter.__exit__ terminates
+    the resumable session; finalizing a short object is what makes the corruption sticky."""
+    session = MagicMock()
+    session.get.return_value = _response(content_length='999999')
+    monkeypatch.setattr(ica_utils.http_utils, 'download_session', lambda: session)
+    monkeypatch.setattr(
+        ica_utils.http_utils,
+        'config_retrieve',
+        lambda key, default=None: 1 if key == ['ica', 'download', 'max_transfer_attempts'] else default,
+    )
+    bucket = _empty_bucket()
+
+    with pytest.raises(requests.RequestException):
+        ica_utils.stream_ica_file_to_gcs(
+            api_instance=MagicMock(),
+            path_parameters={'projectId': 'p'},
+            file_id='fil.abc',
+            file_name='sample.cram',
+            gcs_bucket=bucket,
+            gcs_prefix='ica/output',
+            download_url='https://signed.example/presigned',
+            skip_existing=True,
+        )
+
+    # __exit__ received the exception, so the writer terminates instead of closing.
+    assert bucket.blob.return_value.open.return_value.__exit__.call_args.args[0] is not None
+
+
+def test_a_complete_body_matching_content_length_is_accepted(monkeypatch):
+    """The guard must not fire on a good transfer."""
+    exact = _response(content_length=str(len(b'chunk')))
+    result, _api, session = _stream_with_responses(monkeypatch, [exact])
+
+    assert result is True
+    session.get.assert_called_once()
+
+
+def test_content_length_is_ignored_for_an_encoded_body(monkeypatch):
+    """requests decodes a Content-Encoding'd body, so Content-Length describes the encoded
+    size and comparing it against decoded bytes would fail every transfer."""
+    encoded = _response(content_length='999999', encoding='gzip')
+    result, _api, session = _stream_with_responses(monkeypatch, [encoded])
+
+    assert result is True
+    session.get.assert_called_once()
+
+
+def test_transfer_is_verified_against_the_expected_md5_after_a_retry(monkeypatch):
+    """Guards the hasher-reset invariant: the digest must cover only the winning attempt's
+    bytes. Accumulating a failed attempt's bytes too would fail a transfer that succeeded."""
+    result, _api, _session = _stream_with_responses(
+        monkeypatch,
+        [_response(raises=_MID_BODY_RESET), _response()],
+        expected_md5_hash=_STREAMED_CHUNK_MD5,
+    )
+
+    assert result is True
+
+
+def test_an_http_error_status_is_raised_before_anything_is_written(monkeypatch):
+    """Without raise_for_status an S3 error body would be written to GCS as the file."""
+    error_response = _response()
+    error_response.raise_for_status.side_effect = requests.HTTPError('404 Not Found')
+    session = MagicMock()
+    session.get.return_value = error_response
+    monkeypatch.setattr(ica_utils.http_utils, 'download_session', lambda: session)
+    monkeypatch.setattr(
+        ica_utils.http_utils,
+        'config_retrieve',
+        lambda key, default=None: 1 if key == ['ica', 'download', 'max_transfer_attempts'] else default,
+    )
+    bucket = _empty_bucket()
+
+    with pytest.raises(requests.HTTPError):
+        ica_utils.stream_ica_file_to_gcs(
+            api_instance=MagicMock(),
+            path_parameters={'projectId': 'p'},
+            file_id='fil.abc',
+            file_name='sample.cram',
+            gcs_bucket=bucket,
+            gcs_prefix='ica/output',
+            download_url='https://signed.example/presigned',
+            skip_existing=True,
+        )
+
+    bucket.blob.return_value.open.assert_not_called()
+
+
+# --- run provenance and resume ------------------------------------------------------------
+
+
+def _marker_bucket(recorded_ica_folder: str | None) -> MagicMock:
+    """A bucket whose provenance marker names `recorded_ica_folder`, or has none."""
+    bucket = MagicMock()
+    if recorded_ica_folder is None:
+        bucket.get_blob.return_value = None
+    else:
+        blob = MagicMock()
+        blob.download_as_bytes.return_value = json.dumps({'ica_folder': recorded_ica_folder}).encode()
+        bucket.get_blob.return_value = blob
+    return bucket
+
+
+def _listing(*names: str) -> MagicMock:
+    """A list_blobs result for the given prefix-relative names."""
+    blobs = []
+    for name in names:
+        blob = MagicMock()
+        blob.name = f'ica/output/{name}'
+        blobs.append(blob)
+    return MagicMock(return_value=blobs)
+
+
+def test_a_prefix_claimed_by_this_run_reports_what_it_holds():
+    """Resuming a part-way download must count what already landed, or the whole sequencing
+    group is re-fetched. A finalized object is proof of a completed write on its own."""
+    bucket = _marker_bucket('/ica/run-a/')
+    bucket.list_blobs = _listing('a.csv', 'reports/b.html')
+
+    assert gcs_utils.files_already_downloaded(bucket, 'state/sg.json', 'ica/output', '/ica/run-a/') == {
+        'a.csv',
+        'reports/b.html',
+    }
+    bucket.blob.return_value.upload_from_string.assert_not_called()
+
+
+def test_a_prefix_claimed_by_a_different_run_reports_nothing():
+    """A re-analysis writes new outputs over the same prefix, so the previous run's files must
+    not be inherited even though they are sitting right there."""
+    bucket = _marker_bucket('/ica/run-a/')
+    bucket.list_blobs = _listing('a.csv')
+
+    assert gcs_utils.files_already_downloaded(bucket, 'state/sg.json', 'ica/output', '/ica/run-b/') == set()
+    payload = json.loads(bucket.blob.return_value.upload_from_string.call_args.args[0])
+    assert payload == {'ica_folder': '/ica/run-b/'}
+
+
+def test_an_unclaimed_prefix_reports_nothing_and_is_claimed():
+    """A prefix populated before provenance existed has unknown ownership, so its contents are
+    re-downloaded once rather than trusted."""
+    bucket = _marker_bucket(None)
+    bucket.list_blobs = _listing('a.csv')
+
+    assert gcs_utils.files_already_downloaded(bucket, 'state/sg.json', 'ica/output', '/ica/run-b/') == set()
+    bucket.blob.return_value.upload_from_string.assert_called_once()
+
+
+def test_force_redownload_reports_nothing_and_still_claims(monkeypatch):
+    """The flag has to reach every download path, and the marker must still be updated so the
+    next run can resume from this one."""
+    monkeypatch.setattr(
+        gcs_utils,
+        'config_retrieve',
+        lambda key, default=None: True if key == ['ica', 'download', 'force_redownload'] else default,
+    )
+    bucket = _marker_bucket('/ica/run-a/')
+    bucket.list_blobs = _listing('a.csv')
+
+    assert gcs_utils.files_already_downloaded(bucket, 'state/sg.json', 'ica/output', '/ica/run-a/') == set()
+    bucket.blob.return_value.upload_from_string.assert_called_once()
+
+
+def test_listing_returns_names_relative_to_prefix_excluding_the_sentinel():
+    """Nested report paths come back in the form ICA lists them; `_SUCCESS` is ours, not a
+    downloaded file, and must never be compared against the ICA listing."""
+    bucket = MagicMock()
+    bucket.list_blobs = _listing('a.csv', 'reports/b.html', gcs_utils.SUCCESS_OBJECT_NAME)
+
+    assert gcs_utils.list_gcs_names(bucket, 'ica/output') == {'a.csv', 'reports/b.html'}
+    bucket.list_blobs.assert_called_once_with(prefix='ica/output/')
+
+
+def test_rebuild_reports_nothing_already_downloaded():
+    """A forced re-run must re-fetch even when the marker names this very run."""
+    bucket = _marker_bucket('/ica/run-a/')
+    bucket.list_blobs = _listing('a.csv')
+
+    result = gcs_utils.files_already_downloaded(
+        bucket,
+        'state/sg.json',
+        'ica/output',
+        '/ica/run-a/',
+        rebuild=True,
+    )
+
+    assert result == set()
+
+
+def test_a_prefix_is_marked_complete_by_its_sentinel():
+    """The sentinel is what tells a later run that this group finished."""
+    bucket = MagicMock()
+    bucket.blob.return_value.exists.return_value = True
+
+    assert gcs_utils.is_marked_complete(bucket, 'ica/output') is True
+    bucket.blob.assert_called_once_with(f'ica/output/{gcs_utils.SUCCESS_OBJECT_NAME}')
+
+
+def test_success_sentinel_is_written_inside_the_output_prefix():
+    """cpg-flow gates the stage on this object, so it must land where `expected_outputs`
+    declares it."""
+    bucket = MagicMock()
+
+    gcs_utils.write_success_sentinel(bucket, 'ica/output')
+
+    bucket.blob.assert_called_once_with(f'ica/output/{gcs_utils.SUCCESS_OBJECT_NAME}')
+    bucket.blob.return_value.upload_from_string.assert_called_once()
 
 
 # --- batch_create_download_urls: one API call for a whole folder's URLs ---

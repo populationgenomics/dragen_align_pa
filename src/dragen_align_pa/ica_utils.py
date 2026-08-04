@@ -7,7 +7,7 @@ and ica_cli modules.
 import hashlib
 import json
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 import cpg_utils
 import icasdk
@@ -18,7 +18,7 @@ from icasdk.model.create_data import CreateData
 from icasdk.model.data_id_or_path_list import DataIdOrPathList
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils
+from dragen_align_pa import gcs_utils, http_utils, ica_api_utils
 from dragen_align_pa.paths import IcaPath
 from dragen_align_pa.utils import load_per_sg_state
 
@@ -168,6 +168,51 @@ def create_upload_object_id(
         ) from e
 
 
+_HTTP_FORBIDDEN: Final = 403
+
+
+# One place that knows how to read a small file out of ICA. The three callers of this used to
+# each mint, fetch and check status themselves, and had already drifted: only one of them
+# recovered from the expired-URL 403 that all three can hit.
+def fetch_ica_file_body(
+    api_instance: 'project_data_api.ProjectDataApi',
+    path_parameters: dict[str, str],
+    file_id: str,
+) -> requests.Response:
+    """Fetch a small ICA file's body through a freshly minted pre-signed URL.
+
+    Args:
+        api_instance: An instance of the ProjectDataApi.
+        path_parameters: Dict with the projectId.
+        file_id: ICA data id of the file to read.
+
+    Raises:
+        icasdk.ApiException: Minting the download URL failed.
+        requests.HTTPError: The fetch failed, including a second consecutive 403.
+
+    Returns:
+        The response, already checked for status. Callers take `.text` or `.json()`.
+    """
+
+    def _mint_and_fetch() -> requests.Response:
+        url_response = ica_api_utils.ica_retry(
+            api_instance.create_download_url_for_data,  # pyright: ignore[reportUnknownVariableType]
+            path_params=path_parameters | {'dataId': file_id},  # pyright: ignore[reportArgumentType]
+        )
+        return http_utils.download_session().get(
+            url_response.body['url'],  # pyright: ignore[reportUnknownArgumentType]
+            timeout=http_utils.SMALL_FILE_TIMEOUT,
+        )
+
+    response = _mint_and_fetch()
+    if response.status_code == _HTTP_FORBIDDEN:
+        # A pre-signed URL can expire between minting and reading; a fresh one fixes it.
+        logger.warning(f'Pre-signed URL for {file_id} returned 403; re-minting and retrying once.')
+        response = _mint_and_fetch()
+    response.raise_for_status()
+    return response
+
+
 def get_md5_from_ica(
     api_instance: 'project_data_api.ProjectDataApi',
     path_parameters: dict[str, str],
@@ -179,19 +224,7 @@ def get_md5_from_ica(
     Returns (expected_hash, file_content).
     """
     try:
-        url_response = ica_api_utils.ica_retry(
-            api_instance.create_download_url_for_data,  # pyright: ignore[reportUnknownVariableType]
-            path_params=path_parameters | {'dataId': md5_file_id},
-        )
-        download_url = url_response.body['url']  # pyright: ignore[reportUnknownVariableType]
-
-        response = requests.get(
-            download_url,
-            timeout=300,
-        )  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
-        response.raise_for_status()
-
-        content = response.text  # pyright: ignore[reportUnknownVariableType]
+        content = fetch_ica_file_body(api_instance, path_parameters, md5_file_id).text
         # Handle both md5sum (hash filename) and md5 (hash only) formats
         expected_hash = content.split()[0]  # pyright: ignore[reportUnknownVariableType]
         return expected_hash, content  # pyright: ignore[reportUnknownVariableType]
@@ -240,56 +273,111 @@ def stream_ica_file_to_gcs(
     gcs_prefix: str,
     expected_md5_hash: str | None = None,
     download_url: str | None = None,
-) -> None:
-    """
-    Streams a file from ICA to GCS and optionally verifies its MD5.
-    (Used by download_specific_files_from_ica.py and download_ica_pipeline_outputs.py)
+    *,
+    skip_existing: bool,
+) -> bool:
+    """Stream a file from ICA to GCS, optionally verifying its MD5.
 
-    If `download_url` is supplied (e.g. pre-minted in bulk via
-    `batch_create_download_urls`), the per-file `:createDownloadUrl` call is
-    skipped. Otherwise a URL is minted for this single file.
+    Args:
+        api_instance: An instance of the ProjectDataApi.
+        path_parameters: Dict with the projectId.
+        file_id: ICA data id of the file to stream.
+        file_name: Object name to write under `gcs_prefix`; may contain slashes.
+        gcs_bucket: Destination bucket.
+        gcs_prefix: Destination prefix within the bucket.
+        expected_md5_hash: Hex MD5 to verify the transfer against. A mismatch
+            deletes the uploaded object and raises.
+        download_url: A pre-minted pre-signed URL (e.g. from
+            `batch_create_download_urls`). When None, one is minted for this file.
+        skip_existing: Return without transferring when GCS already holds a complete copy.
+            No default: the two state-driven jobs own the decision themselves and must pass
+            False, so a new caller has to say which it is rather than inherit the wrong one.
+
+    A failed transfer is restarted from the beginning (with a freshly minted URL) up to
+    `[ica.download] max_transfer_attempts` times before the error propagates.
+
+    Raises:
+        icasdk.ApiException: Minting the download URL failed.
+        requests.RequestException | urllib3.exceptions.HTTPError | ssl.SSLError: Every
+            transfer attempt failed.
+        google.cloud.exceptions.GoogleCloudError: The upload to GCS failed.
+        ValueError: The transferred bytes did not match `expected_md5_hash`.
+
+    Returns:
+        True if the file was streamed, False if it was already present and skipped.
     """
     gcs_blob_path = f'{gcs_prefix}/{file_name}'
     blob = gcs_bucket.blob(gcs_blob_path)
     bucket_name = gcs_bucket.name  # pyright: ignore[reportUnknownVariableType]
 
+    if skip_existing and gcs_utils.existing_gcs_object_is_complete(gcs_bucket, gcs_blob_path, expected_md5_hash):
+        logger.info(
+            f'Skipping {file_name}: gs://{bucket_name}/{gcs_blob_path} already holds a complete copy.',
+        )
+        return False
+
     logger.info(
         f'Streaming {file_name} (ID: {file_id}) to gs://{bucket_name}/{gcs_blob_path}',
     )
 
-    try:
-        # 1. Get pre-signed URL (mint per-file only if one wasn't pre-supplied)
-        resolved_url: str = download_url  # type: ignore[assignment]
-        if download_url is None:
-            url_response = ica_api_utils.ica_retry(
-                api_instance.create_download_url_for_data,  # pyright: ignore[reportUnknownVariableType]
-                path_params=path_parameters | {'dataId': file_id},  # pyright: ignore[reportArgumentType]
-            )
-            resolved_url = url_response.body['url']  # pyright: ignore[reportUnknownVariableType]
+    def _mint_download_url() -> str:
+        url_response = ica_api_utils.ica_retry(
+            api_instance.create_download_url_for_data,  # pyright: ignore[reportUnknownVariableType]
+            path_params=path_parameters | {'dataId': file_id},  # pyright: ignore[reportArgumentType]
+        )
+        return url_response.body['url']  # pyright: ignore[reportUnknownVariableType]
 
-        # 2. Download and upload as a stream
+    # Each attempt writes the object from the beginning; see `gcs_utils` for why an interrupted
+    # BlobWriter leaves nothing behind to resume from or append to.
+    def _transfer(url: str) -> str:
         md5_hasher = hashlib.md5()  # noqa: S324
-        with requests.get(
-            resolved_url,
+        with http_utils.download_session().get(
+            url,
             stream=True,
-            timeout=600,
+            timeout=http_utils.STREAM_TIMEOUT,
         ) as r:  # pyright: ignore[reportUnknownVariableType]
             r.raise_for_status()
+            expected_bytes = http_utils._declared_content_length(r)  # noqa: SLF001  # pyright: ignore[reportUnknownArgumentType]
 
             # Stream directly to GCS
             with blob.open('wb', timeout=600) as gcs_file:  # pyright: ignore[reportUnknownArgumentType]
+                written = 0
                 for chunk in r.iter_content(
                     chunk_size=1024 * 1024 * 8,
                 ):  # pyright: ignore[reportUnknownVariableType] # 8MB chunks
                     gcs_file.write(chunk)  # pyright: ignore[reportUnknownArgumentType]
                     md5_hasher.update(chunk)  # pyright: ignore[reportUnknownArgumentType]
+                    written += len(chunk)  # pyright: ignore[reportUnknownArgumentType]
 
-        actual_md5_hash = md5_hasher.hexdigest()
+                # Raised INSIDE the writer's context so BlobWriter.__exit__ terminates the
+                # resumable session and nothing is finalized; as a RequestException it also
+                # routes through the transfer retry rather than surfacing as a hard failure.
+                if expected_bytes is not None and written != expected_bytes:
+                    raise requests.exceptions.ChunkedEncodingError(
+                        f'{file_name}: received {written} bytes but the server declared '
+                        f'{expected_bytes}; treating as a truncated transfer.',
+                    )
+        return md5_hasher.hexdigest()
+
+    attempts_made = 0
+
+    def _mint_and_transfer() -> str:
+        nonlocal attempts_made
+        attempts_made += 1
+        # A pre-minted URL (the batch path) is only good for the first attempt: a retry can
+        # be a minute or more later, by which point the URL may have expired (ICA answers an
+        # expired pre-signed URL with 403).
+        url = download_url if download_url is not None and attempts_made == 1 else _mint_download_url()
+        return _transfer(url)
+
+    try:
+        actual_md5_hash = http_utils.transfer_retrying(f'{file_name} (ID: {file_id})')(_mint_and_transfer)
+
         logger.info(
             f'Finished streaming {file_name}. Actual MD5: {actual_md5_hash}',
         )
 
-        # 3. Verify MD5 if provided
+        # Verify MD5 if provided
         if expected_md5_hash:
             if actual_md5_hash != expected_md5_hash:
                 logger.error(f'MD5 MISMATCH for {file_name}!')
@@ -310,12 +398,17 @@ def stream_ica_file_to_gcs(
             f'Failed to get download URL for {file_name} (ID: {file_id}): {e}',
         )
         raise
-    except requests.RequestException as e:
-        logger.error(f'Failed to stream/download {file_name} (ID: {file_id}): {e}')
+    except http_utils.TRANSPORT_ERRORS as e:
+        logger.error(
+            f'Failed to stream/download {file_name} (ID: {file_id}) after every attempt: {e}. '
+            f'Re-run the stage to resume; files already in GCS are skipped.',
+        )
         raise
     except gcs_exceptions.GoogleCloudError as e:
         logger.error(f'An error occurred uploading to GCS for {file_name}: {e}')
         raise
+
+    return True
 
 
 def list_ica_files(

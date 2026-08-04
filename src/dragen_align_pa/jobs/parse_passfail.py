@@ -16,13 +16,10 @@ from pathlib import Path
 
 import cpg_utils
 import icasdk
-import requests
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils
-
-_HTTP_FORBIDDEN = 403
+from dragen_align_pa import http_utils, ica_api_utils, ica_utils
 
 
 def parse_passfail_file(path: Path | cpg_utils.Path) -> dict[str, str]:
@@ -46,7 +43,7 @@ def fetch_passfail_from_ica(
     legitimately absent (a catastrophically-failed batch that didn't produce one).
 
     Raises:
-        icasdk.ApiException / requests.RequestException / json.JSONDecodeError: On
+        icasdk.ApiException / http_utils.TRANSPORT_ERRORS / json.JSONDecodeError: On
             transient ICA, network, or non-JSON-body (200 from a proxy maintenance
             page) errors.
     """
@@ -63,27 +60,12 @@ def fetch_passfail_from_ica(
         logger.warning(f'ICA API error finding passfail.json in {ica_folder_path}: {e}')
         raise
 
-    def _mint_and_fetch() -> requests.Response:
-        url_response = ica_api_utils.ica_retry(
-            api_instance.create_download_url_for_data,
-            path_params=path_parameters | {'dataId': file_id},
-        )
-        download_url: str = url_response.body['url']
-        return requests.get(download_url, timeout=60)
-
     try:
-        response = _mint_and_fetch()
-        if response.status_code == _HTTP_FORBIDDEN:
-            # Presigned URL expired between minting and reading; mint a fresh one.
-            logger.warning(
-                f'passfail.json presigned URL returned 403 for {ica_folder_path}; re-minting and retrying once.',
-            )
-            response = _mint_and_fetch()
-        response.raise_for_status()
+        response = ica_utils.fetch_ica_file_body(api_instance, path_parameters, file_id)
     except icasdk.ApiException as e:
         logger.warning(f'ICA API error minting download URL for passfail.json in {ica_folder_path}: {e}')
         raise
-    except requests.RequestException as e:
+    except http_utils.TRANSPORT_ERRORS as e:
         logger.warning(f'Network error fetching passfail.json from {ica_folder_path}: {e}')
         raise
 

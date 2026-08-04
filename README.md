@@ -1,4 +1,4 @@
-# Dragen Align PA Pipeline v4.1.1
+# Dragen Align PA Pipeline v4.1.2
 
 ## Purpose
 
@@ -130,6 +130,49 @@ If a pipeline failure left the GCS state file out of sync with ICA — most comm
 
 Unlike `force_resubmit`, this preserves completed CRAMs instead of recomputing them.
 
+### Recovering a Failed Download
+
+Downloads from ICA cross a long-haul link and do drop: connection resets, TLS record errors and
+truncated bodies are all routine at full per-sequencing-group fan-out. The download stages are
+built to survive that without operator intervention, so the first response to a failure is
+simply to **re-launch with the same `analysis-runner` command**. No flag is needed.
+
+That works because each download stage records its progress:
+
+1.  Every file that lands is appended to a per-sequencing-group state file under
+    `output/download_state/`, so a re-run re-fetches only what is missing.
+2.  `DownloadDataFromIca` declares a `_SUCCESS` sentinel as its output, not the folder. A folder
+    exists as soon as its first file lands, so gating on it could not tell a part-way download
+    from a complete one and every recovery meant forcing the stage for all sequencing groups.
+    With the sentinel, cpg-flow re-queues only the groups that did not finish.
+
+Two situations need more than a re-launch:
+
+  * **The sequencing group was re-analysed in ICA** (a new `pipeline_id`). The output paths carry
+    no pipeline id, so cpg-flow sees the old `_SUCCESS` and skips the stage. Force that stage, or
+    delete its `_SUCCESS` object. Forcing is enough on its own: a stage that finds its own
+    `_SUCCESS` already in place knows it was re-run deliberately and re-fetches every file rather
+    than resuming, so you do not need `force_redownload` as well.
+  * **You want to rebuild everything for a whole cohort.** Set
+    `ica.download.force_redownload = true`. This applies cohort-wide across all download stages,
+    so prefer forcing the one stage you care about; reach for this only when the data itself is
+    suspect, never as a way to retry a failure.
+
+Tuning knobs, all under `[ica.download]` and all with working defaults:
+
+| Key | Default | Reach for it when |
+| --- | --- | --- |
+| `url_batch_size` | 50 | ICA rate-limits (429) while minting download URLs. |
+| `force_redownload` | false | The data in GCS is suspect and must be rebuilt. |
+| `max_transfer_attempts` | 4 | A file needs more than four restarts to get through. |
+| `max_transfer_seconds` | 7200 | A large file legitimately needs a longer retry window. |
+| `job_timeout_seconds` | 21600 | A download job hangs rather than failing (the backstop). |
+
+**On first deploy of this behaviour**, sequencing groups downloaded by an earlier version have no
+state file and no `_SUCCESS`, so their bulk outputs are fetched once more before converging. That
+is deliberate: without a record of which ICA run wrote them, the alternative is trusting files of
+unknown provenance.
+
 ## Pipeline Outputs
 
 When successful, the pipeline downloads all results to your dataset's GCS bucket. Key outputs are organized as follows:
@@ -145,6 +188,13 @@ When successful, the pipeline downloads all results to your dataset's GCS bucket
       * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/somalier/`
   * **Pipeline Batch Metrics:**
       * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/dragen_batch_metrics/`
+  * **Download progress records** (not results — see "Recovering a Failed Download"):
+      * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/download_state/` (per sequencing group)
+      * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/dragen_batch_metrics/download_state/` (per batch)
+      * a `_SUCCESS` object inside each completed `dragen_metrics/{SG}/`
+
+    Deleting these does not lose results, but it does force the next run to re-download that
+    sequencing group in full.
 
 Final outputs above are keyed by sequencing group, because a sequencing group has one CRAM
 and one gVCF regardless of which cohort produced it. The pipeline's own state files are

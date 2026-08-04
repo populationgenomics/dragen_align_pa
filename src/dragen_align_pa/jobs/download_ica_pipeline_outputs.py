@@ -8,7 +8,7 @@ from cpg_utils.config import config_retrieve
 from google.cloud import storage
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils, ica_utils, paths, utils
+from dragen_align_pa import gcs_utils, ica_api_utils, ica_utils, paths, utils
 from dragen_align_pa.constants.ica_constants import BUCKET_NAME
 from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
 
@@ -44,6 +44,27 @@ def run(
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
+    # cpg-flow only runs this stage when the sentinel is missing, so finding one here means the
+    # run was forced (or `check_expected_outputs` is off). Forcing is how an operator says
+    # "rebuild this" — and it is the documented recovery when a group has been re-analysed — so
+    # honour it by re-fetching everything rather than resuming into outputs they have just said
+    # not to trust. Without this a forced re-run skips every file and only rewrites the sentinel.
+    rebuild = gcs_utils.is_marked_complete(gcs_bucket, gcs_output_path_prefix)
+    if rebuild:
+        logger.info(f'{sg_name}: already marked complete but re-run anyway; rebuilding it from ICA in full.')
+
+    # Resolved BEFORE any URL is minted, so a re-run after a part-way failure mints URLs only for
+    # what is missing rather than re-minting all 100+. The marker sits outside the prefix it
+    # guards so it cannot make the stage's declared output folder exist prematurely.
+    marker_key = paths.gcs_relative_key(utils.get_output_path(filename=f'download_state/{sg_name}.json'))
+    already_downloaded = gcs_utils.files_already_downloaded(
+        gcs_bucket,
+        marker_key,
+        gcs_output_path_prefix,
+        ica_folder_path,
+        rebuild=rebuild,
+    )
+
     with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
         # --- List + inline filter for CRAM/gVCF (handled by sibling stages) ---
         files = ica_utils.list_ica_files(
@@ -51,9 +72,26 @@ def run(
             path_parameters=path_parameters,
             base_ica_folder_path=ica_folder_path,
         )
-        files_to_download = [
+        wanted = [
             (name, fid) for name, fid in files if not name.endswith(('.cram', '.cram.crai', '.gvcf.gz', '.gvcf.gz.tbi'))
         ]
+        files_to_download = [(name, fid) for name, fid in wanted if name not in already_downloaded]
+        if skipped := len(wanted) - len(files_to_download):
+            logger.info(
+                f'{sg_name}: {skipped} of {len(wanted)} files already in GCS; '
+                f'downloading the remaining {len(files_to_download)}.',
+            )
+        if not wanted:
+            # An empty ICA folder is not a completed download: claiming success here would
+            # write _SUCCESS over a sequencing group that produced nothing.
+            raise ValueError(
+                f'{sg_name}: ICA folder {ica_folder_path} lists no downloadable outputs. '
+                f'Check the analysis actually produced results before re-running.',
+            )
+        if not files_to_download:
+            logger.info(f'{sg_name}: all bulk ICA outputs already present in GCS; nothing to download.')
+            gcs_utils.write_success_sentinel(gcs_bucket, gcs_output_path_prefix)
+            return
 
         # Mint pre-signed URLs in batches via the :createDownloadUrls endpoint
         # rather than one :createDownloadUrl POST per file. This collapses the
@@ -80,6 +118,12 @@ def run(
                     gcs_prefix=gcs_output_path_prefix,
                     expected_md5_hash=None,
                     download_url=urls.get(file_id),
+                    # The pre-filter above already decided this file must be written, and it
+                    # knows about run provenance where the per-file existence check does not.
+                    skip_existing=False,
                 )
 
-    logger.info('All files streamed to GCS successfully.')
+    # Only now is the download complete: cpg-flow gates the stage on this sentinel, so writing
+    # it earlier would mark a part-way download done and skip the rest on the next run.
+    gcs_utils.write_success_sentinel(gcs_bucket, gcs_output_path_prefix)
+    logger.info(f'{sg_name}: all {len(wanted)} bulk ICA outputs are in GCS.')
