@@ -131,10 +131,17 @@ def test_a_403_does_restart_the_whole_transfer():
     [
         requests.exceptions.ChunkedEncodingError('truncated'),
         requests.ConnectionError('reset'),
-        requests.exceptions.RetryError('adapter gave up'),
     ],
 )
 def test_a_dropped_body_still_restarts_the_whole_transfer(error):
     """The truncation signal is a ChunkedEncodingError, which is not an HTTPError, so the
     status carve-out above must not disarm it."""
     assert http_utils._should_restart_transfer(error) is True
+
+
+def test_an_exhausted_status_budget_does_not_restart_the_whole_transfer():
+    """A persistent 429 reaches us as `RetryError`, which inherits from `RequestException` and
+    not `HTTPError`, so it slips past the status branch above and lands in the transport one.
+    Restarting there re-mints a rate-limited URL to ask the same throttled host again: 20
+    requests and 4 mints per file, which is exactly what the status carve-out is for."""
+    assert http_utils._should_restart_transfer(requests.exceptions.RetryError('adapter gave up')) is False

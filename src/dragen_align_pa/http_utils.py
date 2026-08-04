@@ -167,14 +167,20 @@ def _declared_content_length(response: requests.Response) -> int | None:
 _HTTP_FORBIDDEN: Final = 403
 
 
-# A status error is not a dropped body. Restarting the whole transfer for one re-mints a
-# rate-limited URL and re-runs an adapter that already spent its own status budget: a persistent
-# 429 would cost 20 requests and 4 mints per file, against the endpoint being backed off from.
-# 403 is the exception worth restarting for, because it is how an expired pre-signed URL reads
-# and a fresh mint genuinely fixes it. `ChunkedEncodingError` (the truncation signal) is not an
-# `HTTPError`, so it still restarts.
+# A status error is not a dropped body, and restarting for one re-mints a rate-limited ICA URL
+# only to ask the same throttled host again. The two ways a status reaches us differ:
+#   - a status in `_RETRYABLE_HTTP_STATUSES` is retried by the adapter and, once that budget is
+#     spent, surfaces as `RetryError`. It inherits from `RequestException`, NOT `HTTPError`, so
+#     it needs its own branch — without one a persistent 429 costs 20 requests and 4 mints per
+#     file, which is the amplification this predicate exists to prevent.
+#   - any other status passes straight through to `raise_for_status()` as `HTTPError`. 403 is
+#     the one worth restarting for: it is how an expired pre-signed URL reads, and a fresh mint
+#     genuinely fixes it.
+# `ChunkedEncodingError` (the truncation signal) is neither, so it still restarts.
 def _should_restart_transfer(exc: BaseException) -> bool:
     """tenacity predicate: True for a failure a whole-transfer restart can actually fix."""
+    if isinstance(exc, requests.exceptions.RetryError):
+        return False
     if isinstance(exc, requests.HTTPError):
         return exc.response is not None and exc.response.status_code == _HTTP_FORBIDDEN
     return isinstance(exc, TRANSPORT_ERRORS)
