@@ -45,22 +45,16 @@ def run(
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
     force_redownload = bool(config_retrieve(['ica', 'download', 'force_redownload'], default=False))
-    # Claim the destination before listing it: `dragen_metrics/{sg}` is not scoped to an ICA
-    # run, so objects left by a *previous* analysis of this SG sit at the same paths and must
-    # not count as already-downloaded. Anything written since we took ownership is ours. The
-    # marker is keyed per-SG like the prefix it guards, and sits outside that prefix so it
-    # can't make the stage's declared output folder exist before anything is downloaded.
-    marker_key = paths.gcs_relative_key(utils.get_output_path(filename=f'download_provenance/{sg_name}.json'))
-    owned_since = ica_utils.claim_download_for_run(gcs_bucket, marker_key, ica_folder_path)
-    # One list_blobs, not one exists() per file, and done BEFORE any URL is minted: a rerun
-    # after a part-way failure then mints URLs only for what's missing instead of re-minting
-    # (and re-downloading) all 100+ files. The stage declares the parent folder as its single
-    # expected output, so cpg-flow cannot tell a partial download from a complete one — this
-    # is what makes the forced rerun cheap.
+    # The state file is keyed per-SG like the prefix it tracks, and sits outside that prefix so
+    # it is never mistaken for downloaded data. Its `ica_folder` is what stops a re-analysis
+    # inheriting the previous run's files: a mismatch resets the record to empty.
+    state_key = paths.gcs_relative_key(utils.get_output_path(filename=f'download_state/{sg_name}.json'))
+    state = ica_utils.DownloadState.load(gcs_bucket, state_key, ica_folder_path)
+    # Cross-check the record against one list_blobs, done BEFORE any URL is minted: a re-run
+    # after a part-way failure then mints URLs only for what is missing instead of re-minting
+    # (and re-downloading) all 100+ files.
     already_in_gcs = (
-        set()
-        if force_redownload
-        else ica_utils.list_gcs_names_written_since(gcs_bucket, gcs_output_path_prefix, owned_since)
+        set() if force_redownload else state.resumable(ica_utils.list_gcs_names(gcs_bucket, gcs_output_path_prefix))
     )
 
     with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
@@ -79,8 +73,16 @@ def run(
                 f'{sg_name}: {skipped} of {len(wanted)} files already in GCS; '
                 f'downloading the remaining {len(files_to_download)}.',
             )
+        if not wanted:
+            # An empty ICA folder is not a completed download: claiming success here would
+            # write _SUCCESS over a sequencing group that produced nothing.
+            raise ValueError(
+                f'{sg_name}: ICA folder {ica_folder_path} lists no downloadable outputs. '
+                f'Check the analysis actually produced results before re-running.',
+            )
         if not files_to_download:
             logger.info(f'{sg_name}: all bulk ICA outputs already present in GCS; nothing to download.')
+            ica_utils.write_success_sentinel(gcs_bucket, gcs_output_path_prefix)
             return
 
         # Mint pre-signed URLs in batches via the :createDownloadUrls endpoint
@@ -112,5 +114,11 @@ def run(
                     # knows about run provenance where the per-file existence check does not.
                     skip_existing=False,
                 )
+                # Persisted per file, not per batch: a job killed mid-chunk resumes from the
+                # last file that actually landed.
+                state.mark_transferred(file_name)
 
-    logger.info('All files streamed to GCS successfully.')
+    # Only now is the download complete: cpg-flow gates the stage on this sentinel, so writing
+    # it earlier would mark a part-way download done and skip the rest on the next run.
+    ica_utils.write_success_sentinel(gcs_bucket, gcs_output_path_prefix)
+    logger.info(f'{sg_name}: all {len(wanted)} bulk ICA outputs are in GCS.')

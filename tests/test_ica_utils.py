@@ -13,7 +13,6 @@ import base64
 import hashlib
 import json
 import ssl
-from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -461,142 +460,90 @@ def test_an_http_error_status_is_raised_before_anything_is_written(monkeypatch):
     bucket.blob.return_value.open.assert_not_called()
 
 
-# --- run provenance ----------------------------------------------------------------------
+# --- resumable download state --------------------------------------------------------------
 
 
-def _marker(ica_folder: str, created: datetime) -> MagicMock:
-    """An existing provenance marker naming `ica_folder`."""
-    blob = MagicMock()
-    blob.download_as_bytes.return_value = json.dumps({'ica_folder': ica_folder}).encode()
-    blob.time_created = created
-    return blob
-
-
-def test_claiming_a_prefix_keeps_a_marker_from_the_same_ica_run():
-    """Resuming a part-way download must not reset ownership, or every file already
-    fetched by this run would look like another run's and be re-downloaded."""
-    claimed_at = datetime(2026, 8, 1, tzinfo=UTC)
+def _state_blob(payload: dict | None) -> MagicMock:
+    """A bucket whose state object holds `payload` (or is absent)."""
     bucket = MagicMock()
-    bucket.get_blob.return_value = _marker('/ica/run-a/', claimed_at)
+    if payload is None:
+        bucket.get_blob.return_value = None
+    else:
+        blob = MagicMock()
+        blob.download_as_bytes.return_value = json.dumps(payload).encode()
+        bucket.get_blob.return_value = blob
+    return bucket
 
-    owned_since = ica_utils.claim_download_for_run(bucket, 'provenance/sg.json', '/ica/run-a/')
 
-    assert owned_since == claimed_at
-    bucket.blob.return_value.upload_from_string.assert_not_called()
+def test_state_resumes_a_record_from_the_same_ica_run():
+    """Resuming a part-way download must keep what this run already transferred, or the
+    whole sequencing group is re-fetched."""
+    bucket = _state_blob({'ica_folder': '/ica/run-a/', 'transferred': ['a.csv', 'reports/b.html']})
+
+    state = ica_utils.DownloadState.load(bucket, 'state/sg.json', '/ica/run-a/')
+
+    assert state.transferred == {'a.csv', 'reports/b.html'}
 
 
-def test_claiming_a_prefix_rewrites_a_marker_from_a_different_ica_run():
-    """A re-analysis writes new outputs over the same prefix, so ownership resets and
-    nothing already there counts as downloaded."""
+def test_state_discards_a_record_from_a_different_ica_run():
+    """A re-analysis writes new outputs over the same prefix, so the previous run's files
+    must not count as downloaded."""
+    bucket = _state_blob({'ica_folder': '/ica/run-a/', 'transferred': ['a.csv']})
+
+    state = ica_utils.DownloadState.load(bucket, 'state/sg.json', '/ica/run-b/')
+
+    assert state.transferred == set()
+
+
+def test_state_starts_empty_when_no_record_exists():
+    """A prefix populated before this mechanism existed has unknown provenance, so its
+    contents are re-downloaded once rather than trusted."""
+    state = ica_utils.DownloadState.load(_state_blob(None), 'state/sg.json', '/ica/run-b/')
+
+    assert state.transferred == set()
+
+
+def test_marking_a_file_persists_immediately():
+    """Persisted per file, not at the end: a job killed mid-transfer must resume from the
+    last file that actually landed."""
+    bucket = _state_blob(None)
+    state = ica_utils.DownloadState.load(bucket, 'state/sg.json', '/ica/run-a/')
+
+    state.mark_transferred('a.csv')
+
+    payload = json.loads(bucket.blob.return_value.upload_from_string.call_args.args[0])
+    assert payload == {'ica_folder': '/ica/run-a/', 'transferred': ['a.csv']}
+
+
+def test_resumable_ignores_a_recorded_file_that_has_since_vanished():
+    """The record is cross-checked against GCS, so a file removed underneath us is
+    re-downloaded rather than assumed present."""
+    bucket = _state_blob({'ica_folder': '/ica/run-a/', 'transferred': ['a.csv', 'gone.csv']})
+    state = ica_utils.DownloadState.load(bucket, 'state/sg.json', '/ica/run-a/')
+
+    assert state.resumable({'a.csv'}) == {'a.csv'}
+
+
+def test_listing_returns_names_relative_to_prefix_excluding_the_sentinel():
+    """Nested report paths come back in the form ICA lists them; `_SUCCESS` is ours, not a
+    downloaded file, and must never be compared against the ICA listing."""
     bucket = MagicMock()
-    bucket.get_blob.return_value = _marker('/ica/run-a/', datetime(2026, 8, 1, tzinfo=UTC))
-    new_marker = bucket.blob.return_value
-    new_marker.time_created = datetime(2026, 8, 3, tzinfo=UTC)
+    blobs = [MagicMock(), MagicMock(), MagicMock()]
+    blobs[0].name = 'ica/output/a.csv'
+    blobs[1].name = 'ica/output/reports/b.html'
+    blobs[2].name = f'ica/output/{ica_utils.SUCCESS_OBJECT_NAME}'
+    bucket.list_blobs.return_value = blobs
 
-    owned_since = ica_utils.claim_download_for_run(bucket, 'provenance/sg.json', '/ica/run-b/')
-
-    assert owned_since == datetime(2026, 8, 3, tzinfo=UTC)
-    payload = json.loads(new_marker.upload_from_string.call_args.args[0])
-    assert payload == {'ica_folder': '/ica/run-b/'}
-
-
-def test_claiming_an_unmarked_prefix_writes_a_marker():
-    """A legacy prefix populated before provenance existed has unknown ownership, so the
-    claim starts now and its contents are re-downloaded once."""
-    bucket = MagicMock()
-    bucket.get_blob.return_value = None
-    bucket.blob.return_value.time_created = datetime(2026, 8, 3, tzinfo=UTC)
-
-    assert ica_utils.claim_download_for_run(bucket, 'provenance/sg.json', '/ica/run-b/') == datetime(
-        2026, 8, 3, tzinfo=UTC
-    )
-
-
-def test_claiming_raises_when_gcs_reports_no_creation_time():
-    """Without a reference instant the skip decision is unsound, so fail rather than guess."""
-    bucket = MagicMock()
-    bucket.get_blob.return_value = None
-    bucket.blob.return_value.time_created = None
-
-    with pytest.raises(ValueError, match='no creation time'):
-        ica_utils.claim_download_for_run(bucket, 'provenance/sg.json', '/ica/run-b/')
-
-
-def test_listing_returns_names_relative_to_prefix_written_since_the_claim():
-    """Nested report paths come back in the form ICA lists them; objects predating the
-    claim belong to another run and must be omitted."""
-    owned_since = datetime(2026, 8, 2, tzinfo=UTC)
-    bucket = MagicMock()
-    ours, nested, stale = MagicMock(), MagicMock(), MagicMock()
-    ours.name, ours.time_created = 'ica/output/a.csv', datetime(2026, 8, 3, tzinfo=UTC)
-    nested.name, nested.time_created = 'ica/output/reports/b.html', owned_since
-    stale.name, stale.time_created = 'ica/output/old.csv', datetime(2026, 8, 1, tzinfo=UTC)
-    bucket.list_blobs.return_value = [ours, nested, stale]
-
-    assert ica_utils.list_gcs_names_written_since(bucket, 'ica/output', owned_since) == {
-        'a.csv',
-        'reports/b.html',
-    }
+    assert ica_utils.list_gcs_names(bucket, 'ica/output') == {'a.csv', 'reports/b.html'}
     bucket.list_blobs.assert_called_once_with(prefix='ica/output/')
 
 
-# --- batch_create_download_urls: one API call for a whole folder's URLs ---
+def test_success_sentinel_is_written_inside_the_output_prefix():
+    """cpg-flow gates the stage on this object, so it must land where `expected_outputs`
+    declares it."""
+    bucket = MagicMock()
 
+    ica_utils.write_success_sentinel(bucket, 'ica/output')
 
-def test_batch_create_download_urls_returns_id_to_url_map():
-    """The batch endpoint collapses N per-file mints into ONE call and returns
-    a {dataId: url} map keyed so callers match URLs to the IDs they hold."""
-    api = MagicMock()
-    response = MagicMock()
-    response.body = {
-        'items': [
-            {'dataId': 'fil.a', 'url': 'https://u/a'},
-            {'dataId': 'fil.b', 'url': 'https://u/b'},
-        ],
-    }
-    api.create_download_urls_for_data.return_value = response
-
-    result = ica_utils.batch_create_download_urls(
-        api_instance=api,
-        path_parameters={'projectId': 'p'},
-        file_ids=['fil.a', 'fil.b'],
-    )
-
-    assert result == {'fil.a': 'https://u/a', 'fil.b': 'https://u/b'}
-    assert api.create_download_urls_for_data.call_count == 1
-
-
-def test_batch_create_download_urls_empty_makes_no_call():
-    """An empty id list must short-circuit — never hit the API."""
-    api = MagicMock()
-
-    result = ica_utils.batch_create_download_urls(
-        api_instance=api,
-        path_parameters={'projectId': 'p'},
-        file_ids=[],
-    )
-
-    assert result == {}
-    api.create_download_urls_for_data.assert_not_called()
-
-
-def test_batch_create_download_urls_retries_on_429(monkeypatch):
-    """The batch mint is itself a rate-limited POST; it must go through the
-    shared ica_retry so a transient 429 is absorbed."""
-    monkeypatch.setattr('tenacity.nap.time.sleep', lambda _seconds: None)
-    api = MagicMock()
-    response = MagicMock()
-    response.body = {'items': [{'dataId': 'fil.a', 'url': 'https://u/a'}]}
-    api.create_download_urls_for_data.side_effect = [
-        ApiException(status=429, reason='Too Many Requests'),
-        response,
-    ]
-
-    result = ica_utils.batch_create_download_urls(
-        api_instance=api,
-        path_parameters={'projectId': 'p'},
-        file_ids=['fil.a'],
-    )
-
-    assert result == {'fil.a': 'https://u/a'}
-    assert api.create_download_urls_for_data.call_count == 2
+    bucket.blob.assert_called_once_with(f'ica/output/{ica_utils.SUCCESS_OBJECT_NAME}')
+    bucket.blob.return_value.upload_from_string.assert_called_once()

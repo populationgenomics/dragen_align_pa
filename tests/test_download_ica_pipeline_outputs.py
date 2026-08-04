@@ -1,21 +1,19 @@
 """Tests for the bulk per-SG output download.
 
-The stage declares only the parent folder as its expected output, so cpg-flow cannot
-tell a part-way download from a complete one: recovering from a mid-run connection
-failure means re-running the stage for every sequencing group. These tests pin the
-behaviour that makes that re-run cheap — files already in GCS are filtered out
-*before* any pre-signed URL is minted, so a re-run neither re-mints (rate-limited)
-URLs nor re-downloads bytes it already has.
+The stage used to declare the parent folder as its expected output, which exists as soon as
+the first of 100+ files lands — so cpg-flow could not tell a part-way download from a complete
+one, and recovering from a mid-run connection failure meant forcing the stage for every
+sequencing group. These tests pin the two things that replaced that: a `_SUCCESS` sentinel
+written only after the last file, and a per-SG state file recording each transfer as it
+happens, so a re-run neither re-mints (rate-limited) URLs nor re-downloads bytes it has.
 """
 
-from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 from dragen_align_pa.jobs import download_ica_pipeline_outputs
-
-_OWNED_SINCE = datetime(2026, 8, 1, tzinfo=UTC)
 
 _ICA_FILES = [
     ('SYN00001.qc.csv', 'fil.a'),
@@ -49,16 +47,18 @@ def patched_job(monkeypatch):
     )
     monkeypatch.setattr('dragen_align_pa.ica_utils.batch_create_download_urls', mocks.mint)
     monkeypatch.setattr('dragen_align_pa.ica_utils.stream_ica_file_to_gcs', mocks.stream)
-    monkeypatch.setattr('dragen_align_pa.ica_utils.claim_download_for_run', mocks.claim)
-    mocks.claim.return_value = _OWNED_SINCE
+    monkeypatch.setattr('dragen_align_pa.ica_utils.DownloadState.load', mocks.load_state)
+    monkeypatch.setattr('dragen_align_pa.ica_utils.write_success_sentinel', mocks.sentinel)
+    mocks.load_state.return_value = mocks.state
     mocks.mint.return_value = {'fil.a': 'https://u/a', 'fil.b': 'https://u/b'}
     return mocks
 
 
-def _patch_listing(monkeypatch, names):
-    """Stub the provenance-aware listing and return its mock."""
-    listing = MagicMock(return_value=names)
-    monkeypatch.setattr('dragen_align_pa.ica_utils.list_gcs_names_written_since', listing)
+def _patch_resumable(monkeypatch, mocks, names):
+    """Say which files the state file reports as already downloaded and still present."""
+    listing = MagicMock(return_value=set(names))
+    monkeypatch.setattr('dragen_align_pa.ica_utils.list_gcs_names', listing)
+    mocks.state.resumable.return_value = set(names)
     return listing
 
 
@@ -75,7 +75,7 @@ def _run(sg_name='SYN00001'):
 def test_downloads_everything_when_gcs_is_empty(patched_job, monkeypatch):
     """Nothing present: both non-CRAM files are minted and streamed (CRAM/gVCF are
     sibling stages' work)."""
-    _patch_listing(monkeypatch, set())
+    _patch_resumable(monkeypatch, patched_job, set())
 
     _run()
 
@@ -86,7 +86,7 @@ def test_downloads_everything_when_gcs_is_empty(patched_job, monkeypatch):
 def test_already_present_files_are_not_reminted_or_restreamed(patched_job, monkeypatch):
     """The point of the pre-filter: a re-run after a part-way failure mints URLs for
     the missing file only, instead of re-minting all of them."""
-    _patch_listing(monkeypatch, {'SYN00001.qc.csv'})
+    _patch_resumable(monkeypatch, patched_job, {'SYN00001.qc.csv'})
 
     _run()
 
@@ -96,7 +96,7 @@ def test_already_present_files_are_not_reminted_or_restreamed(patched_job, monke
 
 def test_fully_downloaded_sg_makes_no_ica_url_calls(patched_job, monkeypatch):
     """A complete SG must cost zero rate-limited mint calls on a re-run."""
-    _patch_listing(monkeypatch, {'SYN00001.qc.csv', 'SYN00001.metrics.csv'})
+    _patch_resumable(monkeypatch, patched_job, {'SYN00001.qc.csv', 'SYN00001.metrics.csv'})
 
     _run()
 
@@ -106,7 +106,7 @@ def test_fully_downloaded_sg_makes_no_ica_url_calls(patched_job, monkeypatch):
 
 def test_force_redownload_ignores_what_is_already_in_gcs(patched_job, monkeypatch):
     """With force_redownload set, GCS isn't consulted and everything is re-fetched."""
-    listing = _patch_listing(monkeypatch, {'SYN00001.qc.csv', 'SYN00001.metrics.csv'})
+    listing = _patch_resumable(monkeypatch, patched_job, {'SYN00001.qc.csv', 'SYN00001.metrics.csv'})
     monkeypatch.setattr(
         'dragen_align_pa.jobs.download_ica_pipeline_outputs.config_retrieve',
         lambda key, default=None: True if key == ['ica', 'download', 'force_redownload'] else default,
@@ -127,11 +127,11 @@ def test_neither_the_outputs_nor_the_provenance_marker_are_namespaced_by_cohort(
     each cohort believe it owns the shared prefix, and each would then treat the other's files
     as its own already-downloaded output.
     """
-    _patch_listing(monkeypatch, set())
+    _patch_resumable(monkeypatch, patched_job, set())
 
     _run()
 
-    marker_key = patched_job.claim.call_args.args[1]
+    marker_key = patched_job.load_state.call_args.args[1]
     gcs_prefix = patched_job.stream.call_args.kwargs['gcs_prefix']
 
     assert 'SYN00001' in marker_key
@@ -139,12 +139,67 @@ def test_neither_the_outputs_nor_the_provenance_marker_are_namespaced_by_cohort(
         assert 'COH0001' not in path, f'{path} is namespaced by cohort; outputs must be keyed by SG alone'
 
 
-def test_the_prefix_is_claimed_for_this_ica_run_before_it_is_listed(patched_job, monkeypatch):
-    """Provenance gates the skip: the listing must be asked only for objects written since
-    this run took ownership, so a previous analysis's outputs are never mistaken for ours."""
-    listing = _patch_listing(monkeypatch, set())
+def test_the_state_file_is_loaded_for_this_ica_run(patched_job, monkeypatch):
+    """Provenance gates the skip: the state is loaded for the ICA folder being downloaded, so
+    a previous analysis's outputs are never mistaken for ours."""
+    _patch_resumable(monkeypatch, patched_job, set())
 
     _run()
 
-    assert patched_job.claim.call_args.args[2] == '/ica/folder/'
-    assert listing.call_args.args[2] is _OWNED_SINCE
+    assert patched_job.load_state.call_args.args[2] == '/ica/folder/'
+
+
+def test_success_sentinel_is_written_only_after_every_file_lands(patched_job, monkeypatch):
+    """The sentinel is the stage's declared output, so writing it early would mark a
+    part-way download complete and strand the remaining files."""
+    _patch_resumable(monkeypatch, patched_job, set())
+
+    _run()
+
+    patched_job.sentinel.assert_called_once()
+    assert patched_job.sentinel.call_args.args[1].endswith('dragen_metrics/SYN00001')
+
+
+def test_no_sentinel_when_a_transfer_fails(patched_job, monkeypatch):
+    """A failed download must leave the stage incomplete so cpg-flow re-runs it."""
+    _patch_resumable(monkeypatch, patched_job, set())
+    patched_job.stream.side_effect = requests.ConnectionError('reset')
+
+    with pytest.raises(requests.ConnectionError):
+        _run()
+
+    patched_job.sentinel.assert_not_called()
+
+
+def test_each_transferred_file_is_recorded_as_it_lands(patched_job, monkeypatch):
+    """Recorded per file, not per batch: a job killed mid-chunk resumes from the last file
+    that actually landed."""
+    _patch_resumable(monkeypatch, patched_job, set())
+
+    _run()
+
+    recorded = [call.args[0] for call in patched_job.state.mark_transferred.call_args_list]
+    assert recorded == ['SYN00001.qc.csv', 'SYN00001.metrics.csv']
+
+
+def test_an_already_complete_sg_still_gets_its_sentinel(patched_job, monkeypatch):
+    """A group downloaded before the sentinel existed must be able to converge without
+    re-fetching: nothing to do, but the stage still has to declare itself done."""
+    _patch_resumable(monkeypatch, patched_job, {'SYN00001.qc.csv', 'SYN00001.metrics.csv'})
+
+    _run()
+
+    patched_job.stream.assert_not_called()
+    patched_job.sentinel.assert_called_once()
+
+
+def test_an_empty_ica_folder_is_an_error_not_a_completed_download(patched_job, monkeypatch):
+    """Listing nothing means the analysis produced nothing or the folder is wrong; writing
+    _SUCCESS there would permanently mark an empty sequencing group as downloaded."""
+    _patch_resumable(monkeypatch, patched_job, set())
+    monkeypatch.setattr('dragen_align_pa.ica_utils.list_ica_files', MagicMock(return_value=[]))
+
+    with pytest.raises(ValueError, match='no downloadable outputs'):
+        _run()
+
+    patched_job.sentinel.assert_not_called()

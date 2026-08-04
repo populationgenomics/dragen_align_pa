@@ -5,10 +5,11 @@ and ica_cli modules.
 """
 
 import base64
+import dataclasses
 import hashlib
 import json
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Final
 
 import cpg_utils
 import icasdk
@@ -24,8 +25,6 @@ from dragen_align_pa.paths import IcaPath
 from dragen_align_pa.utils import load_per_sg_state
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from google.cloud.storage.blob import Blob
     from google.cloud.storage.bucket import Bucket
     from icasdk.apis.tags import project_data_api
@@ -317,87 +316,116 @@ def _declared_content_length(response: requests.Response) -> int | None:
         return None
 
 
+SUCCESS_OBJECT_NAME: Final = '_SUCCESS'
+"""Sentinel written into an SG's output prefix once every file has transferred."""
+
+
 # GCS output prefixes are not scoped to an ICA run (`dragen_metrics/{sg}` carries no cohort or
-# pipeline id), so re-analysing an SG writes new outputs over the same prefix. Without a record
-# of which run the existing objects came from, skip-if-exists cannot tell "already fetched this
-# run" from "left over from the previous analysis", and would silently keep stale outputs. The
-# marker's own GCS creation time is the reference instant, so the comparison never depends on
-# the client clock. The marker deliberately lives OUTSIDE the prefix it describes: a stage
-# declares that prefix as its expected output, and an object inside it would make the folder
-# exist — and so look complete to cpg-flow — before a single file had been downloaded.
-def claim_download_for_run(gcs_bucket: 'Bucket', marker_key: str, ica_folder_path: str) -> 'datetime':
-    """Record which ICA run owns a download destination, and report when ownership began.
+# pipeline id), so re-analysing an SG writes new outputs over the same prefix. `ica_folder`
+# records which run the listed files came from, so a re-analysis starts from empty instead of
+# mistaking the previous analysis's outputs for its own. The state file lives OUTSIDE the prefix
+# it describes so it is never confused with downloaded data.
+@dataclasses.dataclass
+class DownloadState:
+    """Which files of one ICA run have already landed in an SG's GCS prefix.
 
-    Writes a fresh marker when the destination is unclaimed or was last written by a
-    different ICA run; keeps the existing marker when it already names `ica_folder_path`.
-
-    Args:
-        gcs_bucket: Bucket holding both the marker and the destination prefix.
-        marker_key: Object key for the marker, outside the prefix it describes.
-        ica_folder_path: The ICA folder being downloaded, which identifies the run.
-
-    Returns:
-        The marker's GCS creation time. Objects older than this were written by some
-        other run and must not be treated as already-downloaded.
+    Persisted after every successful transfer, so a job killed part-way resumes from where
+    it stopped rather than re-fetching a whole sequencing group.
     """
-    existing = gcs_bucket.get_blob(marker_key)  # pyright: ignore[reportUnknownVariableType]
-    if existing is not None:
-        recorded = json.loads(existing.download_as_bytes()).get('ica_folder')  # pyright: ignore[reportUnknownMemberType]
-        if recorded == ica_folder_path:
-            return _marker_created_time(existing, marker_key)  # pyright: ignore[reportUnknownArgumentType]
-        logger.warning(
-            f'Previous download of gs://{gcs_bucket.name}/{marker_key} came from a different '
-            f'ICA run ({recorded}); re-downloading everything for {ica_folder_path}.',
+
+    gcs_bucket: 'Bucket'
+    state_key: str
+    ica_folder: str
+    transferred: set[str]
+
+    @classmethod
+    def load(cls, gcs_bucket: 'Bucket', state_key: str, ica_folder: str) -> 'DownloadState':
+        """Read the state for `ica_folder`, or start an empty one.
+
+        Args:
+            gcs_bucket: Bucket holding the state file.
+            state_key: Object key of the state file.
+            ica_folder: The ICA folder being downloaded, which identifies the run.
+
+        Returns:
+            The recorded state when it belongs to `ica_folder`, else an empty state.
+        """
+        blob = gcs_bucket.get_blob(state_key)  # pyright: ignore[reportUnknownVariableType]
+        if blob is None:
+            return cls(gcs_bucket, state_key, ica_folder, set())
+
+        recorded: dict[str, Any] = json.loads(blob.download_as_bytes())  # pyright: ignore[reportUnknownMemberType]
+        if recorded.get('ica_folder') != ica_folder:
+            logger.warning(
+                f'gs://{gcs_bucket.name}/{state_key} records a download of {recorded.get("ica_folder")!r}, '
+                f"not {ica_folder!r}; treating every file already in GCS as another run's and "
+                f're-downloading.',
+            )
+            return cls(gcs_bucket, state_key, ica_folder, set())
+        transferred: list[str] = recorded.get('transferred', [])
+        return cls(gcs_bucket, state_key, ica_folder, set(transferred))
+
+    def mark_transferred(self, file_name: str) -> None:
+        """Record `file_name` as landed and persist immediately.
+
+        Args:
+            file_name: Object name relative to the output prefix.
+        """
+        self.transferred.add(file_name)
+        self.gcs_bucket.blob(self.state_key).upload_from_string(
+            json.dumps(
+                {'ica_folder': self.ica_folder, 'transferred': sorted(self.transferred)},
+                indent=2,
+            ),
+            content_type='application/json',
         )
 
-    marker = gcs_bucket.blob(marker_key)
-    marker.upload_from_string(
-        json.dumps({'ica_folder': ica_folder_path}, indent=2),
-        content_type='application/json',
-    )
-    return _marker_created_time(marker, marker_key)
+    def resumable(self, present_in_gcs: set[str]) -> set[str]:
+        """Return the files that may be skipped: recorded as transferred AND still present.
+
+        Args:
+            present_in_gcs: Object names currently under the output prefix.
+
+        Returns:
+            Names to skip. A recorded file that has since been removed from GCS is
+            re-downloaded rather than assumed.
+        """
+        vanished = self.transferred - present_in_gcs
+        if vanished:
+            logger.warning(
+                f'{len(vanished)} file(s) recorded as downloaded are no longer in GCS '
+                f'(e.g. {sorted(vanished)[:3]}); re-downloading them.',
+            )
+        return self.transferred & present_in_gcs
 
 
-def _marker_created_time(marker: 'Blob', marker_path: str) -> 'datetime':
-    """Return a provenance marker's GCS creation time, reloading it once if unset.
-
-    Args:
-        marker: The marker blob.
-        marker_path: Its object key, for the error message.
-
-    Raises:
-        ValueError: If GCS reports no creation time for the marker.
-
-    Returns:
-        The marker's creation time.
-    """
-    if marker.time_created is None:
-        marker.reload()
-    if marker.time_created is None:
-        raise ValueError(
-            f'GCS reports no creation time for provenance marker {marker_path}; cannot tell '
-            f'which objects belong to this run, so refusing to skip any as already-downloaded.',
-        )
-    return marker.time_created
-
-
-def list_gcs_names_written_since(gcs_bucket: 'Bucket', gcs_prefix: str, since: 'datetime') -> set[str]:
-    """List objects under a prefix created at or after `since`, named relative to it.
+def list_gcs_names(gcs_bucket: 'Bucket', gcs_prefix: str) -> set[str]:
+    """List objects under a prefix, named relative to it.
 
     Args:
         gcs_bucket: Bucket to list.
         gcs_prefix: Prefix to list under, without a trailing slash.
-        since: Cutoff; objects created before this are omitted, being another run's.
 
     Returns:
-        Object names relative to `gcs_prefix`, e.g. `{'a.csv', 'reports/b.html'}`.
+        Object names relative to `gcs_prefix`, e.g. `{'a.csv', 'reports/b.html'}`,
+        excluding the `_SUCCESS` sentinel.
     """
     prefix = f'{gcs_prefix}/'
     return {
-        blob.name.removeprefix(prefix)  # pyright: ignore[reportUnknownMemberType]
+        name
         for blob in gcs_bucket.list_blobs(prefix=prefix)  # pyright: ignore[reportUnknownVariableType]
-        if blob.time_created >= since
+        if (name := blob.name.removeprefix(prefix)) != SUCCESS_OBJECT_NAME  # pyright: ignore[reportUnknownMemberType]
     }
+
+
+def write_success_sentinel(gcs_bucket: 'Bucket', gcs_prefix: str) -> None:
+    """Mark an SG's output prefix complete.
+
+    Args:
+        gcs_bucket: Bucket holding the prefix.
+        gcs_prefix: The SG's output prefix, without a trailing slash.
+    """
+    gcs_bucket.blob(f'{gcs_prefix}/{SUCCESS_OBJECT_NAME}').upload_from_string('', content_type='text/plain')
 
 
 def stream_ica_file_to_gcs(

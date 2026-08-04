@@ -18,6 +18,7 @@ from dragen_align_pa.constants.ica_constants import (
     READS_TYPE,
 )
 from dragen_align_pa.file_types import FileTypeSpec
+from dragen_align_pa.ica_utils import SUCCESS_OBJECT_NAME
 from dragen_align_pa.jobs import (
     delete_data_in_ica,
     download_batch_artefacts,
@@ -517,11 +518,17 @@ class DownloadDataFromIca(SequencingGroupStage):
     batch download (not individual files) in Metamist.
     """
 
+    # The declared output is the `_SUCCESS` sentinel, not the folder holding the downloads.
+    # The folder exists as soon as the first of 100+ files lands, so gating on it made every
+    # part-way failure indistinguishable from a completed download — recovery meant forcing the
+    # stage for every sequencing group. The sentinel is written only after the last file, so
+    # cpg-flow re-runs exactly the groups that did not finish, and the job resumes from its
+    # per-SG state file instead of re-fetching what it already has.
     def expected_outputs(
         self,
         sequencing_group: SequencingGroup,
     ) -> cpg_utils.Path:
-        return get_output_path(filename=f'dragen_metrics/{sequencing_group.name}')
+        return get_output_path(filename=f'dragen_metrics/{sequencing_group.name}/{SUCCESS_OBJECT_NAME}')
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
         outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
