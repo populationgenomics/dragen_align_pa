@@ -46,7 +46,7 @@ def fetch_passfail_from_ica(
     legitimately absent (a catastrophically-failed batch that didn't produce one).
 
     Raises:
-        icasdk.ApiException / requests.RequestException / json.JSONDecodeError: On
+        icasdk.ApiException / http_utils.TRANSPORT_ERRORS / json.JSONDecodeError: On
             transient ICA, network, or non-JSON-body (200 from a proxy maintenance
             page) errors.
     """
@@ -83,7 +83,7 @@ def fetch_passfail_from_ica(
     except icasdk.ApiException as e:
         logger.warning(f'ICA API error minting download URL for passfail.json in {ica_folder_path}: {e}')
         raise
-    except requests.RequestException as e:
+    except http_utils.TRANSPORT_ERRORS as e:
         logger.warning(f'Network error fetching passfail.json from {ica_folder_path}: {e}')
         raise
 

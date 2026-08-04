@@ -7,9 +7,11 @@ retry policy.
 """
 
 import functools
+import ssl
 from typing import Final
 
 import requests
+import urllib3.exceptions
 from cpg_utils.config import config_retrieve
 from loguru import logger
 from requests.adapters import HTTPAdapter
@@ -46,6 +48,15 @@ _MAX_READ_RETRIES: Final = 1
 _BACKOFF_FACTOR: Final = 2.0
 
 _RETRYABLE_HTTP_STATUSES: Final = frozenset({429, 500, 502, 503, 504})
+
+# Whether a mid-body failure reaches us as a `requests` exception depends on the installed
+# `requests`: older versions let urllib3's own `SSLError` escape `iter_content` unwrapped, so a
+# `[SSL: DECRYPTION_FAILED_OR_BAD_RECORD_MAC]` part-way through a transfer bypassed every
+# `except requests.RequestException` in this package and killed the job. Catching all three
+# families makes the behaviour independent of which version resolves. `ssl.SSLError` covers a
+# raw error escaping without even urllib3 wrapping it.
+TRANSPORT_ERRORS: Final = (requests.RequestException, urllib3.exceptions.HTTPError, ssl.SSLError)
+"""Exceptions meaning the transfer failed at the network layer, whatever wrapped it."""
 
 # urllib3 honours Retry-After verbatim and its BACKOFF_MAX does not apply to it, so an
 # upstream answering `Retry-After: 86400` would park a worker for a day, once per retry.
@@ -125,7 +136,7 @@ def transfer_retrying(description: str) -> Retrying:
         description: What is being transferred, for the retry log line.
 
     Returns:
-        A `Retrying` that retries `requests.RequestException` with jittered
+        A `Retrying` that retries `TRANSPORT_ERRORS` with jittered
         exponential backoff, re-raising the last error once attempts are exhausted.
         Attempts come from `[ica.download] max_transfer_attempts` and the retry window
         from `[ica.download] max_transfer_seconds`, whichever is reached first.
@@ -137,7 +148,7 @@ def transfer_retrying(description: str) -> Retrying:
         config_retrieve(['ica', 'download', 'max_transfer_seconds'], default=_DEFAULT_MAX_TRANSFER_SECONDS),
     )
     return Retrying(
-        retry=retry_if_exception_type(requests.RequestException),
+        retry=retry_if_exception_type(TRANSPORT_ERRORS),
         stop=stop_after_attempt(max_attempts) | stop_after_delay(max_seconds),
         wait=wait_random_exponential(multiplier=1, min=2, max=60) + wait_fixed(2),
         before_sleep=functools.partial(_log_transfer_retry, description, max_attempts),

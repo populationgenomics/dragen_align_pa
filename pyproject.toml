@@ -25,7 +25,14 @@ dependencies=[
     'cpg-flow>=v1.0.1',
     'loguru',
     'pandas',
+    # # Direct dependencies of dragen_align_pa.http_utils, not just transitive ones: we build a
+    # # urllib3 Retry and mount it on a requests Session ourselves. Floors are the versions that
+    # # carry the relevant security fixes (requests CVE-2023-32681, urllib3 CVE-2023-45803).
+    # # Deliberately no upper bound: the cpg_hail_gcloud base image resolves urllib3 1.26, while a
+    # # bare `pip install .` on 3.11 resolves 2.x, and the code is written to work on both.
+    'requests>=2.31.0',
     'tenacity',
+    'urllib3>=1.26.18',
 ]
 
 [project.urls]

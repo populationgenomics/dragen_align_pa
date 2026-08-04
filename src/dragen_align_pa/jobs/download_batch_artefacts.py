@@ -11,14 +11,13 @@ from dataclasses import dataclass, field
 
 import cpg_utils.config
 import icasdk
-import requests
 from cpg_utils.config import config_retrieve
 from google.cloud import exceptions as gcs_exceptions
 from google.cloud import storage
 from icasdk.apis.tags import project_data_api
 from loguru import logger
 
-from dragen_align_pa import ica_api_utils, ica_utils
+from dragen_align_pa import http_utils, ica_api_utils, ica_utils
 from dragen_align_pa.batches import BatchesFile
 from dragen_align_pa.constants.ica_constants import BUCKET_NAME
 from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
@@ -74,7 +73,7 @@ def _stream_silently(
             expected_md5_hash=None,
             skip_existing=not force,
         )
-    except (icasdk.ApiException, requests.RequestException, gcs_exceptions.GoogleCloudError) as e:
+    except (icasdk.ApiException, *http_utils.TRANSPORT_ERRORS, gcs_exceptions.GoogleCloudError) as e:
         logger.warning(f'{context}: streaming {file_name} failed ({e}); skipping.')
         stats.stream_failures.append(
             {

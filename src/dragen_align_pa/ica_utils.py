@@ -434,7 +434,8 @@ def stream_ica_file_to_gcs(
 
     Raises:
         icasdk.ApiException: Minting the download URL failed.
-        requests.RequestException: Every transfer attempt failed.
+        requests.RequestException | urllib3.exceptions.HTTPError | ssl.SSLError: Every
+            transfer attempt failed.
         google.cloud.exceptions.GoogleCloudError: The upload to GCS failed.
         ValueError: The transferred bytes did not match `expected_md5_hash`.
 
@@ -534,8 +535,11 @@ def stream_ica_file_to_gcs(
             f'Failed to get download URL for {file_name} (ID: {file_id}): {e}',
         )
         raise
-    except requests.RequestException as e:
-        logger.error(f'Failed to stream/download {file_name} (ID: {file_id}): {e}')
+    except http_utils.TRANSPORT_ERRORS as e:
+        logger.error(
+            f'Failed to stream/download {file_name} (ID: {file_id}) after every attempt: {e}. '
+            f'Re-run the stage to resume; files already in GCS are skipped.',
+        )
         raise
     except gcs_exceptions.GoogleCloudError as e:
         logger.error(f'An error occurred uploading to GCS for {file_name}: {e}')

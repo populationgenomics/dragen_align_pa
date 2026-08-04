@@ -12,11 +12,13 @@ part-way-failed stage re-run without re-fetching everything.
 import base64
 import hashlib
 import json
+import ssl
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
 import requests
+import urllib3.exceptions
 
 from dragen_align_pa import ica_utils
 from icasdk.exceptions import ApiException
@@ -227,6 +229,37 @@ def _reset_mid_body() -> MagicMock:
     )
     resp.headers = {}
     return resp
+
+
+def _failing_mid_body(exc: BaseException) -> MagicMock:
+    """A response whose body raises `exc` part-way through."""
+    resp = MagicMock()
+    resp.__enter__.return_value = resp
+    resp.iter_content.side_effect = exc
+    resp.headers = {}
+    return resp
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        pytest.param(
+            urllib3.exceptions.SSLError('[SSL: DECRYPTION_FAILED_OR_BAD_RECORD_MAC] bad record mac'),
+            id='urllib3-sslerror',
+        ),
+        pytest.param(ssl.SSLError('[SSL: DECRYPTION_FAILED_OR_BAD_RECORD_MAC] bad record mac'), id='raw-sslerror'),
+        pytest.param(urllib3.exceptions.ProtocolError('Connection broken'), id='urllib3-protocolerror'),
+    ],
+)
+def test_transfer_restarts_on_a_non_requests_transport_error(monkeypatch, error):
+    """Whether a mid-body failure arrives wrapped as a `requests` exception depends on the
+    installed `requests`: older versions let urllib3's own SSLError escape `iter_content`, and
+    it then bypassed every `except requests.RequestException` and killed the job. Retrying must
+    not depend on which version resolves."""
+    result, _api, session = _stream_with_responses(monkeypatch, [_failing_mid_body(error), _streaming_response()])
+
+    assert result is True
+    assert session.get.call_count == 2
 
 
 def _stream_with_responses(
