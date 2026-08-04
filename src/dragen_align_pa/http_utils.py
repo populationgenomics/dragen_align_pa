@@ -63,15 +63,15 @@ _RETRYABLE_HTTP_STATUSES: Final = frozenset({429, 500, 502, 503, 504})
 TRANSPORT_ERRORS: Final = (requests.RequestException, urllib3.exceptions.HTTPError, ssl.SSLError)
 """Exceptions meaning the transfer failed at the network layer, whatever wrapped it."""
 
-# urllib3 caps Retry-After at 21600s of its own accord, so an upstream answering
-# `Retry-After: 86400` still parks a worker for six hours, once per retry.
+# urllib3 honours Retry-After verbatim below 2.6.3, and caps it at 21600s from 2.6.3 on. Either
+# way an upstream answering `Retry-After: 86400` parks a worker for hours, once per retry.
 _MAX_RETRY_AFTER_SECONDS: Final = 120
 
 
 # `backoff_jitter` is a constructor argument (urllib3 2.0+) and is used as one below. Its
-# sibling `retry_after_max` would delete this class too, but it only landed in 2.7.0, and a
-# floor that tight to save six lines is a worse trade than the override. Collapse this once
-# 2.7 is comfortably the norm.
+# sibling `retry_after_max` would delete this class too, but it only landed in 2.6.3 — below
+# that there is no native ceiling at all, so at our declared floor this class is the only cap
+# rather than a tightening of one. Collapse it once the floor can be raised to 2.6.3.
 class _CappedRetryAfter(Retry):
     """`Retry` that clamps a server-supplied `Retry-After` to `_MAX_RETRY_AFTER_SECONDS`."""
 
@@ -133,12 +133,7 @@ def _log_transfer_retry(description: str, max_attempts: int, retry_state: RetryC
     )
 
 
-# The adapter Retry above can only replay a request that failed before its response body
-# started arriving. A reset part-way through a body — the common failure on a multi-GB CRAM
-# over a long-haul link — surfaces from `iter_content` with the stream already partly
-# consumed and unrewindable, so recovering means restarting the whole transfer from the
-# caller. Backoff is fully jittered to desynchronise concurrent per-SG jobs retrying against
-# the same throttled endpoint, with a hard floor so a reset is never answered instantly.
+# `requests` transparently decodes a Content-Encoding'd body, so Content-Length — which
 # describes the *encoded* size — would not match the bytes we count. Only an identity-encoded
 # response carries a length we can compare against.
 def _declared_content_length(response: requests.Response) -> int | None:
@@ -186,6 +181,12 @@ def _should_restart_transfer(exc: BaseException) -> bool:
     return isinstance(exc, TRANSPORT_ERRORS)
 
 
+# The adapter Retry can only replay a request that failed before its response body started
+# arriving. A reset part-way through a body — the common failure on a multi-GB CRAM over a
+# long-haul link — surfaces from `iter_content` with the stream already partly consumed and
+# unrewindable, so recovering means restarting the whole transfer from the caller. Backoff is
+# fully jittered to desynchronise concurrent per-SG jobs retrying against the same throttled
+# endpoint, with a hard floor so a reset is never answered instantly.
 def transfer_retrying(description: str) -> Retrying:
     """Build the tenacity controller for restarting a whole file transfer.
 

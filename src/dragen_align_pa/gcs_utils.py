@@ -37,7 +37,9 @@ def files_already_downloaded(
 
     Writes the marker when the destination is unclaimed or was last written by a different ICA
     run, and reports nothing already downloaded in that case, so the previous analysis's outputs
-    are replaced rather than inherited. Also reads `[ica.download] force_redownload`.
+    are overwritten rather than inherited. Overwritten, not removed: a file the previous run
+    produced and this one does not stays behind, so the prefix can end up holding two analyses.
+    Also reads `[ica.download] force_redownload`.
 
     Args:
         gcs_bucket: Bucket holding both the marker and the destination prefix.
