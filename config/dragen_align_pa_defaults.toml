@@ -86,8 +86,8 @@ force_redownload = false
 # re-fetching the whole file; each attempt mints a fresh pre-signed URL.
 max_transfer_attempts = 4
 # Ceiling on the retry *window* for one file, in seconds. Checked between attempts only, so a
-# legitimately slow multi-GB transfer already running is never cut off — this stops a sick
-# endpoint turning a job into an unbounded hang, since nothing else caps job wall clock.
+# legitimately slow multi-GB transfer already running is never cut off. job_timeout_seconds
+# below covers what this cannot: a stall inside a single attempt.
 max_transfer_seconds = 7200
 # Wall-clock ceiling for a whole download job. The transfer deadline above is only checked
 # between attempts and the read timeout is per socket read, so a peer dribbling one chunk just

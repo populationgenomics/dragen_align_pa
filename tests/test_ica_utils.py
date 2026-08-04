@@ -547,3 +547,65 @@ def test_success_sentinel_is_written_inside_the_output_prefix():
 
     bucket.blob.assert_called_once_with(f'ica/output/{ica_utils.SUCCESS_OBJECT_NAME}')
     bucket.blob.return_value.upload_from_string.assert_called_once()
+
+
+# --- batch_create_download_urls: one API call for a whole folder's URLs ---
+
+
+def test_batch_create_download_urls_returns_id_to_url_map():
+    """The batch endpoint collapses N per-file mints into ONE call and returns
+    a {dataId: url} map keyed so callers match URLs to the IDs they hold."""
+    api = MagicMock()
+    response = MagicMock()
+    response.body = {
+        'items': [
+            {'dataId': 'fil.a', 'url': 'https://u/a'},
+            {'dataId': 'fil.b', 'url': 'https://u/b'},
+        ],
+    }
+    api.create_download_urls_for_data.return_value = response
+
+    result = ica_utils.batch_create_download_urls(
+        api_instance=api,
+        path_parameters={'projectId': 'p'},
+        file_ids=['fil.a', 'fil.b'],
+    )
+
+    assert result == {'fil.a': 'https://u/a', 'fil.b': 'https://u/b'}
+    assert api.create_download_urls_for_data.call_count == 1
+
+
+def test_batch_create_download_urls_empty_makes_no_call():
+    """An empty id list must short-circuit — never hit the API."""
+    api = MagicMock()
+
+    result = ica_utils.batch_create_download_urls(
+        api_instance=api,
+        path_parameters={'projectId': 'p'},
+        file_ids=[],
+    )
+
+    assert result == {}
+    api.create_download_urls_for_data.assert_not_called()
+
+
+def test_batch_create_download_urls_retries_on_429(monkeypatch):
+    """The batch mint is itself a rate-limited POST; it must go through the
+    shared ica_retry so a transient 429 is absorbed."""
+    monkeypatch.setattr('tenacity.nap.time.sleep', lambda _seconds: None)
+    api = MagicMock()
+    response = MagicMock()
+    response.body = {'items': [{'dataId': 'fil.a', 'url': 'https://u/a'}]}
+    api.create_download_urls_for_data.side_effect = [
+        ApiException(status=429, reason='Too Many Requests'),
+        response,
+    ]
+
+    result = ica_utils.batch_create_download_urls(
+        api_instance=api,
+        path_parameters={'projectId': 'p'},
+        file_ids=['fil.a'],
+    )
+
+    assert result == {'fil.a': 'https://u/a'}
+    assert api.create_download_urls_for_data.call_count == 2

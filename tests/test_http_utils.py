@@ -87,8 +87,7 @@ def test_jitter_and_cap_survive_being_copied_for_the_next_attempt():
 
 
 def test_transfer_retrying_is_bounded_by_both_attempts_and_elapsed_time():
-    """Attempts alone don't bound wall clock — one attempt can stall for many minutes — and
-    nothing else in the pipeline caps job runtime."""
+    """Attempts alone don't bound wall clock: one attempt can stall for many minutes."""
     stops = http_utils.transfer_retrying('sample.cram').stop.stops
 
     assert {type(stop).__name__ for stop in stops} == {'stop_after_attempt', 'stop_after_delay'}

@@ -126,9 +126,9 @@ def download_session() -> requests.Session:
 _DEFAULT_MAX_TRANSFER_ATTEMPTS: Final = 4
 
 # Bounds the retry *window*, not a single attempt: tenacity checks `stop` between attempts, so
-# a legitimately slow multi-GB transfer already in flight is never cut off. Without it the
-# per-file worst case is unbounded in practice — nothing else in the pipeline caps job wall
-# clock (no `job.timeout()` anywhere), so a sick endpoint makes jobs hang rather than fail.
+# a legitimately slow multi-GB transfer already in flight is never cut off. That is also its
+# limit — a peer dribbling one chunk just inside the read timeout never reaches a `stop` check,
+# which is what `utils.download_job_timeout_seconds` backstops.
 _DEFAULT_MAX_TRANSFER_SECONDS: Final = 7200
 
 
