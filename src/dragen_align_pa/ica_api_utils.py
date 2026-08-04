@@ -231,7 +231,12 @@ def _is_retryable_ica_error(exc: BaseException, retryable_statuses: frozenset[in
 def _log_ica_retry(retry_state: RetryCallState) -> None:
     """tenacity ``before_sleep`` hook: log every scheduled transient-error retry."""
     exc = retry_state.outcome.exception() if retry_state.outcome else None
-    status = getattr(exc, 'status', '?')
+    # SDK ApiExceptions carry `.status`; a rate-limited icav2 CLI call surfaces as a
+    # CalledProcessError, whose `.returncode` is the only numeric signal available.
+    status = getattr(exc, 'status', None)
+    if status is None:
+        returncode = getattr(exc, 'returncode', None)
+        status = '?' if returncode is None else f'exit code {returncode}'
     fn_name = getattr(retry_state.fn, '__name__', repr(retry_state.fn))
     sleep = retry_state.next_action.sleep if retry_state.next_action else 0.0
     logger.warning(
@@ -239,13 +244,15 @@ def _log_ica_retry(retry_state: RetryCallState) -> None:
     )
 
 
-def _ica_retrying(retryable_statuses: frozenset[int] = _RETRYABLE_ICA_STATUSES) -> Retrying:
+def ica_retrying(is_retryable: Callable[[BaseException], bool]) -> Retrying:
     """Build the shared tenacity controller for transient ICA errors.
 
     Args:
-        retryable_statuses: The HTTP statuses treated as transient. Defaults to
-            `_RETRYABLE_ICA_STATUSES` (429/503); create-data passes the wider
-            `_RETRYABLE_ICA_CREATE_STATUSES` (adds 409).
+        is_retryable: Predicate selecting which exceptions are transient. SDK callers
+            match `ApiException.status` against a status set (`_is_retryable_ica_error`);
+            the icav2 CLI callers match rate-limit markers in the captured subprocess
+            output (`ica_cli_utils._is_transient_cli_error`), since the CLI's only
+            failure signal is exit code 1 plus text.
     """
     # `max_retries` is read at call time (not import) so it can be tuned via config without a
     # rebuild, and to avoid an import-time config_retrieve. It counts retries *after* the
@@ -254,7 +261,7 @@ def _ica_retrying(retryable_statuses: frozenset[int] = _RETRYABLE_ICA_STATUSES) 
         config_retrieve(['ica', 'retry', 'max_retries'], default=_DEFAULT_ICA_MAX_RETRIES),
     )
     return Retrying(
-        retry=retry_if_exception(lambda exc: _is_retryable_ica_error(exc, retryable_statuses)),
+        retry=retry_if_exception(is_retryable),
         stop=stop_after_attempt(max_retries + 1),
         # Fully-randomised exponential backoff desynchronises concurrent retries against a
         # shared rate limit (non-negotiable at 16-wide fan-out, where lockstep backoff is a
@@ -272,13 +279,13 @@ def _ica_retrying(retryable_statuses: frozenset[int] = _RETRYABLE_ICA_STATUSES) 
 def ica_retry(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
     """Invoke a single ICA SDK call with transient-error retry.
 
-    Wraps `fn(*args, **kwargs)` in the shared jittered-backoff controller (`_ica_retrying`).
+    Wraps `fn(*args, **kwargs)` in the shared jittered-backoff controller (`ica_retrying`).
     Only `_RETRYABLE_ICA_STATUSES` (429 rate-limit, 503 backend-unavailable) are retried; every
     other error propagates on the first occurrence.
     """
     # Wrap only the SDK call itself, inside any existing try/except, so the caller's error
     # logging still fires on the final failure while `_log_ica_retry` reports each retry.
-    return _ica_retrying()(fn, *args, **kwargs)
+    return ica_retrying(lambda exc: _is_retryable_ica_error(exc, _RETRYABLE_ICA_STATUSES))(fn, *args, **kwargs)
 
 
 # Only safe when `fn` re-checks for the already-landed object inside the retry
@@ -289,7 +296,7 @@ def ica_retry_create(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
 
     Retries the wider `_RETRYABLE_ICA_CREATE_STATUSES` (429/503 plus 409).
     """
-    return _ica_retrying(_RETRYABLE_ICA_CREATE_STATUSES)(fn, *args, **kwargs)
+    return ica_retrying(lambda exc: _is_retryable_ica_error(exc, _RETRYABLE_ICA_CREATE_STATUSES))(fn, *args, **kwargs)
 
 
 def _call_without_retry(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:

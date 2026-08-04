@@ -6,8 +6,9 @@ authentication and running CLI commands via subprocess.
 
 import json
 import os
+import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from loguru import logger
 
@@ -16,6 +17,47 @@ from dragen_align_pa.constants.constants_registry import ica_project_id
 
 if TYPE_CHECKING:
     from subprocess import CompletedProcess
+
+# --- Transient-error retry ---
+
+# icav2 surfaces a transient ICA error only as exit code 1 with the HTTP reason phrase
+# and ICA error code in its output (e.g. the JWT fetch prints
+# "429 Too Many Requests : ICA_API_429 : Too many requests..."), so retryability is
+# matched on these markers — there is no structured status to inspect. The statuses
+# mirror the SDK path's `_RETRYABLE_ICA_STATUSES` (429 rate-limit, 503 backend
+# unavailable); anything else propagates on the first occurrence.
+_TRANSIENT_CLI_MARKERS: Final = (
+    'ICA_API_429',
+    '429 Too Many Requests',
+    'ICA_API_503',
+    '503 Service Unavailable',
+)
+
+
+def _is_transient_cli_error(exc: BaseException) -> bool:
+    """Tenacity predicate: True for an icav2 failure whose output shows a transient ICA error."""
+    if not isinstance(exc, subprocess.CalledProcessError):
+        return False
+    output = f'{exc.stdout or ""}\n{exc.stderr or ""}'
+    return any(marker in output for marker in _TRANSIENT_CLI_MARKERS)
+
+
+def _run_icav2_with_retry(cmd: list[str], step_name: str) -> 'CompletedProcess[Any]':
+    """Run an icav2 command, retrying transient ICA errors (429/503) with the shared backoff.
+
+    Args:
+        cmd: The full icav2 command line.
+        step_name: Human-readable step name for logging.
+    """
+
+    def run_icav2() -> 'CompletedProcess[Any]':
+        return utils.run_subprocess_with_log(cmd, step_name)
+
+    # `_log_ica_retry` names the retried callable in its warning line; the step name is
+    # far more useful there than the literal 'run_icav2'.
+    run_icav2.__name__ = step_name
+    return ica_api_utils.ica_retrying(_is_transient_cli_error)(run_icav2)
+
 
 # --- CLI Wrappers ---
 
@@ -38,7 +80,7 @@ def authenticate_ica_cli(role: str) -> None:
         role: The ICA role to enter (one of `constants_registry.REQUIRED_ICA_ROLES`).
     """
     _write_icav2_config()
-    utils.run_subprocess_with_log(
+    _run_icav2_with_retry(
         ['icav2', 'projects', 'enter', ica_project_id(role)],
         f'Enter ICA {role} project',
     )
@@ -49,7 +91,7 @@ def upload_local_file(local_file_path: str, ica_folder_path: str) -> None:
     Uploads a local file to ICA using the icav2 CLI.
     Assumes the CLI is already authenticated.
     """
-    utils.run_subprocess_with_log(
+    _run_icav2_with_retry(
         [
             'icav2',
             'projectdata',
@@ -80,7 +122,7 @@ def find_ica_file_path_by_name(parent_folder: str, file_name: str) -> str:
         '-o',
         'json',
     ]
-    result: CompletedProcess[Any] = utils.run_subprocess_with_log(command, f'Find ICA file {file_name}')
+    result: CompletedProcess[Any] = _run_icav2_with_retry(command, f'Find ICA file {file_name}')
     try:
         data = json.loads(result.stdout)
         if not data.get('items'):
