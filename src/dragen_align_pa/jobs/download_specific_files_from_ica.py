@@ -64,7 +64,7 @@ def _orchestrate_download(
     logger.info(f'Expected MD5 for {main_file_name} is {expected_hash}')
 
     # --- 3. Stream main file, verifying MD5 ---
-    ica_utils.stream_ica_file_to_gcs(
+    main_streamed = ica_utils.stream_ica_file_to_gcs(
         api_instance=api_instance,
         path_parameters=path_parameters,
         file_id=main_file_id,
@@ -76,6 +76,9 @@ def _orchestrate_download(
     )
 
     # --- 4. Stream index file (no verification) ---
+    # The index carries no ICA MD5, so on its own it would be kept whenever it exists. Tying it
+    # to the main file's outcome is what stops a re-analysis pairing run B's CRAM with run A's
+    # index: if the main file was re-fetched (its checksum disagreed), this must be too.
     ica_utils.stream_ica_file_to_gcs(
         api_instance=api_instance,
         path_parameters=path_parameters,
@@ -84,7 +87,7 @@ def _orchestrate_download(
         gcs_bucket=gcs_bucket,
         gcs_prefix=gcs_output_path_prefix,
         expected_md5_hash=None,
-        skip_existing=not force,
+        skip_existing=not force and not main_streamed,
     )
 
     # --- 5. Upload the MD5 file itself ---

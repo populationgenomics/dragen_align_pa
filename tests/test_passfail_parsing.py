@@ -28,6 +28,7 @@ def _api_instance_with_download_url(url: str = 'https://example.com/passfail.jso
     api.create_download_url_for_data.return_value.body = {'url': url}
     return api
 
+
 def _patched_session(**get_kwargs):
     """Patch the shared download session, configuring its `.get` from `get_kwargs`.
 

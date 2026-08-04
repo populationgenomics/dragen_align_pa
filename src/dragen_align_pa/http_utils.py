@@ -19,7 +19,7 @@ from requests.adapters import HTTPAdapter
 from tenacity import (
     RetryCallState,
     Retrying,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     stop_after_delay,
     wait_fixed,
@@ -148,6 +148,22 @@ def _log_transfer_retry(description: str, max_attempts: int, retry_state: RetryC
 # consumed and unrewindable, so recovering means restarting the whole transfer from the
 # caller. Backoff is fully jittered to desynchronise concurrent per-SG jobs retrying against
 # the same throttled endpoint, with a hard floor so a reset is never answered instantly.
+_HTTP_FORBIDDEN: Final = 403
+
+
+# A status error is not a dropped body. Restarting the whole transfer for one re-mints a
+# rate-limited URL and re-runs an adapter that already spent its own status budget: a persistent
+# 429 would cost 20 requests and 4 mints per file, against the endpoint being backed off from.
+# 403 is the exception worth restarting for, because it is how an expired pre-signed URL reads
+# and a fresh mint genuinely fixes it. `ChunkedEncodingError` (the truncation signal) is not an
+# `HTTPError`, so it still restarts.
+def _should_restart_transfer(exc: BaseException) -> bool:
+    """tenacity predicate: True for a failure a whole-transfer restart can actually fix."""
+    if isinstance(exc, requests.HTTPError):
+        return exc.response is not None and exc.response.status_code == _HTTP_FORBIDDEN
+    return isinstance(exc, TRANSPORT_ERRORS)
+
+
 def transfer_retrying(description: str) -> Retrying:
     """Build the tenacity controller for restarting a whole file transfer.
 
@@ -155,7 +171,7 @@ def transfer_retrying(description: str) -> Retrying:
         description: What is being transferred, for the retry log line.
 
     Returns:
-        A `Retrying` that retries `TRANSPORT_ERRORS` with jittered
+        A `Retrying` that retries `_should_restart_transfer` failures with jittered
         exponential backoff, re-raising the last error once attempts are exhausted.
         Attempts come from `[ica.download] max_transfer_attempts` and the retry window
         from `[ica.download] max_transfer_seconds`, whichever is reached first.
@@ -167,7 +183,7 @@ def transfer_retrying(description: str) -> Retrying:
         config_retrieve(['ica', 'download', 'max_transfer_seconds'], default=_DEFAULT_MAX_TRANSFER_SECONDS),
     )
     return Retrying(
-        retry=retry_if_exception_type(TRANSPORT_ERRORS),
+        retry=retry_if_exception(_should_restart_transfer),
         stop=stop_after_attempt(max_attempts) | stop_after_delay(max_seconds),
         wait=wait_random_exponential(multiplier=1, min=2, max=60) + wait_fixed(2),
         before_sleep=functools.partial(_log_transfer_retry, description, max_attempts),
