@@ -45,6 +45,8 @@ def patched_job(monkeypatch):
     monkeypatch.setattr('dragen_align_pa.ica_utils.batch_create_download_urls', mocks.mint)
     monkeypatch.setattr('dragen_align_pa.ica_utils.stream_ica_file_to_gcs', mocks.stream)
     monkeypatch.setattr('dragen_align_pa.gcs_utils.files_already_downloaded', mocks.already_downloaded)
+    monkeypatch.setattr('dragen_align_pa.gcs_utils.is_marked_complete', mocks.marked_complete)
+    mocks.marked_complete.return_value = False
     monkeypatch.setattr('dragen_align_pa.gcs_utils.write_success_sentinel', mocks.sentinel)
     mocks.mint.return_value = {'fil.a': 'https://u/a', 'fil.b': 'https://u/b'}
     return mocks
@@ -191,3 +193,26 @@ def test_an_empty_ica_folder_is_an_error_not_a_completed_download(patched_job, m
         _run()
 
     patched_job.sentinel.assert_not_called()
+
+
+def test_a_forced_rerun_rebuilds_a_group_that_was_already_complete(patched_job):
+    """cpg-flow only runs this stage when the sentinel is missing, so a sentinel already there
+    means the operator forced it. Without this the force is a no-op: every file is skipped and
+    only the sentinel is rewritten."""
+    patched_job.marked_complete.return_value = True
+    _already_downloaded(patched_job, {'SYN00001.qc.csv', 'SYN00001.metrics.csv'})
+
+    _run()
+
+    assert patched_job.already_downloaded.call_args.kwargs['rebuild'] is True
+
+
+def test_a_normal_resume_is_not_treated_as_a_rebuild(patched_job):
+    """No sentinel means the previous run did not finish, which is the case resuming exists
+    for: it must keep what already landed."""
+    _already_downloaded(patched_job, {'SYN00001.qc.csv'})
+
+    _run()
+
+    assert patched_job.already_downloaded.call_args.kwargs['rebuild'] is False
+    assert patched_job.stream.call_count == 1

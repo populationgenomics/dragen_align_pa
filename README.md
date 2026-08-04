@@ -150,12 +150,13 @@ Two situations need more than a re-launch:
 
   * **The sequencing group was re-analysed in ICA** (a new `pipeline_id`). The output paths carry
     no pipeline id, so cpg-flow sees the old `_SUCCESS` and skips the stage. Force that stage, or
-    delete its `_SUCCESS` object. The download itself then notices the state file names a
-    different ICA run and re-fetches everything for that group.
-  * **You want to rebuild outputs from ICA regardless of what is already there.** Set
-    `ica.download.force_redownload = true`. Note this applies cohort-wide, across all download
-    stages, so a whole cohort re-fetches — reach for it only when the data itself is suspect,
-    never as a way to retry a failure.
+    delete its `_SUCCESS` object. Forcing is enough on its own: a stage that finds its own
+    `_SUCCESS` already in place knows it was re-run deliberately and re-fetches every file rather
+    than resuming, so you do not need `force_redownload` as well.
+  * **You want to rebuild everything for a whole cohort.** Set
+    `ica.download.force_redownload = true`. This applies cohort-wide across all download stages,
+    so prefer forcing the one stage you care about; reach for this only when the data itself is
+    suspect, never as a way to retry a failure.
 
 Tuning knobs, all under `[ica.download]` and all with working defaults:
 

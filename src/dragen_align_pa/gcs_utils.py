@@ -30,25 +30,27 @@ def files_already_downloaded(
     marker_key: str,
     gcs_prefix: str,
     ica_folder_path: str,
+    *,
+    rebuild: bool = False,
 ) -> set[str]:
     """Claim a destination for one ICA run and list what it already holds for that run.
 
     Writes the marker when the destination is unclaimed or was last written by a different ICA
     run, and reports nothing already downloaded in that case, so the previous analysis's outputs
-    are replaced rather than inherited. Reads `[ica.download] force_redownload`, which forces an
-    empty result.
+    are replaced rather than inherited. Also reads `[ica.download] force_redownload`.
 
     Args:
         gcs_bucket: Bucket holding both the marker and the destination prefix.
         marker_key: Object key for the marker, outside the prefix it describes.
         gcs_prefix: The destination prefix, without a trailing slash.
         ica_folder_path: The ICA folder being downloaded, which identifies the run.
+        rebuild: Treat nothing as already downloaded, whatever the marker says.
 
     Returns:
         Object names relative to `gcs_prefix` that this run may skip.
     """
-    if config_retrieve(['ica', 'download', 'force_redownload'], default=False):
-        logger.info(f'force_redownload is set; re-downloading everything under {gcs_prefix}.')
+    if rebuild or config_retrieve(['ica', 'download', 'force_redownload'], default=False):
+        logger.info(f'Re-downloading everything under {gcs_prefix}.')
         _claim_for_run(gcs_bucket, marker_key, ica_folder_path)
         return set()
 
@@ -91,6 +93,19 @@ def list_gcs_names(gcs_bucket: 'Bucket', gcs_prefix: str) -> set[str]:
         for blob in gcs_bucket.list_blobs(prefix=prefix)  # pyright: ignore[reportUnknownVariableType]
         if (name := blob.name.removeprefix(prefix)) != SUCCESS_OBJECT_NAME  # pyright: ignore[reportUnknownMemberType]
     }
+
+
+def is_marked_complete(gcs_bucket: 'Bucket', gcs_prefix: str) -> bool:
+    """Report whether an output prefix already carries the completion sentinel.
+
+    Args:
+        gcs_bucket: Bucket holding the prefix.
+        gcs_prefix: The output prefix, without a trailing slash.
+
+    Returns:
+        True if a previous run finished this prefix.
+    """
+    return gcs_bucket.blob(f'{gcs_prefix}/{SUCCESS_OBJECT_NAME}').exists()
 
 
 def write_success_sentinel(gcs_bucket: 'Bucket', gcs_prefix: str) -> None:

@@ -44,6 +44,15 @@ def run(
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
+    # cpg-flow only runs this stage when the sentinel is missing, so finding one here means the
+    # run was forced (or `check_expected_outputs` is off). Forcing is how an operator says
+    # "rebuild this" — and it is the documented recovery when a group has been re-analysed — so
+    # honour it by re-fetching everything rather than resuming into outputs they have just said
+    # not to trust. Without this a forced re-run skips every file and only rewrites the sentinel.
+    rebuild = gcs_utils.is_marked_complete(gcs_bucket, gcs_output_path_prefix)
+    if rebuild:
+        logger.info(f'{sg_name}: already marked complete but re-run anyway; rebuilding it from ICA in full.')
+
     # Resolved BEFORE any URL is minted, so a re-run after a part-way failure mints URLs only for
     # what is missing rather than re-minting all 100+. The marker sits outside the prefix it
     # guards so it cannot make the stage's declared output folder exist prematurely.
@@ -53,6 +62,7 @@ def run(
         marker_key,
         gcs_output_path_prefix,
         ica_folder_path,
+        rebuild=rebuild,
     )
 
     with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):

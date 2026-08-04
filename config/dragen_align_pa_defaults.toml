@@ -79,7 +79,8 @@ url_batch_size = 50
 # re-run after a part-way failure resumes instead of re-fetching everything: a finalized GCS
 # object means a prior run wrote that file end to end, and where ICA supplies an MD5 (CRAM /
 # gVCF) the stored object's checksum is compared rather than trusted. Set true to rebuild
-# outputs from ICA regardless of what is already there.
+# outputs from ICA regardless of what is already there. Forcing a single download stage already
+# rebuilds that stage, so reach for this only to rebuild a whole cohort.
 force_redownload = false
 # How many times to attempt one file transfer before giving up (1 = no retry). A reset
 # part-way through a response body can't be replayed at the HTTP layer, so recovery means

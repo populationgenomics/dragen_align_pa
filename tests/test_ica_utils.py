@@ -530,6 +530,31 @@ def test_listing_returns_names_relative_to_prefix_excluding_the_sentinel():
     bucket.list_blobs.assert_called_once_with(prefix='ica/output/')
 
 
+def test_rebuild_reports_nothing_already_downloaded():
+    """A forced re-run must re-fetch even when the marker names this very run."""
+    bucket = _marker_bucket('/ica/run-a/')
+    bucket.list_blobs = _listing('a.csv')
+
+    result = gcs_utils.files_already_downloaded(
+        bucket,
+        'state/sg.json',
+        'ica/output',
+        '/ica/run-a/',
+        rebuild=True,
+    )
+
+    assert result == set()
+
+
+def test_a_prefix_is_marked_complete_by_its_sentinel():
+    """The sentinel is what tells a later run that this group finished."""
+    bucket = MagicMock()
+    bucket.blob.return_value.exists.return_value = True
+
+    assert gcs_utils.is_marked_complete(bucket, 'ica/output') is True
+    bucket.blob.assert_called_once_with(f'ica/output/{gcs_utils.SUCCESS_OBJECT_NAME}')
+
+
 def test_success_sentinel_is_written_inside_the_output_prefix():
     """cpg-flow gates the stage on this object, so it must land where `expected_outputs`
     declares it."""
