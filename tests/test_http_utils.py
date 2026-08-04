@@ -60,14 +60,6 @@ def test_backoff_is_jittered():
     """~500 concurrent per-SG jobs taking a 429 from one endpoint must not retry in lockstep and
     re-create the spike they are backing off from."""
     retry = http_utils.download_session().get_adapter('https://example.com').max_retries
-
-    assert retry.backoff_jitter > 0
-
-
-def test_jitter_actually_spreads_consecutive_backoffs():
-    """Guards the value, not just the flag: `backoff_jitter=0` would pass the check above by
-    being set at all, while still returning an identical wait to every worker."""
-    retry = http_utils.download_session().get_adapter('https://example.com').max_retries
     exhausted = retry.increment(method='GET', error=ConnectionError('boom')).increment(
         method='GET',
         error=ConnectionError('boom'),
@@ -76,6 +68,22 @@ def test_jitter_actually_spreads_consecutive_backoffs():
     waits = {exhausted.get_backoff_time() for _ in range(50)}
 
     assert len(waits) > 1
+    assert min(waits) >= 4.0  # the un-jittered backoff for this attempt; jitter only adds
+
+
+def test_the_first_retry_is_not_delayed_by_jitter():
+    """urllib3 answers the first retry immediately, which is right for a one-off reset; jitter
+    must not turn that into a wait."""
+    retry = http_utils.download_session().get_adapter('https://example.com').max_retries
+
+    assert retry.increment(method='GET', error=ConnectionError('boom')).get_backoff_time() == 0
+
+
+def test_jitter_and_cap_survive_being_copied_for_the_next_attempt():
+    """urllib3 rebuilds the Retry between attempts; a plain `Retry` copy would drop both."""
+    retry = http_utils.download_session().get_adapter('https://example.com').max_retries
+
+    assert isinstance(retry.new(), http_utils._JitteredCappedRetry)
 
 
 def test_transfer_retrying_is_bounded_by_both_attempts_and_elapsed_time():

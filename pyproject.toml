@@ -28,10 +28,11 @@ dependencies=[
     # # Direct dependencies of dragen_align_pa.http_utils, not just transitive ones: we build a
     # # urllib3 Retry and mount it on a requests Session ourselves. Floors carry the relevant
     # # security fixes (requests CVE-2023-32681, urllib3 CVE-2023-45803).
-    # # urllib3 2.x specifically: `backoff_jitter` and `retry_after_max` are 2.x-only, and without
-    # # them concurrent per-SG jobs back off in lockstep and a hostile Retry-After parks a worker
-    # # for hours. The base image ships 1.26, so `pip install .` upgrades it; nothing in the tree
-    # # caps urllib3 below 2 (botocore allows !=2.2.0,<3; hail declares no constraint).
+    # # urllib3 2.x: 1.26 is EOL for new fixes and lacks jitter entirely. Nothing on PyPI in this
+    # # tree caps it (botocore allows !=2.2.0,<3; hail declares nothing); the one blocker was
+    # # `third_party/popgen_cli-2.1.0` pinning requests==2.27.1, which the Dockerfile now installs
+    # # before this package so our floor wins. pip only *warns* when that ordering regresses, so
+    # # `http_utils` still works on 1.x rather than trusting this floor to hold.
     'requests>=2.31.0',
     'tenacity',
     'urllib3>=2.0.7',
