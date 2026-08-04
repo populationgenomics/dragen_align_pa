@@ -45,9 +45,8 @@ def run(
     gcs_bucket = storage_client.bucket(BUCKET_NAME)
 
     # Resolved BEFORE any URL is minted, so a re-run after a part-way failure mints URLs only for
-    # what is missing rather than re-minting (and re-downloading) all 100+ files. The marker is
-    # keyed per-SG like the prefix it guards, and sits outside that prefix so it can't make the
-    # stage's declared output folder exist before anything is downloaded.
+    # what is missing rather than re-minting all 100+. The marker sits outside the prefix it
+    # guards so it cannot make the stage's declared output folder exist prematurely.
     marker_key = paths.gcs_relative_key(utils.get_output_path(filename=f'download_state/{sg_name}.json'))
     already_downloaded = gcs_utils.files_already_downloaded(
         gcs_bucket,

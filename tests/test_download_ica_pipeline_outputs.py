@@ -1,11 +1,8 @@
 """Tests for the bulk per-SG output download.
 
-The stage used to declare the parent folder as its expected output, which exists as soon as
-the first of 100+ files lands — so cpg-flow could not tell a part-way download from a complete
-one, and recovering from a mid-run connection failure meant forcing the stage for every
-sequencing group. These tests pin the two things that replaced that: a `_SUCCESS` sentinel
-written only after the last file, and a per-SG state file recording each transfer as it
-happens, so a re-run neither re-mints (rate-limited) URLs nor re-downloads bytes it has.
+Pins the two things that let a failed run be re-run cheaply: a `_SUCCESS` sentinel written only
+after the last file, and a per-run skip set resolved before any pre-signed URL is minted. See
+`stages.DownloadDataFromIca.expected_outputs` for why the folder could not serve as the gate.
 """
 
 from unittest.mock import MagicMock
@@ -133,8 +130,7 @@ def test_neither_the_outputs_nor_the_provenance_marker_are_namespaced_by_cohort(
 
 
 def test_the_skip_set_is_resolved_for_this_ica_run(patched_job):
-    """Provenance gates the skip: the destination is claimed for the ICA folder being
-    downloaded, so a previous analysis's outputs are never mistaken for ours."""
+    """The destination is claimed for the ICA folder being downloaded, not just for the SG."""
     _already_downloaded(patched_job, set())
 
     _run()

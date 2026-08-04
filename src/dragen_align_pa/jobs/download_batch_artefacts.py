@@ -203,10 +203,8 @@ def run(
             batch_name = f'{cohort_name}_batch{batch_index:04d}'
             gcs_prefix = f'{base_prefix}/{batch_name}'
 
-            # Same gate as the per-SG downloads: `dragen_batch_metrics/{cohort}_batch{NNNN}/`
-            # carries no pipeline_id, so re-analysing a cohort on the same DRAGEN version lands
-            # on the identical prefix. Without the ICA run recorded, skip-if-exists would keep
-            # every passfail.json / summary.json / report from the *previous* analysis.
+            # Same gate as the per-SG downloads; this prefix is keyed by cohort and batch but
+            # not by run, so it needs one just as much.
             already_downloaded = gcs_utils.files_already_downloaded(
                 gcs_bucket,
                 f'{base_prefix}/download_state/{batch_name}.json',

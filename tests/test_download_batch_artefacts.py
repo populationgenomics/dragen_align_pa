@@ -400,10 +400,8 @@ def test_run_writes_marker_for_no_op_cohort(patched_environment, tmp_path, monke
 
 
 def test_batch_artefacts_are_skipped_only_when_recorded_for_this_ica_run(patched_environment, tmp_path, monkeypatch):  # noqa: ARG001
-    """`dragen_batch_metrics/{cohort}_batch{NNNN}/` carries no pipeline_id, so re-analysing a
-    cohort on the same DRAGEN version lands on the identical prefix. Files are skipped only
-    when the batch's state file records them for the ICA run being downloaded — otherwise the
-    previous analysis's passfail.json / summary.json / reports would be kept."""
+    """Files are skipped only when recorded for the ICA run being downloaded, so a re-analysed
+    cohort does not keep the previous run's artefacts."""
     batches_path = tmp_path / 'COH0001_batches.json'
     _write_batches_file(batches_path, _batch_entry(batch_index=0))
 

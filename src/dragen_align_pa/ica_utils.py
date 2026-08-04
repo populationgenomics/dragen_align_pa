@@ -327,9 +327,8 @@ def stream_ica_file_to_gcs(
         )
         return url_response.body['url']  # pyright: ignore[reportUnknownVariableType]
 
-    # Restarting writes the object from the beginning rather than resuming: an interrupted
-    # BlobWriter terminates its resumable session, so there is no partial upload to resume
-    # and no half-written object left behind for the next attempt to append to.
+    # Each attempt writes the object from the beginning; see `gcs_utils` for why an interrupted
+    # BlobWriter leaves nothing behind to resume from or append to.
     def _transfer(url: str) -> str:
         md5_hasher = hashlib.md5()  # noqa: S324
         with http_utils.download_session().get(

@@ -118,10 +118,8 @@ def _gcs_md5_hex(blob: 'Blob') -> str | None:
     return base64.b64decode(blob.md5_hash).hex()
 
 
-# A finalized GCS object means a prior run wrote that file end to end: BlobWriter.__exit__
-# calls terminate() on error, so an interrupted stream abandons its resumable session and
-# never finalizes. Where ICA also gives us a hash we don't have to lean on that argument —
-# GCS records each object's MD5, so the existing copy is checked rather than trusted.
+# Where ICA also gives us a hash we don't have to lean on the finalized-means-complete argument
+# above — GCS records each object's MD5, so the existing copy is checked rather than trusted.
 def existing_gcs_object_is_complete(
     gcs_bucket: 'Bucket',
     gcs_blob_path: str,

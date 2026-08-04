@@ -25,18 +25,10 @@ dependencies=[
     'cpg-flow>=v1.0.1',
     'loguru',
     'pandas',
-    # # Direct dependencies of dragen_align_pa.http_utils, not just transitive ones: we build a
-    # # urllib3 Retry and mount it on a requests Session ourselves. Floors carry the relevant
-    # # security fixes (requests CVE-2023-32681, urllib3 CVE-2023-45803).
-    # # urllib3 2.x: 1.26 is EOL for new fixes and lacks jitter entirely. Nothing on PyPI in this
-    # # tree caps it (botocore allows !=2.2.0,<3; hail declares nothing); the one blocker was
-    # # `third_party/popgen_cli-2.1.0` pinning requests==2.27.1, which the Dockerfile now installs
-    # # before this package so our floor wins. pip only *warns* when that ordering regresses, so
-    # # `http_utils` still works on 1.x rather than trusting this floor to hold.
-    # # The build also warns that ica-sdk-python pins urllib3~=1.26.7. That is likewise a
-    # # generated over-pin: every urllib3 API the SDK touches (getheader, geturl, read,
-    # # release_conn, supports_chunked_reads, HTTPHeaderDict, RequestField, PoolManager kwargs)
-    # # exists and behaves the same on 2.x, and its REST client constructs cleanly there.
+    # # Direct dependencies of http_utils, not just transitive ones: we build a urllib3 Retry
+    # # and mount it on a requests Session ourselves. Floors carry the relevant security fixes
+    # # (requests CVE-2023-32681, urllib3 CVE-2023-45803). The Dockerfile explains why install
+    # # ORDER decides whether these floors survive; http_utils works on urllib3 1.x either way.
     'requests>=2.31.0',
     'tenacity',
     'urllib3>=2.0.7',
