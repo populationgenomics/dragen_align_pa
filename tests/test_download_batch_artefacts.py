@@ -18,6 +18,7 @@ from google.cloud import exceptions as gcs_exceptions
 
 from dragen_align_pa.jobs import download_batch_artefacts
 from dragen_align_pa.jobs.download_batch_artefacts import (
+    _BatchDownload,
     _stream_named_file,
     _stream_silently,
     _StreamStats,
@@ -50,6 +51,11 @@ def test_stream_stats_default_is_zero():
 # ---------------------------------------------------------------------------
 
 
+def _batch_download(already_downloaded=frozenset()):
+    """A _BatchDownload whose state records `already_downloaded` as landed."""
+    return _BatchDownload(state=MagicMock(), already_downloaded=set(already_downloaded))
+
+
 def _silent_call(stats, raise_exc=None):
     """Invoke _stream_silently with a stream that may raise."""
     # A mocked stream returns a truthy MagicMock, i.e. "streamed"; the skip path is
@@ -68,7 +74,7 @@ def _silent_call(stats, raise_exc=None):
             gcs_prefix='prefix',
             context='ctx',
             stats=stats,
-            force=False,
+            batch=_batch_download(),
         )
     return stream
 
@@ -135,7 +141,7 @@ def _named_call(stats, *, lookup_exc=None, stream_exc=None, file_id='fid'):
             gcs_bucket=gcs_bucket,
             gcs_prefix='prefix',
             stats=stats,
-            force=False,
+            batch=_batch_download(),
         )
 
 
@@ -235,6 +241,9 @@ def patched_environment(tmp_path: Path, monkeypatch):
 
     fake_storage = MagicMock()
     fake_bucket = MagicMock()
+    # No state object yet: `DownloadState.load` starts empty rather than trying to parse a
+    # MagicMock as JSON, so these tests exercise a first run of each batch.
+    fake_bucket.get_blob.return_value = None
     fake_storage.bucket.return_value = fake_bucket
     monkeypatch.setattr(
         'dragen_align_pa.jobs.download_batch_artefacts.storage.Client',
@@ -428,3 +437,62 @@ def test_run_writes_marker_for_no_op_cohort(patched_environment, tmp_path, monke
         'lookup_failures': [],
         'stream_failures': [],
     }
+
+
+def test_batch_artefacts_are_skipped_only_when_recorded_for_this_ica_run(patched_environment, tmp_path, monkeypatch):  # noqa: ARG001
+    """`dragen_batch_metrics/{cohort}_batch{NNNN}/` carries no pipeline_id, so re-analysing a
+    cohort on the same DRAGEN version lands on the identical prefix. Files are skipped only
+    when the batch's state file records them for the ICA run being downloaded — otherwise the
+    previous analysis's passfail.json / summary.json / reports would be kept."""
+    batches_path = tmp_path / 'COH0001_batches.json'
+    _write_batches_file(batches_path, _batch_entry(batch_index=0))
+
+    monkeypatch.setattr('dragen_align_pa.ica_api_utils.find_file_id_by_name', MagicMock(return_value='fid'))
+    monkeypatch.setattr('dragen_align_pa.ica_utils.list_ica_files', MagicMock(return_value=[]))
+    stream = MagicMock(return_value=True)
+    monkeypatch.setattr('dragen_align_pa.ica_utils.stream_ica_file_to_gcs', stream)
+    # Both artefacts are sitting in GCS, but from a different ICA run.
+    monkeypatch.setattr(
+        'dragen_align_pa.ica_utils.list_gcs_names',
+        MagicMock(return_value={'passfail.json', 'summary.json'}),
+    )
+    monkeypatch.setattr(
+        'dragen_align_pa.ica_utils.DownloadState.load',
+        MagicMock(return_value=MagicMock(resumable=MagicMock(return_value=set()))),
+    )
+
+    download_batch_artefacts.run(
+        batches_file_path=cpg_utils.to_path(batches_path),
+        gcs_output_root=cpg_utils.to_path('gs://cpg-test-dataset-test/artefacts'),
+        marker_path=cpg_utils.to_path(tmp_path / 'marker.json'),
+        cohort_name='COH0001',
+    )
+
+    assert stream.call_count == 2
+    assert all(call.kwargs['skip_existing'] is False for call in stream.call_args_list)
+
+
+def test_batch_artefacts_recorded_for_this_run_are_skipped(patched_environment, tmp_path, monkeypatch):  # noqa: ARG001
+    """The resume half: what this run already downloaded is not re-fetched."""
+    batches_path = tmp_path / 'COH0001_batches.json'
+    _write_batches_file(batches_path, _batch_entry(batch_index=0))
+
+    monkeypatch.setattr('dragen_align_pa.ica_api_utils.find_file_id_by_name', MagicMock(return_value='fid'))
+    monkeypatch.setattr('dragen_align_pa.ica_utils.list_ica_files', MagicMock(return_value=[]))
+    stream = MagicMock(return_value=True)
+    monkeypatch.setattr('dragen_align_pa.ica_utils.stream_ica_file_to_gcs', stream)
+    monkeypatch.setattr('dragen_align_pa.ica_utils.list_gcs_names', MagicMock(return_value={'passfail.json'}))
+    monkeypatch.setattr(
+        'dragen_align_pa.ica_utils.DownloadState.load',
+        MagicMock(return_value=MagicMock(resumable=MagicMock(return_value={'passfail.json'}))),
+    )
+
+    download_batch_artefacts.run(
+        batches_file_path=cpg_utils.to_path(batches_path),
+        gcs_output_root=cpg_utils.to_path('gs://cpg-test-dataset-test/artefacts'),
+        marker_path=cpg_utils.to_path(tmp_path / 'marker.json'),
+        cohort_name='COH0001',
+    )
+
+    streamed = [call.kwargs['file_name'] for call in stream.call_args_list]
+    assert streamed == ['summary.json']

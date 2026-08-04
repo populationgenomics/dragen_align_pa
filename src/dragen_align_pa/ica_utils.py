@@ -331,6 +331,11 @@ class DownloadState:
 
     Persisted after every successful transfer, so a job killed part-way resumes from where
     it stopped rather than re-fetching a whole sequencing group.
+
+    This solves the *skip* half of cross-run contamination, not all of it: when the recorded
+    run differs, every file is re-downloaded, but nothing is deleted. A file the previous
+    analysis produced and this one does not stays behind, so the prefix can end up holding
+    outputs from two analyses.
     """
 
     gcs_bucket: 'Bucket'

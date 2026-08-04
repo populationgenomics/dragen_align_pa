@@ -17,7 +17,7 @@ from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
 from dragen_align_pa.file_types import FileTypeSpec
 from dragen_align_pa.ica_utils import get_ica_sample_folder
 from dragen_align_pa.paths import gcs_bucket_and_key
-from dragen_align_pa.utils import initialise_python_job
+from dragen_align_pa.utils import download_job_timeout_seconds, initialise_python_job
 
 if TYPE_CHECKING:
     from hailtop.batch.job import PythonJob
@@ -184,6 +184,7 @@ def make_download_job(
     job.storage('8Gi')
     job.memory('8Gi')
     job.spot(is_spot=False)
+    job.timeout(download_job_timeout_seconds())
     job.call(
         resolve_and_run,
         sequencing_group=sequencing_group,

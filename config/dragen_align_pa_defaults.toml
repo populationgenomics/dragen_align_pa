@@ -89,6 +89,11 @@ max_transfer_attempts = 4
 # legitimately slow multi-GB transfer already running is never cut off — this stops a sick
 # endpoint turning a job into an unbounded hang, since nothing else caps job wall clock.
 max_transfer_seconds = 7200
+# Wall-clock ceiling for a whole download job. The transfer deadline above is only checked
+# between attempts and the read timeout is per socket read, so a peer dribbling one chunk just
+# inside the read budget keeps a single attempt alive forever; this turns that into a failure.
+# Generous by design — 6h — it bounds a hang, it does not bound a slow multi-GB transfer.
+job_timeout_seconds = 21600
 
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]

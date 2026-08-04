@@ -46,10 +46,14 @@ def run(
             path_params=path_parameters | {'dataId': md5sum_results_id},  # pyright: ignore[reportArgumentType]
         )  # type: ignore  # noqa: PGH003
 
-        md5_file_contents = http_utils.download_session().get(  # pyright: ignore[reportUnknownVariableType]
+        md5_response = http_utils.download_session().get(  # pyright: ignore[reportUnknownVariableType]
             url=url_api_response.body['url'],  # pyright: ignore[reportUnknownArgumentType]
             timeout=http_utils.SMALL_FILE_TIMEOUT,
-        ).text  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+        )
+        # Without this an expired pre-signed URL (403) writes S3's XML error body into
+        # all_md5.txt as if it were checksums, and every downstream comparison reads garbage.
+        md5_response.raise_for_status()
+        md5_file_contents = md5_response.text  # pyright: ignore[reportUnknownVariableType]
 
         with md5_outpath.open('w') as md5_path_fh:
             md5_path_fh.write(

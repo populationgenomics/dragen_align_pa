@@ -36,6 +36,7 @@ from dragen_align_pa.jobs import (
     validate_md5_sums,
 )
 from dragen_align_pa.utils import (
+    download_job_timeout_seconds,
     calculate_needed_storage,
     get_batch_artefacts_root,
     get_manifest_path_for_cohort,
@@ -542,6 +543,7 @@ class DownloadDataFromIca(SequencingGroupStage):
         ica_download_job.image(image=get_driver_image())
         ica_download_job.spot(is_spot=False)
         ica_download_job.memory(memory='8Gi')
+        ica_download_job.timeout(download_job_timeout_seconds())
 
         ica_download_job.call(
             download_ica_pipeline_outputs.run,
@@ -584,6 +586,7 @@ class DownloadBatchArtefactsFromIca(CohortStage):
         job.image(image=get_driver_image())
         job.memory('4Gi')
         job.spot(is_spot=False)
+        job.timeout(download_job_timeout_seconds())
         job.call(
             download_batch_artefacts.run,
             batches_file_path=batches_file_path,

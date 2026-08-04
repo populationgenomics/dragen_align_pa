@@ -38,13 +38,13 @@ def test_download_session_retries_get_on_connection_and_status_errors():
 
 
 def test_a_servers_retry_after_is_capped():
-    """urllib3 sleeps a Retry-After verbatim and its backoff ceiling does not apply, so an
-    upstream answering with a day would park a worker for a day."""
+    """urllib3's own ceiling is 21600s, so an upstream answering with a day would still park a
+    worker for six hours."""
     retry = http_utils.download_session().get_adapter('https://example.com').max_retries
     response = MagicMock()
     response.headers = {'Retry-After': '86400'}
 
-    assert retry.get_retry_after(response) == http_utils._MAX_RETRY_AFTER_SECONDS  # noqa: SLF001
+    assert retry.get_retry_after(response) == http_utils._MAX_RETRY_AFTER_SECONDS
 
 
 def test_a_short_retry_after_is_honoured_unchanged():
@@ -56,11 +56,26 @@ def test_a_short_retry_after_is_honoured_unchanged():
     assert retry.get_retry_after(response) == 5
 
 
-def test_the_cap_survives_being_copied_for_the_next_attempt():
-    """urllib3 rebuilds the Retry between attempts; a plain `Retry` copy would drop the cap."""
+def test_backoff_is_jittered():
+    """~500 concurrent per-SG jobs taking a 429 from one endpoint must not retry in lockstep and
+    re-create the spike they are backing off from."""
     retry = http_utils.download_session().get_adapter('https://example.com').max_retries
 
-    assert isinstance(retry.new(), http_utils._CappedRetryAfter)  # noqa: SLF001
+    assert retry.backoff_jitter > 0
+
+
+def test_jitter_actually_spreads_consecutive_backoffs():
+    """Guards the value, not just the flag: `backoff_jitter=0` would pass the check above by
+    being set at all, while still returning an identical wait to every worker."""
+    retry = http_utils.download_session().get_adapter('https://example.com').max_retries
+    exhausted = retry.increment(method='GET', error=ConnectionError('boom')).increment(
+        method='GET',
+        error=ConnectionError('boom'),
+    )
+
+    waits = {exhausted.get_backoff_time() for _ in range(50)}
+
+    assert len(waits) > 1
 
 
 def test_transfer_retrying_is_bounded_by_both_attempts_and_elapsed_time():

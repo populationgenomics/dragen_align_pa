@@ -42,6 +42,14 @@ class _StreamStats:
         return len(self.lookup_failures) + len(self.stream_failures)
 
 
+@dataclass
+class _BatchDownload:
+    """One batch's resumable download state and the files it may skip."""
+
+    state: ica_utils.DownloadState
+    already_downloaded: set[str]
+
+
 def _stream_silently(
     api_instance: project_data_api.ProjectDataApi,
     path_parameters: dict[str, str],
@@ -51,14 +59,16 @@ def _stream_silently(
     gcs_prefix: str,
     context: str,
     stats: _StreamStats,
-    force: bool,
+    batch: '_BatchDownload',
 ) -> None:
     """Stream one file to GCS; warn-and-skip on transient ICA / HTTP / GCS errors.
 
-    Files already present in GCS are skipped by `stream_ica_file_to_gcs` (unless
-    `force`), supporting a 'delete the marker and re-run' retry that re-attempts only
-    the files that failed.
+    Files this batch's state file records as already downloaded are skipped, so
+    're-run and pick up where it stopped' costs nothing for what already landed.
     """
+    if file_name in batch.already_downloaded:
+        stats.skipped += 1
+        return
     # MD5-mismatch (ValueError) is deliberately NOT caught: unreachable here with
     # expected_md5_hash=None, but a future caller passing a hash must crash on an
     # integrity violation.
@@ -71,7 +81,9 @@ def _stream_silently(
             gcs_bucket=gcs_bucket,
             gcs_prefix=gcs_prefix,
             expected_md5_hash=None,
-            skip_existing=not force,
+            # The batch state above owns the decision and knows which ICA run wrote these
+            # files, where a bare existence check does not.
+            skip_existing=False,
         )
     except (icasdk.ApiException, *http_utils.TRANSPORT_ERRORS, gcs_exceptions.GoogleCloudError) as e:
         logger.warning(f'{context}: streaming {file_name} failed ({e}); skipping.')
@@ -83,6 +95,7 @@ def _stream_silently(
             }
         )
         return
+    batch.state.mark_transferred(file_name)
     if streamed:
         stats.success += 1
     else:
@@ -97,7 +110,7 @@ def _stream_named_file(
     gcs_bucket: storage.Bucket,
     gcs_prefix: str,
     stats: _StreamStats,
-    force: bool,
+    batch: '_BatchDownload',
 ) -> None:
     """Find one named file in `parent_folder` and stream it to `gcs_prefix/file_name`.
 
@@ -137,7 +150,7 @@ def _stream_named_file(
         gcs_prefix=gcs_prefix,
         context=f'lookup={parent_folder}',
         stats=stats,
-        force=force,
+        batch=batch,
     )
 
 
@@ -204,6 +217,22 @@ def run(
             batch_name = f'{cohort_name}_batch{batch_index:04d}'
             gcs_prefix = f'{base_prefix}/{batch_name}'
 
+            # Same gate as the per-SG downloads: `dragen_batch_metrics/{cohort}_batch{NNNN}/`
+            # carries no pipeline_id, so re-analysing a cohort on the same DRAGEN version lands
+            # on the identical prefix. Without the ICA run recorded, skip-if-exists would keep
+            # every passfail.json / summary.json / report from the *previous* analysis.
+            state = ica_utils.DownloadState.load(
+                gcs_bucket,
+                f'{base_prefix}/download_state/{batch_name}.json',
+                ica_folder,
+            )
+            batch = _BatchDownload(
+                state=state,
+                already_downloaded=(
+                    set() if force_redownload else state.resumable(ica_utils.list_gcs_names(gcs_bucket, gcs_prefix))
+                ),
+            )
+
             for name in ('passfail.json', 'summary.json'):
                 _stream_named_file(
                     api_instance=api_instance,
@@ -213,7 +242,7 @@ def run(
                     gcs_bucket=gcs_bucket,
                     gcs_prefix=gcs_prefix,
                     stats=stats,
-                    force=force_redownload,
+                    batch=batch,
                 )
 
             # Recursive: DRAGEN's reports/ has nested subdirs; non-recursive would
@@ -245,12 +274,15 @@ def run(
                     api_instance=api_instance,
                     path_parameters=path_parameters,
                     file_id=report_id,
-                    file_name=report_relative_path,
+                    # Named relative to the batch prefix, not to `reports/`, so the key matches
+                    # what `list_gcs_names` returns and the state file records — the object
+                    # still lands at `{gcs_prefix}/reports/{report_relative_path}`.
+                    file_name=f'reports/{report_relative_path}',
                     gcs_bucket=gcs_bucket,
-                    gcs_prefix=f'{gcs_prefix}/reports',
+                    gcs_prefix=gcs_prefix,
                     context=f'batch {batch_name} reports/',
                     stats=stats,
-                    force=force_redownload,
+                    batch=batch,
                 )
 
     if stats.success == 0 and stats.total_failure > 0:

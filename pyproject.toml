@@ -26,13 +26,15 @@ dependencies=[
     'loguru',
     'pandas',
     # # Direct dependencies of dragen_align_pa.http_utils, not just transitive ones: we build a
-    # # urllib3 Retry and mount it on a requests Session ourselves. Floors are the versions that
-    # # carry the relevant security fixes (requests CVE-2023-32681, urllib3 CVE-2023-45803).
-    # # Deliberately no upper bound: the cpg_hail_gcloud base image resolves urllib3 1.26, while a
-    # # bare `pip install .` on 3.11 resolves 2.x, and the code is written to work on both.
+    # # urllib3 Retry and mount it on a requests Session ourselves. Floors carry the relevant
+    # # security fixes (requests CVE-2023-32681, urllib3 CVE-2023-45803).
+    # # urllib3 2.x specifically: `backoff_jitter` and `retry_after_max` are 2.x-only, and without
+    # # them concurrent per-SG jobs back off in lockstep and a hostile Retry-After parks a worker
+    # # for hours. The base image ships 1.26, so `pip install .` upgrades it; nothing in the tree
+    # # caps urllib3 below 2 (botocore allows !=2.2.0,<3; hail declares no constraint).
     'requests>=2.31.0',
     'tenacity',
-    'urllib3>=1.26.18',
+    'urllib3>=2.0.7',
 ]
 
 [project.urls]

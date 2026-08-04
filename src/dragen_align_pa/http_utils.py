@@ -43,9 +43,14 @@ _MAX_HTTP_RETRIES: Final = 5
 # latency of the whole download path.
 _MAX_READ_RETRIES: Final = 1
 
-# 0s, 4s, 8s, 16s, 32s. urllib3 1.x sleeps 0 before the first retry, which suits a one-off
-# reset but not a throttling peer; jittered file-level backoff is the tenacity layer's job.
+# 0s, 4s, 8s, 16s, 32s. urllib3 sleeps 0 before the first retry, which suits a one-off reset
+# but not a throttling peer; the tenacity layers add a hard floor on top.
 _BACKOFF_FACTOR: Final = 2.0
+
+# Added as `random() * jitter` seconds on top of each backoff. Without it ~500 concurrent per-SG
+# jobs that all take a 429 from the same endpoint retry in lockstep and re-create the spike they
+# are backing off from — the same reason both tenacity layers jitter.
+_BACKOFF_JITTER: Final = 4.0
 
 _RETRYABLE_HTTP_STATUSES: Final = frozenset({429, 500, 502, 503, 504})
 
@@ -58,19 +63,9 @@ _RETRYABLE_HTTP_STATUSES: Final = frozenset({429, 500, 502, 503, 504})
 TRANSPORT_ERRORS: Final = (requests.RequestException, urllib3.exceptions.HTTPError, ssl.SSLError)
 """Exceptions meaning the transfer failed at the network layer, whatever wrapped it."""
 
-# urllib3 honours Retry-After verbatim and its BACKOFF_MAX does not apply to it, so an
-# upstream answering `Retry-After: 86400` would park a worker for a day, once per retry.
+# urllib3's own ceiling on Retry-After is 21600s, so an upstream answering `Retry-After: 86400`
+# would still park a worker for six hours, once per retry.
 _MAX_RETRY_AFTER_SECONDS: Final = 120
-
-
-class _CappedRetryAfter(Retry):
-    """`Retry` that clamps a server-supplied `Retry-After` to `_MAX_RETRY_AFTER_SECONDS`."""
-
-    def get_retry_after(self, response: object) -> float | None:  # pyright: ignore[reportIncompatibleMethodOverride]
-        retry_after = super().get_retry_after(response)  # pyright: ignore[reportArgumentType]
-        if retry_after is None:
-            return None
-        return min(retry_after, _MAX_RETRY_AFTER_SECONDS)
 
 
 # Cached, so a job that downloads 200 files pays one TCP+TLS handshake per host instead of
@@ -89,7 +84,7 @@ def download_session() -> requests.Session:
         A `requests.Session` whose HTTPS adapter retries connect, read, and
         retryable-status failures on GET with exponential backoff.
     """
-    retry = _CappedRetryAfter(
+    retry = Retry(
         total=_MAX_HTTP_RETRIES,
         connect=_MAX_HTTP_RETRIES,
         read=_MAX_READ_RETRIES,
@@ -97,7 +92,9 @@ def download_session() -> requests.Session:
         status_forcelist=_RETRYABLE_HTTP_STATUSES,
         allowed_methods=frozenset({'GET', 'HEAD'}),
         backoff_factor=_BACKOFF_FACTOR,
+        backoff_jitter=_BACKOFF_JITTER,
         respect_retry_after_header=True,
+        retry_after_max=_MAX_RETRY_AFTER_SECONDS,
     )
     session = requests.Session()
     session.mount('https://', HTTPAdapter(max_retries=retry))
