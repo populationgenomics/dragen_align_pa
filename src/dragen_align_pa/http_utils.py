@@ -7,7 +7,6 @@ retry policy.
 """
 
 import functools
-import random
 import ssl
 from typing import Final
 
@@ -64,32 +63,23 @@ _RETRYABLE_HTTP_STATUSES: Final = frozenset({429, 500, 502, 503, 504})
 TRANSPORT_ERRORS: Final = (requests.RequestException, urllib3.exceptions.HTTPError, ssl.SSLError)
 """Exceptions meaning the transfer failed at the network layer, whatever wrapped it."""
 
-# urllib3 1.x honours Retry-After verbatim (its backoff ceiling does not apply), and 2.x caps it
-# at 21600s, so either way an upstream answering `Retry-After: 86400` parks a worker for hours.
+# urllib3 caps Retry-After at 21600s of its own accord, so an upstream answering
+# `Retry-After: 86400` still parks a worker for six hours, once per retry.
 _MAX_RETRY_AFTER_SECONDS: Final = 120
 
 
-# urllib3 2.x offers `backoff_jitter` and `retry_after_max` constructor arguments that would
-# replace this class, and the image now resolves 2.x. It is written as an override anyway: those
-# kwargs are a TypeError on 1.x, so the day something re-pins requests and drags urllib3 back
-# down (see the Dockerfile), every download job would die on the first call instead of simply
-# losing the jitter. pip only warns about that, so nothing else would catch it.
-class _JitteredCappedRetry(Retry):
-    """`Retry` that jitters its backoff and clamps a server-supplied `Retry-After`."""
+# `backoff_jitter` is a constructor argument (urllib3 2.0+) and is used as one below. Its
+# sibling `retry_after_max` would delete this class too, but it only landed in 2.7.0, and a
+# floor that tight to save six lines is a worse trade than the override. Collapse this once
+# 2.7 is comfortably the norm.
+class _CappedRetryAfter(Retry):
+    """`Retry` that clamps a server-supplied `Retry-After` to `_MAX_RETRY_AFTER_SECONDS`."""
 
     def get_retry_after(self, response: object) -> float | None:  # pyright: ignore[reportIncompatibleMethodOverride]
         retry_after = super().get_retry_after(response)  # pyright: ignore[reportArgumentType]
         if retry_after is None:
             return None
         return min(retry_after, _MAX_RETRY_AFTER_SECONDS)
-
-    def get_backoff_time(self) -> float:
-        backoff: float = super().get_backoff_time()
-        # urllib3 returns 0 before the first retry; jittering that would delay the one retry
-        # worth taking immediately.
-        if backoff <= 0:
-            return backoff
-        return backoff + random.random() * _BACKOFF_JITTER  # noqa: S311 - spreads load, not a secret
 
 
 # Cached, so a job that downloads 200 files pays one TCP+TLS handshake per host instead of
@@ -108,7 +98,7 @@ def download_session() -> requests.Session:
         A `requests.Session` whose HTTPS adapter retries connect, read, and
         retryable-status failures on GET with exponential backoff.
     """
-    retry = _JitteredCappedRetry(
+    retry = _CappedRetryAfter(
         total=_MAX_HTTP_RETRIES,
         connect=_MAX_HTTP_RETRIES,
         read=_MAX_READ_RETRIES,
@@ -116,6 +106,7 @@ def download_session() -> requests.Session:
         status_forcelist=_RETRYABLE_HTTP_STATUSES,
         allowed_methods=frozenset({'GET', 'HEAD'}),
         backoff_factor=_BACKOFF_FACTOR,
+        backoff_jitter=_BACKOFF_JITTER,
         respect_retry_after_header=True,
     )
     session = requests.Session()
@@ -148,6 +139,31 @@ def _log_transfer_retry(description: str, max_attempts: int, retry_state: RetryC
 # consumed and unrewindable, so recovering means restarting the whole transfer from the
 # caller. Backoff is fully jittered to desynchronise concurrent per-SG jobs retrying against
 # the same throttled endpoint, with a hard floor so a reset is never answered instantly.
+# describes the *encoded* size — would not match the bytes we count. Only an identity-encoded
+# response carries a length we can compare against.
+def _declared_content_length(response: requests.Response) -> int | None:
+    """Return the body length the server declared, if it is comparable to bytes received.
+
+    Args:
+        response: A streamed response whose headers have arrived.
+
+    Returns:
+        The `Content-Length` value, or None when it is absent (e.g. chunked transfer
+        encoding) or not comparable.
+    """
+    encoding: str = response.headers.get('Content-Encoding', 'identity').strip().lower()
+    if encoding not in ('', 'identity'):
+        return None
+    declared: str | None = response.headers.get('Content-Length')
+    if declared is None:
+        return None
+    try:
+        return int(declared)
+    except ValueError:
+        logger.warning(f'Ignoring malformed Content-Length header {declared!r}')
+        return None
+
+
 _HTTP_FORBIDDEN: Final = 403
 
 

@@ -4,12 +4,10 @@ interacting with ICA. It orchestrates calls to the low-level ica_api
 and ica_cli modules.
 """
 
-import base64
-import dataclasses
 import hashlib
 import json
 import time
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Final
 
 import cpg_utils
 import icasdk
@@ -20,12 +18,11 @@ from icasdk.model.create_data import CreateData
 from icasdk.model.data_id_or_path_list import DataIdOrPathList
 from loguru import logger
 
-from dragen_align_pa import http_utils, ica_api_utils
+from dragen_align_pa import gcs_utils, http_utils, ica_api_utils
 from dragen_align_pa.paths import IcaPath
 from dragen_align_pa.utils import load_per_sg_state
 
 if TYPE_CHECKING:
-    from google.cloud.storage.blob import Blob
     from google.cloud.storage.bucket import Bucket
     from icasdk.apis.tags import project_data_api
 
@@ -171,6 +168,51 @@ def create_upload_object_id(
         ) from e
 
 
+_HTTP_FORBIDDEN: Final = 403
+
+
+# One place that knows how to read a small file out of ICA. The three callers of this used to
+# each mint, fetch and check status themselves, and had already drifted: only one of them
+# recovered from the expired-URL 403 that all three can hit.
+def fetch_ica_file_body(
+    api_instance: 'project_data_api.ProjectDataApi',
+    path_parameters: dict[str, str],
+    file_id: str,
+) -> requests.Response:
+    """Fetch a small ICA file's body through a freshly minted pre-signed URL.
+
+    Args:
+        api_instance: An instance of the ProjectDataApi.
+        path_parameters: Dict with the projectId.
+        file_id: ICA data id of the file to read.
+
+    Raises:
+        icasdk.ApiException: Minting the download URL failed.
+        requests.HTTPError: The fetch failed, including a second consecutive 403.
+
+    Returns:
+        The response, already checked for status. Callers take `.text` or `.json()`.
+    """
+
+    def _mint_and_fetch() -> requests.Response:
+        url_response = ica_api_utils.ica_retry(
+            api_instance.create_download_url_for_data,  # pyright: ignore[reportUnknownVariableType]
+            path_params=path_parameters | {'dataId': file_id},  # pyright: ignore[reportArgumentType]
+        )
+        return http_utils.download_session().get(
+            url_response.body['url'],  # pyright: ignore[reportUnknownArgumentType]
+            timeout=http_utils.SMALL_FILE_TIMEOUT,
+        )
+
+    response = _mint_and_fetch()
+    if response.status_code == _HTTP_FORBIDDEN:
+        # A pre-signed URL can expire between minting and reading; a fresh one fixes it.
+        logger.warning(f'Pre-signed URL for {file_id} returned 403; re-minting and retrying once.')
+        response = _mint_and_fetch()
+    response.raise_for_status()
+    return response
+
+
 def get_md5_from_ica(
     api_instance: 'project_data_api.ProjectDataApi',
     path_parameters: dict[str, str],
@@ -182,19 +224,7 @@ def get_md5_from_ica(
     Returns (expected_hash, file_content).
     """
     try:
-        url_response = ica_api_utils.ica_retry(
-            api_instance.create_download_url_for_data,  # pyright: ignore[reportUnknownVariableType]
-            path_params=path_parameters | {'dataId': md5_file_id},
-        )
-        download_url = url_response.body['url']  # pyright: ignore[reportUnknownVariableType]
-
-        response = http_utils.download_session().get(
-            download_url,
-            timeout=http_utils.SMALL_FILE_TIMEOUT,
-        )  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
-        response.raise_for_status()
-
-        content = response.text  # pyright: ignore[reportUnknownVariableType]
+        content = fetch_ica_file_body(api_instance, path_parameters, md5_file_id).text
         # Handle both md5sum (hash filename) and md5 (hash only) formats
         expected_hash = content.split()[0]  # pyright: ignore[reportUnknownVariableType]
         return expected_hash, content  # pyright: ignore[reportUnknownVariableType]
@@ -234,205 +264,6 @@ def batch_create_download_urls(
     }
 
 
-def _gcs_md5_hex(blob: 'Blob') -> str | None:
-    """Return an object's GCS-recorded MD5 as lowercase hex.
-
-    Args:
-        blob: A blob whose properties have been loaded (e.g. from `Bucket.get_blob`).
-
-    Returns:
-        The hex digest, or None if GCS holds no MD5 for the object (composite
-        objects, which our resumable uploads never produce).
-    """
-    if not blob.md5_hash:
-        return None
-    return base64.b64decode(blob.md5_hash).hex()
-
-
-# A finalized GCS object means a prior run wrote that file end to end: BlobWriter.__exit__
-# calls terminate() on error, so an interrupted stream abandons its resumable session and
-# never finalizes. Where ICA also gives us a hash we don't have to lean on that argument —
-# GCS records each object's MD5, so the existing copy is checked rather than trusted.
-def existing_gcs_object_is_complete(
-    gcs_bucket: 'Bucket',
-    gcs_blob_path: str,
-    expected_md5_hash: str | None = None,
-) -> bool:
-    """Report whether GCS already holds a complete copy of an object.
-
-    Args:
-        gcs_bucket: Bucket to look in.
-        gcs_blob_path: Full object key within the bucket.
-        expected_md5_hash: Hex MD5 the stored object must match. When None, any
-            finalized object counts as complete.
-
-    Returns:
-        True if the object exists and, when `expected_md5_hash` is given, matches it.
-    """
-    existing = gcs_bucket.get_blob(gcs_blob_path)  # pyright: ignore[reportUnknownVariableType]
-    if existing is None:
-        return False
-    if expected_md5_hash is None:
-        return True
-
-    stored_md5_hash = _gcs_md5_hex(existing)  # pyright: ignore[reportUnknownArgumentType]
-    if stored_md5_hash is None:
-        logger.warning(
-            f'{gcs_blob_path} exists but GCS holds no MD5 for it; re-downloading rather than trusting it.',
-        )
-        return False
-    if stored_md5_hash != expected_md5_hash:
-        logger.warning(
-            f'{gcs_blob_path} exists but its MD5 {stored_md5_hash} does not match the expected '
-            f'{expected_md5_hash}; re-downloading.',
-        )
-        return False
-    return True
-
-
-# `requests` transparently decodes a Content-Encoding'd body, so Content-Length — which
-# describes the *encoded* size — would not match the bytes we count. Only an identity-encoded
-# response carries a length we can compare against.
-def _declared_content_length(response: requests.Response) -> int | None:
-    """Return the body length the server declared, if it is comparable to bytes received.
-
-    Args:
-        response: A streamed response whose headers have arrived.
-
-    Returns:
-        The `Content-Length` value, or None when it is absent (e.g. chunked transfer
-        encoding) or not comparable.
-    """
-    encoding: str = response.headers.get('Content-Encoding', 'identity').strip().lower()
-    if encoding not in ('', 'identity'):
-        return None
-    declared: str | None = response.headers.get('Content-Length')
-    if declared is None:
-        return None
-    try:
-        return int(declared)
-    except ValueError:
-        logger.warning(f'Ignoring malformed Content-Length header {declared!r}')
-        return None
-
-
-SUCCESS_OBJECT_NAME: Final = '_SUCCESS'
-"""Sentinel written into an SG's output prefix once every file has transferred."""
-
-
-# GCS output prefixes are not scoped to an ICA run (`dragen_metrics/{sg}` carries no cohort or
-# pipeline id), so re-analysing an SG writes new outputs over the same prefix. `ica_folder`
-# records which run the listed files came from, so a re-analysis starts from empty instead of
-# mistaking the previous analysis's outputs for its own. The state file lives OUTSIDE the prefix
-# it describes so it is never confused with downloaded data.
-@dataclasses.dataclass
-class DownloadState:
-    """Which files of one ICA run have already landed in an SG's GCS prefix.
-
-    Persisted after every successful transfer, so a job killed part-way resumes from where
-    it stopped rather than re-fetching a whole sequencing group.
-
-    This solves the *skip* half of cross-run contamination, not all of it: when the recorded
-    run differs, every file is re-downloaded, but nothing is deleted. A file the previous
-    analysis produced and this one does not stays behind, so the prefix can end up holding
-    outputs from two analyses.
-    """
-
-    gcs_bucket: 'Bucket'
-    state_key: str
-    ica_folder: str
-    transferred: set[str]
-
-    @classmethod
-    def load(cls, gcs_bucket: 'Bucket', state_key: str, ica_folder: str) -> 'DownloadState':
-        """Read the state for `ica_folder`, or start an empty one.
-
-        Args:
-            gcs_bucket: Bucket holding the state file.
-            state_key: Object key of the state file.
-            ica_folder: The ICA folder being downloaded, which identifies the run.
-
-        Returns:
-            The recorded state when it belongs to `ica_folder`, else an empty state.
-        """
-        blob = gcs_bucket.get_blob(state_key)  # pyright: ignore[reportUnknownVariableType]
-        if blob is None:
-            return cls(gcs_bucket, state_key, ica_folder, set())
-
-        recorded: dict[str, Any] = json.loads(blob.download_as_bytes())  # pyright: ignore[reportUnknownMemberType]
-        if recorded.get('ica_folder') != ica_folder:
-            logger.warning(
-                f'gs://{gcs_bucket.name}/{state_key} records a download of {recorded.get("ica_folder")!r}, '
-                f"not {ica_folder!r}; treating every file already in GCS as another run's and "
-                f're-downloading.',
-            )
-            return cls(gcs_bucket, state_key, ica_folder, set())
-        transferred: list[str] = recorded.get('transferred', [])
-        return cls(gcs_bucket, state_key, ica_folder, set(transferred))
-
-    def mark_transferred(self, file_name: str) -> None:
-        """Record `file_name` as landed and persist immediately.
-
-        Args:
-            file_name: Object name relative to the output prefix.
-        """
-        self.transferred.add(file_name)
-        self.gcs_bucket.blob(self.state_key).upload_from_string(
-            json.dumps(
-                {'ica_folder': self.ica_folder, 'transferred': sorted(self.transferred)},
-                indent=2,
-            ),
-            content_type='application/json',
-        )
-
-    def resumable(self, present_in_gcs: set[str]) -> set[str]:
-        """Return the files that may be skipped: recorded as transferred AND still present.
-
-        Args:
-            present_in_gcs: Object names currently under the output prefix.
-
-        Returns:
-            Names to skip. A recorded file that has since been removed from GCS is
-            re-downloaded rather than assumed.
-        """
-        vanished = self.transferred - present_in_gcs
-        if vanished:
-            logger.warning(
-                f'{len(vanished)} file(s) recorded as downloaded are no longer in GCS '
-                f'(e.g. {sorted(vanished)[:3]}); re-downloading them.',
-            )
-        return self.transferred & present_in_gcs
-
-
-def list_gcs_names(gcs_bucket: 'Bucket', gcs_prefix: str) -> set[str]:
-    """List objects under a prefix, named relative to it.
-
-    Args:
-        gcs_bucket: Bucket to list.
-        gcs_prefix: Prefix to list under, without a trailing slash.
-
-    Returns:
-        Object names relative to `gcs_prefix`, e.g. `{'a.csv', 'reports/b.html'}`,
-        excluding the `_SUCCESS` sentinel.
-    """
-    prefix = f'{gcs_prefix}/'
-    return {
-        name
-        for blob in gcs_bucket.list_blobs(prefix=prefix)  # pyright: ignore[reportUnknownVariableType]
-        if (name := blob.name.removeprefix(prefix)) != SUCCESS_OBJECT_NAME  # pyright: ignore[reportUnknownMemberType]
-    }
-
-
-def write_success_sentinel(gcs_bucket: 'Bucket', gcs_prefix: str) -> None:
-    """Mark an SG's output prefix complete.
-
-    Args:
-        gcs_bucket: Bucket holding the prefix.
-        gcs_prefix: The SG's output prefix, without a trailing slash.
-    """
-    gcs_bucket.blob(f'{gcs_prefix}/{SUCCESS_OBJECT_NAME}').upload_from_string('', content_type='text/plain')
-
-
 def stream_ica_file_to_gcs(
     api_instance: 'project_data_api.ProjectDataApi',
     path_parameters: dict[str, str],
@@ -443,7 +274,7 @@ def stream_ica_file_to_gcs(
     expected_md5_hash: str | None = None,
     download_url: str | None = None,
     *,
-    skip_existing: bool = True,
+    skip_existing: bool,
 ) -> bool:
     """Stream a file from ICA to GCS, optionally verifying its MD5.
 
@@ -459,8 +290,8 @@ def stream_ica_file_to_gcs(
         download_url: A pre-minted pre-signed URL (e.g. from
             `batch_create_download_urls`). When None, one is minted for this file.
         skip_existing: Return without transferring when GCS already holds a complete copy.
-            Pass False when the caller has already decided this file must be written —
-            it owns the decision and this check would only second-guess it.
+            No default: the two state-driven jobs own the decision themselves and must pass
+            False, so a new caller has to say which it is rather than inherit the wrong one.
 
     A failed transfer is restarted from the beginning (with a freshly minted URL) up to
     `[ica.download] max_transfer_attempts` times before the error propagates.
@@ -479,7 +310,7 @@ def stream_ica_file_to_gcs(
     blob = gcs_bucket.blob(gcs_blob_path)
     bucket_name = gcs_bucket.name  # pyright: ignore[reportUnknownVariableType]
 
-    if skip_existing and existing_gcs_object_is_complete(gcs_bucket, gcs_blob_path, expected_md5_hash):
+    if skip_existing and gcs_utils.existing_gcs_object_is_complete(gcs_bucket, gcs_blob_path, expected_md5_hash):
         logger.info(
             f'Skipping {file_name}: gs://{bucket_name}/{gcs_blob_path} already holds a complete copy.',
         )
@@ -507,7 +338,7 @@ def stream_ica_file_to_gcs(
             timeout=http_utils.STREAM_TIMEOUT,
         ) as r:  # pyright: ignore[reportUnknownVariableType]
             r.raise_for_status()
-            expected_bytes = _declared_content_length(r)  # pyright: ignore[reportUnknownArgumentType]
+            expected_bytes = http_utils._declared_content_length(r)  # noqa: SLF001  # pyright: ignore[reportUnknownArgumentType]
 
             # Stream directly to GCS
             with blob.open('wb', timeout=600) as gcs_file:  # pyright: ignore[reportUnknownArgumentType]

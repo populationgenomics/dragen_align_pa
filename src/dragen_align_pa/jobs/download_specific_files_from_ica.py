@@ -33,7 +33,7 @@ def _orchestrate_download(
     index_file_name: str,
     md5_file_name: str,
     md5_gcp_name: str,
-    force: bool,
+    force_redownload: bool,
 ) -> None:
     """Find, download+MD5-verify, and upload the CRAM/index/MD5 file set to GCS.
 
@@ -47,7 +47,7 @@ def _orchestrate_download(
         index_file_name: Name of its index.
         md5_file_name: Name of the MD5 file in ICA.
         md5_gcp_name: Name to save the MD5 file under in GCS.
-        force: Re-download even when GCS already holds a complete copy.
+        force_redownload: Re-download even when GCS already holds a complete copy.
     """
     # --- 1. Find all three file IDs ---
     main_file_id, index_file_id, md5_file_id = (
@@ -72,7 +72,7 @@ def _orchestrate_download(
         gcs_bucket=gcs_bucket,
         gcs_prefix=gcs_output_path_prefix,
         expected_md5_hash=expected_hash,
-        skip_existing=not force,
+        skip_existing=not force_redownload,
     )
 
     # --- 4. Stream index file (no verification) ---
@@ -87,7 +87,7 @@ def _orchestrate_download(
         gcs_bucket=gcs_bucket,
         gcs_prefix=gcs_output_path_prefix,
         expected_md5_hash=None,
-        skip_existing=not force and not main_streamed,
+        skip_existing=not force_redownload and not main_streamed,
     )
 
     # --- 5. Upload the MD5 file itself ---
@@ -138,7 +138,7 @@ def run(
             index_file_name=index_file_name,
             md5_file_name=md5_file_name,
             md5_gcp_name=md5_gcp_name,
-            force=force_redownload,
+            force_redownload=force_redownload,
         )
 
     logger.info(f'Successfully downloaded and verified all files for {sg_name}.')

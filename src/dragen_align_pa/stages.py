@@ -18,7 +18,7 @@ from dragen_align_pa.constants.ica_constants import (
     READS_TYPE,
 )
 from dragen_align_pa.file_types import FileTypeSpec
-from dragen_align_pa.ica_utils import SUCCESS_OBJECT_NAME
+from dragen_align_pa.gcs_utils import SUCCESS_OBJECT_NAME
 from dragen_align_pa.jobs import (
     delete_data_in_ica,
     download_batch_artefacts,

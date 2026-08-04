@@ -80,11 +80,11 @@ def test_the_first_retry_is_not_delayed_by_jitter():
     assert retry.increment(method='GET', error=ConnectionError('boom')).get_backoff_time() == 0
 
 
-def test_jitter_and_cap_survive_being_copied_for_the_next_attempt():
-    """urllib3 rebuilds the Retry between attempts; a plain `Retry` copy would drop both."""
+def test_the_retry_after_cap_survives_being_copied_for_the_next_attempt():
+    """urllib3 rebuilds the Retry between attempts; a plain `Retry` copy would drop the cap."""
     retry = http_utils.download_session().get_adapter('https://example.com').max_retries
 
-    assert isinstance(retry.new(), http_utils._JitteredCappedRetry)
+    assert isinstance(retry.new(), http_utils._CappedRetryAfter)
 
 
 def test_transfer_retrying_is_bounded_by_both_attempts_and_elapsed_time():

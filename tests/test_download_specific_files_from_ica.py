@@ -11,7 +11,7 @@ from dragen_align_pa.jobs import download_specific_files_from_ica
 from dragen_align_pa.utils import download_job_timeout_seconds
 
 
-def _orchestrate(monkeypatch, *, main_streamed: bool, force: bool = False) -> MagicMock:
+def _orchestrate(monkeypatch, *, main_streamed: bool, force_redownload: bool = False) -> MagicMock:
     """Run the CRAM/index/MD5 orchestration; return the stream mock."""
     monkeypatch.setattr(
         'dragen_align_pa.ica_api_utils.find_file_id_by_name',
@@ -35,7 +35,7 @@ def _orchestrate(monkeypatch, *, main_streamed: bool, force: bool = False) -> Ma
         index_file_name='SYN00001.cram.crai',
         md5_file_name='SYN00001.cram.md5',
         md5_gcp_name='SYN00001.cram.md5sum',
-        force=force,
+        force_redownload=force_redownload,
     )
     return stream
 
@@ -59,7 +59,7 @@ def test_a_skipped_main_file_leaves_its_index_alone(monkeypatch):
 
 def test_force_redownload_refetches_both(monkeypatch):
     """force_redownload must reach the index as well as the main file."""
-    stream = _orchestrate(monkeypatch, main_streamed=True, force=True)
+    stream = _orchestrate(monkeypatch, main_streamed=True, force_redownload=True)
 
     assert all(call.kwargs['skip_existing'] is False for call in stream.call_args_list)
 
