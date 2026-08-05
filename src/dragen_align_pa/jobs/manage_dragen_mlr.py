@@ -46,17 +46,7 @@ def _mlr_download_config(mlr_config_json_fid: str, local_tmp_dir: str) -> str:
     """Downloads the MLR config JSON to a local temp path."""
     local_config_path = os.path.join(local_tmp_dir, 'mlr_config.json')
     if not os.path.exists(local_config_path):
-        utils.run_subprocess_with_log(
-            [
-                'icav2',
-                'projectdata',
-                'download',
-                mlr_config_json_fid,
-                local_config_path,
-                '--exclude-source-path',
-            ],
-            'Download MLR config',
-        )
+        ica_cli_utils.download_file_by_id(mlr_config_json_fid, local_config_path)
     return local_config_path
 
 
