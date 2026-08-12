@@ -25,6 +25,9 @@ jobs:
     - name: Install icasdk
       run: pip install git+https://github.com/Illumina/ica-sdk-python.git
 
+    - name: Install vendored popgen-cli (imported by dragen_align_pa.popgen_mlr)
+      run: pip install third_party/popgen_cli-2.1.0-py3-none-any.whl
+
     - name: Install packages
       run: pip install .[test]
 
