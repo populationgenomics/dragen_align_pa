@@ -9,6 +9,8 @@ ICA rate-limit only as exit code 1 with `ICA_API_429` in its output, so one 429 
 JWT fetch must not kill an upload job while the same 429 on an SDK call is survivable.
 """
 
+import json
+import re
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -243,3 +245,61 @@ def test_final_failure_logs_single_error_without_retrying_marker(monkeypatch):
     assert len([r for r in records if 'RETRYING' in r]) == 10
     unmarked_failures = [r for r in records if 'RETRYING' not in r and 'failed with return code' in r]
     assert len(unmarked_failures) == 1
+
+
+# --- Plural finder (single list call for several filenames) ---
+
+
+def _list_success(paths: list[str]) -> subprocess.CompletedProcess:
+    items = [{'details': {'path': p}} for p in paths]
+    return subprocess.CompletedProcess(['icav2'], 0, stdout=json.dumps({'items': items}))
+
+
+def test_find_paths_by_names_resolves_both_files_in_one_call(monkeypatch):
+    run = MagicMock(
+        return_value=_list_success(
+            ['/run/SYN00001/SYN00001.cram', '/run/SYN00001/SYN00001.hard-filtered.gvcf.gz'],
+        ),
+    )
+    monkeypatch.setattr('dragen_align_pa.ica_cli_utils.utils.run_subprocess_with_log', run)
+
+    paths = ica_cli_utils.find_ica_file_paths_by_names(
+        '/run/SYN00001/',
+        ['SYN00001.cram', 'SYN00001.hard-filtered.gvcf.gz'],
+    )
+
+    assert paths == {
+        'SYN00001.cram': '/run/SYN00001/SYN00001.cram',
+        'SYN00001.hard-filtered.gvcf.gz': '/run/SYN00001/SYN00001.hard-filtered.gvcf.gz',
+    }
+    assert run.call_count == 1
+    cmd = run.call_args.args[0]
+    assert cmd.count('--file-name') == 2
+    assert cmd[cmd.index('--file-name') + 1] == 'SYN00001.cram'
+    assert '--match-mode' in cmd and cmd[cmd.index('--match-mode') + 1] == 'EXACT'
+
+
+def test_find_paths_by_names_raises_naming_all_missing_files(monkeypatch):
+    run = MagicMock(return_value=_list_success(['/run/SYN00001/SYN00001.cram']))
+    monkeypatch.setattr('dragen_align_pa.ica_cli_utils.utils.run_subprocess_with_log', run)
+
+    with pytest.raises(ValueError, match=re.escape('SYN00001.hard-filtered.gvcf.gz')):
+        ica_cli_utils.find_ica_file_paths_by_names(
+            '/run/SYN00001/',
+            ['SYN00001.cram', 'SYN00001.hard-filtered.gvcf.gz'],
+        )
+
+
+def test_find_paths_by_names_retries_rate_limited_cli_then_succeeds(monkeypatch):
+    run = MagicMock(
+        side_effect=[
+            _rate_limited_error(['icav2']),
+            _list_success(['/run/SYN00001/SYN00001.cram']),
+        ],
+    )
+    monkeypatch.setattr('dragen_align_pa.ica_cli_utils.utils.run_subprocess_with_log', run)
+
+    paths = ica_cli_utils.find_ica_file_paths_by_names('/run/SYN00001/', ['SYN00001.cram'])
+
+    assert paths == {'SYN00001.cram': '/run/SYN00001/SYN00001.cram'}
+    assert run.call_count == 2

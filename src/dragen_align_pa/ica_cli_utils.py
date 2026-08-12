@@ -7,6 +7,7 @@ authentication and running CLI commands via subprocess.
 import json
 import os
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -180,6 +181,58 @@ def find_ica_file_path_by_name(parent_folder: str, file_name: str) -> str:
     except (ValueError, IndexError) as e:
         logger.error(f'Error parsing icav2 list output for {file_name}: {e}')
         raise
+
+
+def find_ica_file_paths_by_names(parent_folder: str, file_names: Sequence[str]) -> dict[str, str]:
+    """Find several files under one ICA folder with a single CLI call.
+
+    `--file-name` is a repeatable flag, so all names are resolved in one
+    `projectdata list` invocation instead of one call per file.
+
+    Args:
+        parent_folder: The ICA folder to search (direct children).
+        file_names: Exact filenames to resolve.
+
+    Returns:
+        Mapping of each requested filename to its full `details.path`.
+
+    Raises:
+        ValueError: If any requested file is missing (all missing names listed).
+    """
+    command = [
+        'icav2',
+        'projectdata',
+        'list',
+        '--parent-folder',
+        parent_folder,
+        '--data-type',
+        'FILE',
+        '--match-mode',
+        'EXACT',
+        '-o',
+        'json',
+    ]
+    for file_name in file_names:
+        command += ['--file-name', file_name]
+    result = _run_icav2_with_retry(command, f'Find ICA files {", ".join(file_names)}')
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        logger.error(f'Failed to decode JSON from icav2 list command: {result.stdout}')
+        raise
+
+    found: dict[str, str] = {}
+    for item in data.get('items', []):
+        path = item.get('details', {}).get('path')
+        if path:
+            found[path.rsplit('/', 1)[-1]] = path
+
+    missing = [name for name in file_names if name not in found]
+    if missing:
+        raise ValueError(
+            f'No file(s) named {", ".join(missing)} found in folder "{parent_folder}"',
+        )
+    return {name: found[name] for name in file_names}
 
 
 def perform_upload_if_needed(cram_status: str | None, paths: dict[str, str], role: str) -> None:
