@@ -12,35 +12,73 @@ import logging
 from pathlib import Path
 
 import pytest
+import requests
 from loguru import logger as loguru_logger
 
 from dragen_align_pa import popgen_mlr
 
 
+def _http_error(status_code: int, reason: str) -> requests.exceptions.HTTPError:
+    """Build a real `requests.exceptions.HTTPError` the way `raise_for_status` does."""
+    response = requests.Response()
+    response.status_code = status_code
+    response.reason = reason
+    response.url = 'https://ica.illumina.com/ica/rest/api/projects/x/analysis:cwl'
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError as exc:
+        return exc
+    raise AssertionError('raise_for_status did not raise')
+
+
 def test_retry_runner_retries_transient_429_then_succeeds():
+    """The real exception shape: `requests.exceptions.HTTPError` from `raise_for_status`."""
     calls = {'n': 0}
 
     def flaky(suffix: str) -> str:
         calls['n'] += 1
         if calls['n'] == 1:
-            # Bare Exception mimics popgen_cli's ICAClient._request_base.
-            raise Exception(
-                'API request failed: 429 - {"code": "ICA_API_429", "message": "Too many requests"}',
-            )
+            raise _http_error(429, 'Too Many Requests')
         return f'ok-{suffix}'
 
     assert popgen_mlr.TransientRetryRunner().run(flaky, 'x') == 'ok-x'
     assert calls['n'] == 2
 
 
-def test_retry_runner_retries_on_status_prefix_without_body_marker():
-    """A 503 whose body is an opaque HTML page still matches via the message prefix."""
+def test_retry_runner_retries_transient_503_then_succeeds():
     calls = {'n': 0}
 
     def flaky() -> str:
         calls['n'] += 1
         if calls['n'] == 1:
-            raise Exception('API request failed: 503 - <html>Service Unavailable</html>')
+            raise _http_error(503, 'Service Unavailable')
+        return 'ok'
+
+    assert popgen_mlr.TransientRetryRunner().run(flaky) == 'ok'
+    assert calls['n'] == 2
+
+
+def test_retry_runner_propagates_permanent_http_error_immediately():
+    """A 404 HTTPError is not in the retryable status set, so it surfaces on the first attempt."""
+    calls = {'n': 0}
+
+    def missing() -> None:
+        calls['n'] += 1
+        raise _http_error(404, 'Not Found')
+
+    with pytest.raises(requests.exceptions.HTTPError, match='404'):
+        popgen_mlr.TransientRetryRunner().run(missing)
+    assert calls['n'] == 1
+
+
+def test_retry_runner_retries_on_message_marker_fallback():
+    """Covers exceptions from other layers that only carry the ICA error text, not an HTTPError."""
+    calls = {'n': 0}
+
+    def flaky() -> str:
+        calls['n'] += 1
+        if calls['n'] == 1:
+            raise Exception('ICA_API_429: Too many requests')
         return 'ok'
 
     assert popgen_mlr.TransientRetryRunner().run(flaky) == 'ok'

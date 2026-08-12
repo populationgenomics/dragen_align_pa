@@ -16,6 +16,7 @@ from collections.abc import Callable
 from typing import Any
 
 import popgen_cli.utils.utils as popgen_utils
+import requests
 from loguru import logger
 from popgen_cli.dragen_mlr import submit as popgen_submit
 
@@ -23,17 +24,19 @@ from dragen_align_pa import ica_api_utils
 
 
 def _is_transient_popgen_error(exc: BaseException) -> bool:
-    """Tenacity predicate: True when the exception message shows a transient ICA error.
+    """Tenacity predicate: True when the exception shows a transient ICA error (429/503).
 
-    popgen_cli's `ICAClient._request_base` raises bare `Exception`s shaped
-    `API request failed: {status} - {body}`. The status prefix is matched as well
-    as the shared body markers, so a 429/503 whose body lacks an ICA error code
-    still retries.
+    popgen_cli's `ICAClient._request_base` logs `API request failed: {status} - {body}`
+    and then raises via `response.raise_for_status()`, so the propagating exception is a
+    `requests.exceptions.HTTPError` whose status code is matched structurally. The
+    message-marker fallback covers exceptions from other layers that only carry the
+    ICA error text.
     """
+    if isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None:
+        # Mirrors ica_api_utils._RETRYABLE_ICA_STATUSES (429 rate-limit, 503 backend unavailable).
+        return exc.response.status_code in {429, 503}
     message = str(exc)
-    if any(marker in message for marker in ica_api_utils.TRANSIENT_ICA_ERROR_MARKERS):
-        return True
-    return message.startswith(('API request failed: 429', 'API request failed: 503'))
+    return any(marker in message for marker in ica_api_utils.TRANSIENT_ICA_ERROR_MARKERS)
 
 
 class TransientRetryRunner:
@@ -82,6 +85,8 @@ def submit_analysis(argv: list[str]) -> str:
       needs regenerating) propagates immediately with its response text.
     - `submit_cwl_analysis(max_retry=1, retry_sleep=0)` disables the outer
       retry loop; all retrying happens in the runner.
+    - The analysis-details JSON file write is dropped; the analysis id is
+      returned directly.
 
     Args:
         argv: The flag list `popgen-cli dragen-mlr submit` would receive (the

@@ -32,13 +32,11 @@ class MlrInputs(NamedTuple):
     output_folder_url: str
 
 
+# Mirrors the loop's own condition (no pipeline-id file, or force_resubmit
+# deleting them all) so prefetch covers exactly the SGs that get submitted.
+# Cancellation submits nothing, so nothing is prefetched.
 def _pending_sg_names(sg_names: Sequence[str], outputs: dict[str, cpg_utils.Path]) -> list[str]:
-    """Names of SGs the loop will actually submit this run.
-
-    Mirrors the loop's own condition (no pipeline-id file, or force_resubmit
-    deleting them all) so prefetch covers exactly the SGs that get submitted.
-    Cancellation submits nothing, so nothing is prefetched.
-    """
+    """Names of SGs the loop will actually submit this run."""
     if config_retrieve(['ica', 'management', 'cancel_cohort_run'], default=False):
         return []
     if config_retrieve(['ica', 'management', 'force_resubmit'], default=False):
@@ -46,17 +44,15 @@ def _pending_sg_names(sg_names: Sequence[str], outputs: dict[str, cpg_utils.Path
     return [name for name in sg_names if not outputs[f'{name}_mlr_pipeline_id'].exists()]
 
 
+# Runs before anything is submitted, so a missing input fails the cohort with
+# zero analyses launched (previously a mid-cohort lookup failure aborted with
+# earlier SGs already running).
 def _prefetch_mlr_inputs(
     pending: Sequence[str],
     cohort_name: str,
     pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path],
 ) -> dict[str, MlrInputs]:
-    """Resolve every pending SG's CRAM/gVCF/output URLs with one auth and one list call per SG.
-
-    Runs before anything is submitted, so a missing input fails the cohort with
-    zero analyses launched (previously a mid-cohort lookup failure aborted with
-    earlier SGs already running).
-    """
+    """Resolve every pending SG's CRAM/gVCF/output URLs with one auth and one list call per SG."""
     ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_ALIGN)
 
     inputs_by_sg: dict[str, MlrInputs] = {}
@@ -146,20 +142,17 @@ def _submit_mlr_run(
     return mlr_analysis_id
 
 
+# All once-per-run ICA work happens up front: one align-project auth covering
+# every input lookup, one MLR-project auth covering the config download, and
+# the config download itself. The per-SG submit callables then only build an
+# argv and POST the analysis (popgen_cli authenticates from the config JSON,
+# not the icav2 CLI session).
 def run(
     cohort: Cohort,
     pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path],
     outputs: dict[str, cpg_utils.Path],
 ) -> None:
-    """
-    Calls the generic pipeline manager with settings for the MLR pipeline.
-
-    All once-per-run ICA work happens up front: one align-project auth covering
-    every input lookup, one MLR-project auth covering the config download, and
-    the config download itself. The per-SG submit callables then only build an
-    argv and POST the analysis (popgen_cli authenticates from the config JSON,
-    not the icav2 CLI session).
-    """
+    """Calls the generic pipeline manager with settings for the MLR pipeline."""
     mlr_hash_table: str = IcaPath.from_relpath(MLR_HASH_TABLE_RELPATH).as_url(ROLE_DRAGEN_MLR)
     sg_names = [sg.name for sg in cohort.get_sequencing_groups()]
 
