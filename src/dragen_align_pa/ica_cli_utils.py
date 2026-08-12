@@ -8,7 +8,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -23,15 +23,7 @@ if TYPE_CHECKING:
 # icav2 surfaces a transient ICA error only as exit code 1 with the HTTP reason phrase
 # and ICA error code in its output (e.g. the JWT fetch prints
 # "429 Too Many Requests : ICA_API_429 : Too many requests..."), so retryability is
-# matched on these markers — there is no structured status to inspect. The statuses
-# mirror the SDK path's `_RETRYABLE_ICA_STATUSES` (429 rate-limit, 503 backend
-# unavailable); anything else propagates on the first occurrence.
-_TRANSIENT_CLI_MARKERS: Final = (
-    'ICA_API_429',
-    '429 Too Many Requests',
-    'ICA_API_503',
-    '503 Service Unavailable',
-)
+# matched on the shared textual markers — there is no structured status to inspect.
 
 
 def _is_transient_cli_error(exc: BaseException) -> bool:
@@ -39,7 +31,7 @@ def _is_transient_cli_error(exc: BaseException) -> bool:
     if not isinstance(exc, subprocess.CalledProcessError):
         return False
     output = f'{exc.stdout or ""}\n{exc.stderr or ""}'
-    return any(marker in output for marker in _TRANSIENT_CLI_MARKERS)
+    return any(marker in output for marker in ica_api_utils.TRANSIENT_ICA_ERROR_MARKERS)
 
 
 def _run_icav2_with_retry(cmd: list[str], step_name: str) -> subprocess.CompletedProcess[Any]:
