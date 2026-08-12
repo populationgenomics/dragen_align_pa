@@ -279,23 +279,29 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                         target.status = PipelineStatus.INPROGRESS
 
             # Cancel a pipeline if requested
-            if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False) and target.pipeline_id:
-                logger.info(f'Cancelling {pipeline_name} pipeline run: {target.pipeline_id} for {target_name}')
-                # If the ICA abort API fails, log but still mark CANCELLED locally:
-                # user intent overrides the API result, and an uncaught blip here
-                # would bypass run()'s CohortCancelled translation.
-                try:
-                    cancel_ica_pipeline_run.run(
-                        ica_pipeline_id=target.pipeline_id,
-                        is_mlr=is_mlr_pipeline,
+            if config_retrieve(key=['ica', 'management', 'cancel_cohort_run'], default=False):
+                if target.pipeline_id:
+                    logger.info(f'Cancelling {pipeline_name} pipeline run: {target.pipeline_id} for {target_name}')
+                    # If the ICA abort API fails, log but still mark CANCELLED locally:
+                    # user intent overrides the API result, and an uncaught blip here
+                    # would bypass run()'s CohortCancelled translation.
+                    try:
+                        cancel_ica_pipeline_run.run(
+                            ica_pipeline_id=target.pipeline_id,
+                            is_mlr=is_mlr_pipeline,
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.error(
+                            f'ICA abort API call failed for {target_name} '
+                            f'(pipeline {target.pipeline_id}): {e}. '
+                            f'Marking CANCELLED locally anyway — user intent overrides the API result.',
+                        )
+                    delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
+                else:
+                    logger.info(
+                        f'Cancellation requested; {target_name} was never submitted — '
+                        f'marking CANCELLED without submitting.',
                     )
-                except Exception as e:  # noqa: BLE001
-                    logger.error(
-                        f'ICA abort API call failed for {target_name} '
-                        f'(pipeline {target.pipeline_id}): {e}. '
-                        f'Marking CANCELLED locally anyway — user intent overrides the API result.',
-                    )
-                delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
                 target.set_status(PipelineStatus.CANCELLED)
                 _fire_status_change(target, PipelineStatus.CANCELLED)
             else:
