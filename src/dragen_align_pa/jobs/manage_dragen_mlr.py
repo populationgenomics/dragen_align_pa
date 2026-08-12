@@ -118,11 +118,23 @@ def _mlr_submit_argv(
     ]
 
 
+# Tags exist purely for GUI filtering — ICA deliberately exposes no API to read
+# them back. The ar_guid is NOT tagged; it is already part of the ICA output path.
+def _mlr_analysis_tags() -> dict[str, list[str]]:
+    """ICA analysis tags for MLR submissions: `[ica.tags]` plus an `mlr` technical marker."""
+    return {
+        'technicalTags': [*config_retrieve(['ica', 'tags', 'technical_tags']), 'mlr'],
+        'userTags': config_retrieve(['ica', 'tags', 'user_tags']),
+        'referenceTags': config_retrieve(['ica', 'tags', 'reference_tags']),
+    }
+
+
 def _submit_mlr_run(
     sg_name: str,
     inputs_by_sg: dict[str, MlrInputs],
     local_config_path: str,
     mlr_hash_table: str,
+    tags: dict[str, list[str]],
 ) -> str:
     """Submits one SG's DRAGEN MLR analysis from its prefetched inputs."""
     # KeyError here means the loop tried to submit an SG the prefetch didn't
@@ -137,7 +149,7 @@ def _submit_mlr_run(
         cram_url=inputs.cram_url,
         gvcf_url=inputs.gvcf_url,
     )
-    mlr_analysis_id = popgen_mlr.submit_analysis(argv)
+    mlr_analysis_id = popgen_mlr.submit_analysis(argv, tags=tags)
     logger.info(f'MLR pipeline ID for {sg_name} is {mlr_analysis_id}')
     return mlr_analysis_id
 
@@ -154,6 +166,7 @@ def run(
 ) -> None:
     """Calls the generic pipeline manager with settings for the MLR pipeline."""
     mlr_hash_table: str = IcaPath.from_relpath(MLR_HASH_TABLE_RELPATH).as_url(ROLE_DRAGEN_MLR)
+    mlr_tags = _mlr_analysis_tags()
     sg_names = [sg.name for sg in cohort.get_sequencing_groups()]
 
     pending = _pending_sg_names(sg_names, outputs)
@@ -179,6 +192,7 @@ def run(
             inputs_by_sg=inputs_by_sg,
             local_config_path=local_config_path,
             mlr_hash_table=mlr_hash_table,
+            tags=mlr_tags,
         )
 
     manage_ica_pipeline_loop(

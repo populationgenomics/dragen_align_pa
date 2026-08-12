@@ -40,6 +40,11 @@ _TEST_CONFIG: dict[tuple, object] = {
     # project from ICA_PROJECT_SETUP['ourdna'], so anything resolving an ICA project (as_url,
     # the jobs' project_id / API-key selection) works by default against real ourdna names.
     ('ica', 'projects', 'project_root'): 'ourdna',
+    # Analysis tags, read by the DRAGEN/md5/MLR submission paths. Match the production
+    # TOML values verbatim (config/dragen_align_pa_defaults.toml [ica.tags]).
+    ('ica', 'tags', 'technical_tags'): ['test_technical_tag'],
+    ('ica', 'tags', 'user_tags'): ['test_user_tags'],
+    ('ica', 'tags', 'reference_tags'): ['test_reference_tags'],
 }
 
 # Monkeypatch target for path builders: `IcaPath` binds `config_retrieve` and `BUCKET_NAME`

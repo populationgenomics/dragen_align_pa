@@ -5,15 +5,23 @@ popgen_cli's own RetryRunner retries every exception (its submission POST up to
 silently until the batch times out. TransientRetryRunner replaces it: transient
 ICA errors get the shared bounded backoff, everything else propagates on the
 first occurrence. Relies on conftest's autouse `_instant_retry_sleeps`.
+
+The submit_analysis tests drive the REAL `popgen_cli.utils.utils.ICAClient` with
+only `requests.request` stubbed, so the cache lookups, request construction, and
+retry integration are all exercised for real; the wheel-parity test compares our
+POST byte-for-byte against the wheel's own `submit_job` to catch mirror drift.
 """
 
+import base64
 import json
 import logging
 from pathlib import Path
 
+import popgen_cli.utils.utils as popgen_utils
 import pytest
 import requests
 from loguru import logger as loguru_logger
+from popgen_cli.dragen_mlr import submit as popgen_submit
 
 from dragen_align_pa import popgen_mlr
 
@@ -52,6 +60,50 @@ def test_retry_runner_retries_transient_503_then_succeeds():
         calls['n'] += 1
         if calls['n'] == 1:
             raise _http_error(503, 'Service Unavailable')
+        return 'ok'
+
+    assert popgen_mlr.TransientRetryRunner().run(flaky) == 'ok'
+    assert calls['n'] == 2
+
+
+@pytest.mark.parametrize(('status', 'reason'), [(502, 'Bad Gateway'), (504, 'Gateway Timeout')])
+def test_retry_runner_retries_gateway_errors_then_succeeds(status: int, reason: str):
+    """502/504 come from gateways in front of ICA, not the API itself; the old
+    subprocess path retried them indefinitely, so treating them as permanent
+    would regress resilience."""
+    calls = {'n': 0}
+
+    def flaky() -> str:
+        calls['n'] += 1
+        if calls['n'] == 1:
+            raise _http_error(status, reason)
+        return 'ok'
+
+    assert popgen_mlr.TransientRetryRunner().run(flaky) == 'ok'
+    assert calls['n'] == 2
+
+
+def test_retry_runner_retries_connection_error_then_succeeds():
+    """A TCP reset mid-request must not fail the whole MLR stage on first occurrence."""
+    calls = {'n': 0}
+
+    def flaky() -> str:
+        calls['n'] += 1
+        if calls['n'] == 1:
+            raise requests.exceptions.ConnectionError('Connection reset by peer')
+        return 'ok'
+
+    assert popgen_mlr.TransientRetryRunner().run(flaky) == 'ok'
+    assert calls['n'] == 2
+
+
+def test_retry_runner_retries_read_timeout_then_succeeds():
+    calls = {'n': 0}
+
+    def flaky() -> str:
+        calls['n'] += 1
+        if calls['n'] == 1:
+            raise requests.exceptions.ReadTimeout('Read timed out')
         return 'ok'
 
     assert popgen_mlr.TransientRetryRunner().run(flaky) == 'ok'
@@ -116,39 +168,30 @@ def test_stdlib_logging_is_routed_to_loguru():
 
 # --- submit_analysis (in-process replacement for the popgen-cli subprocess) ---
 
-# The keys submit_analysis and the wheel's check_args/make_job actually read; shaped
-# like a real `popgen-cli dragen-mlr config` output.
+# The keys submit_analysis (and the wheel's check_args/make_job/cache getters) actually
+# read; shaped like a real `popgen-cli dragen-mlr config` output, ids included so the
+# real ICAClient's cache lookups resolve without any HTTP GET.
 _PROJECT_CONFIG = {
     'ica_api_key': 'PROJECT-KEY',
     'ica_region': {'code': 'use1'},
     'ica_storage_bundle': {'bundleName': 'bundle'},
     'ica_storage_configuration': None,
-    'ica_job_project': {'name': 'ourdna-mlr-jobs'},
-    'ica_job_project_meta_folder': {'data': {'details': {'path': '/meta/'}}},
-    'ica_job_project_jobs_folder': {'data': {'details': {'path': '/jobs/'}}},
+    'ica_job_project': {'id': 'proj-1', 'name': 'ourdna-mlr-jobs'},
+    'ica_job_project_meta_folder': {'data': {'id': 'fol.meta1', 'details': {'path': '/meta/'}}},
+    'ica_job_project_jobs_folder': {'data': {'id': 'fol.jobs1', 'details': {'path': '/jobs/'}}},
     'ica_job_project_config_file': {
         'data': {'id': 'fil.config1', 'details': {'path': '/meta/project_config.json'}},
     },
-    'ica_analysis_storage': {'name': 'Small'},
-    'ica_analysis_pipeline': {'pipeline': {'code': 'mlr-pipeline'}},
-    'ica_analysis_activation_code': {'pipelineBundle': {'name': 'mlr-bundle'}},
+    'ica_analysis_storage': {'id': 'st-1', 'name': 'Small'},
+    'ica_analysis_pipeline': {'pipeline': {'id': 'pipe-1', 'code': 'mlr-pipeline'}},
+    'ica_analysis_activation_code': {'id': 'ac-1', 'pipelineBundle': {'name': 'mlr-bundle'}},
 }
 
-
-class _FakeIcaClient:
-    def __init__(self, api_key: str, retry_runner=None):
-        self.api_key = api_key
-        self.retry_runner = retry_runner
-        self.cache_config = None
-        self.submit_kwargs = None
-        self.submit_response = {'id': 'analysis-789'}
-
-    def _set_cache_using_project_config(self, project_config_dict):
-        self.cache_config = project_config_dict
-
-    def submit_cwl_analysis(self, **kwargs):
-        self.submit_kwargs = kwargs
-        return self.submit_response
+_TAGS = {
+    'technicalTags': ['test_technical_tag', 'mlr'],
+    'userTags': ['test_user_tags'],
+    'referenceTags': ['test_reference_tags'],
+}
 
 
 def _submit_argv(tmp_path: Path) -> list[str]:
@@ -167,58 +210,139 @@ def _submit_argv(tmp_path: Path) -> list[str]:
     ]
 
 
-@pytest.fixture
-def fake_ica_clients(monkeypatch) -> list[_FakeIcaClient]:
-    created: list[_FakeIcaClient] = []
-
-    def _construct(api_key: str, retry_runner=None) -> _FakeIcaClient:
-        client = _FakeIcaClient(api_key, retry_runner)
-        created.append(client)
-        return client
-
-    monkeypatch.setattr('dragen_align_pa.popgen_mlr.popgen_utils.ICAClient', _construct)
-    return created
+def _response(status_code: int, body: str, reason: str = 'OK') -> requests.Response:
+    response = requests.Response()
+    response.status_code = status_code
+    response.reason = reason
+    response.url = 'https://ica.illumina.com/ica/rest/api/projects/proj-1/analysis:cwl'
+    response._content = body.encode()
+    return response
 
 
-def test_submit_analysis_returns_id_with_bounded_retries(tmp_path, fake_ica_clients):
-    analysis_id = popgen_mlr.submit_analysis(_submit_argv(tmp_path))
+def _stub_http(monkeypatch, *responses: requests.Response) -> list[dict]:
+    """Stub `requests.request` inside popgen_cli; responses are consumed in order
+    (the last one repeats). Returns the list of captured calls."""
+    calls: list[dict] = []
+    remaining = list(responses)
+
+    def _request(method: str, url: str, **kwargs) -> requests.Response:
+        calls.append({'method': method, 'url': url, **kwargs})
+        return remaining.pop(0) if len(remaining) > 1 else remaining[0]
+
+    monkeypatch.setattr(popgen_utils.requests, 'request', _request)
+    return calls
+
+
+def test_submit_analysis_posts_once_with_tags_and_returns_id(tmp_path, monkeypatch):
+    calls = _stub_http(monkeypatch, _response(201, '{"id": "analysis-789"}'))
+
+    analysis_id = popgen_mlr.submit_analysis(_submit_argv(tmp_path), tags=_TAGS)
 
     assert analysis_id == 'analysis-789'
-    client = fake_ica_clients[0]
-    assert client.api_key == 'PROJECT-KEY'
-    assert isinstance(client.retry_runner, popgen_mlr.TransientRetryRunner)
-    assert client.cache_config == _PROJECT_CONFIG
-    kwargs = client.submit_kwargs
-    # The outer do-or-die loop is neutered: one pass, no pre-raise sleep.
-    assert kwargs['max_retry'] == 1
-    assert kwargs['retry_sleep'] == 0
-    assert kwargs['project_name'] == 'ourdna-mlr-jobs'
-    assert kwargs['project_jobs_folder_path'] == '/jobs/'
-    assert kwargs['pipeline_name'] == 'mlr-pipeline'
-    assert kwargs['activation_code_name'] == 'mlr-bundle'
-    assert kwargs['analysis_storage_name'] == 'Small'
-    assert kwargs['analysis_name'] == 'sample-SYN00001-run-SYN00001-mlr'
-    assert kwargs['mount_list'] == [{'dataId': 'fil.config1', 'mountPath': 'project_config.json'}]
-    assert kwargs['input_json']['job_secret_file'] == {'class': 'File', 'location': 'project_config.json'}
-    assert 'job_def_str' in kwargs['input_json']
+    # Everything the POST needs is cache-served from the config JSON: exactly one HTTP call.
+    assert len(calls) == 1
+    call = calls[0]
+    assert call['method'] == 'POST'
+    assert call['url'].endswith('/projects/proj-1/analysis:cwl')
+    assert call['headers']['Content-Type'] == 'application/vnd.illumina.v4+json'
+    assert call['headers']['X-API-Key'] == 'PROJECT-KEY'
+    body = json.loads(call['data'])
+    assert body['tags'] == _TAGS
+    assert body['userReference'] == 'sample-SYN00001-run-SYN00001-mlr'
+    assert body['pipelineId'] == 'pipe-1'
+    assert body['activationCodeDetailId'] == 'ac-1'
+    assert body['analysisStorageId'] == 'st-1'
+    assert body['outputParentFolderId'] == 'fol.jobs1'
+    analysis_input = body['analysisInput']
+    assert analysis_input['mounts'] == [{'dataId': 'fil.config1', 'mountPath': 'project_config.json'}]
+    input_json = json.loads(analysis_input['inputJson'])
+    assert input_json['job_secret_file'] == {'class': 'File', 'location': 'project_config.json'}
+    job_def = json.loads(base64.b64decode(input_json['job_def_str']))
+    assert job_def['project_data_list'] == []
+    assert job_def['sample_id'] == 'SYN00001'
 
 
-def test_submit_analysis_raises_when_response_has_no_id(tmp_path, monkeypatch, fake_ica_clients):  # noqa: ARG001
-    # Replace the method on the class (instances set submit_response in __init__,
-    # so a class attribute would be shadowed and never seen).
-    monkeypatch.setattr(_FakeIcaClient, 'submit_cwl_analysis', lambda self, **kwargs: {})
+def test_submit_analysis_post_body_matches_wheel_except_tags(tmp_path, monkeypatch):
+    """Drift guard for the deliberate mirror: the wheel's own submit_job and our
+    submit_analysis must produce identical POSTs, tags aside."""
+    argv = _submit_argv(tmp_path)
+
+    ours_calls = _stub_http(monkeypatch, _response(201, '{"id": "analysis-789"}'))
+    popgen_mlr.submit_analysis(list(argv), tags=_TAGS)
+    ours = ours_calls[0]
+
+    wheel_args = popgen_submit.parse_args(list(argv))
+    popgen_submit.check_args(wheel_args)
+    wheel_job = popgen_submit.make_job(wheel_args)
+    wheel_calls = _stub_http(monkeypatch, _response(201, '{"id": "analysis-789"}'))
+    popgen_submit.submit_job(
+        project_config_dict=popgen_utils.read_json(wheel_args.input_project_config_file_path),
+        job_config_dict=wheel_job,
+        output_analysis_json_folder_path=wheel_args.output_analysis_json_folder_path,
+    )
+    wheel = wheel_calls[0]
+
+    assert ours['method'] == wheel['method']
+    assert ours['url'] == wheel['url']
+    assert ours['headers'] == wheel['headers']
+    ours_body = json.loads(ours['data'])
+    wheel_body = json.loads(wheel['data'])
+    assert ours_body.pop('tags') == _TAGS
+    assert wheel_body.pop('tags') == {'technicalTags': [], 'userTags': [], 'referenceTags': []}
+    assert ours_body == wheel_body
+
+
+def test_submit_analysis_permanent_error_propagates_with_status_and_body(tmp_path, monkeypatch):
+    """The stale-config case end to end: the raised error is the real HTTPError,
+    not popgen's generic 'failed to submit analysis' Exception, and only one
+    HTTP call is made."""
+    calls = _stub_http(
+        monkeypatch,
+        _response(401, '{"code": "ICA_SEC_002", "message": "stale key"}', reason='Unauthorized'),
+    )
+
+    with pytest.raises(requests.exceptions.HTTPError, match='401'):
+        popgen_mlr.submit_analysis(_submit_argv(tmp_path), tags=_TAGS)
+    assert len(calls) == 1
+
+
+def test_submit_analysis_retries_transient_429_then_submits(tmp_path, monkeypatch):
+    calls = _stub_http(
+        monkeypatch,
+        _response(429, '{"code": "ICA_API_429"}', reason='Too Many Requests'),
+        _response(201, '{"id": "analysis-789"}'),
+    )
+
+    analysis_id = popgen_mlr.submit_analysis(_submit_argv(tmp_path), tags=_TAGS)
+
+    assert analysis_id == 'analysis-789'
+    assert len(calls) == 2
+
+
+def test_submit_analysis_raises_when_response_has_no_id(tmp_path, monkeypatch):
+    _stub_http(monkeypatch, _response(201, '{}'))
 
     with pytest.raises(ValueError, match='missing "id"'):
-        popgen_mlr.submit_analysis(_submit_argv(tmp_path))
+        popgen_mlr.submit_analysis(_submit_argv(tmp_path), tags=_TAGS)
 
 
-def test_submit_analysis_runs_wheel_validation(tmp_path, fake_ica_clients):
+def test_submit_analysis_raises_on_non_json_response(tmp_path, monkeypatch):
+    """popgen's `_request_base` returns `response.text` (a str) for a non-JSON 2xx
+    body; that must become a clear error, not an AttributeError."""
+    _stub_http(monkeypatch, _response(201, 'Created'))
+
+    with pytest.raises(ValueError, match='non-JSON'):
+        popgen_mlr.submit_analysis(_submit_argv(tmp_path), tags=_TAGS)
+
+
+def test_submit_analysis_runs_wheel_validation(tmp_path, monkeypatch):
     """check_args stays authoritative: a hash-table URL without the required
     suffix must be rejected before any API interaction."""
+    calls = _stub_http(monkeypatch, _response(201, '{"id": "analysis-789"}'))
     argv = _submit_argv(tmp_path)
     ht_index = argv.index('--input-ht-folder-url') + 1
     argv[ht_index] = 'ica://ourdna-dragen-mlr/ref/wrong-hashtable'
 
     with pytest.raises(Exception, match='hash table folder URL'):
-        popgen_mlr.submit_analysis(argv)
-    assert fake_ica_clients == []
+        popgen_mlr.submit_analysis(argv, tags=_TAGS)
+    assert calls == []

@@ -112,14 +112,31 @@ def test_prefetch_authenticates_once_and_lists_once_per_sg(tmp_path, monkeypatch
     assert inputs['SYN00001'].output_folder_url.startswith('ica://')
 
 
+# --- _mlr_analysis_tags ---
+
+
+def test_mlr_analysis_tags_appends_mlr_marker_to_config_tags():
+    """Tags come from [ica.tags] (same convention as the align/md5 submissions)
+    plus an 'mlr' technical marker for GUI filtering; ICA offers no API to read
+    tags back, so this is their only consumer-visible effect."""
+    assert manage_dragen_mlr._mlr_analysis_tags() == {
+        'technicalTags': ['test_technical_tag', 'mlr'],
+        'userTags': ['test_user_tags'],
+        'referenceTags': ['test_reference_tags'],
+    }
+
+
 # --- _submit_mlr_run ---
+
+_TEST_TAGS = {'technicalTags': ['mlr'], 'userTags': [], 'referenceTags': []}
 
 
 def test_submit_mlr_run_builds_argv_from_prefetched_inputs(monkeypatch):
-    captured: dict[str, list[str]] = {}
+    captured: dict = {}
 
-    def _fake_submit(argv: list[str]) -> str:
+    def _fake_submit(argv: list[str], tags: dict[str, list[str]]) -> str:
         captured['argv'] = argv
+        captured['tags'] = tags
         return 'analysis-42'
 
     monkeypatch.setattr(
@@ -139,9 +156,11 @@ def test_submit_mlr_run_builds_argv_from_prefetched_inputs(monkeypatch):
         inputs_by_sg=inputs_by_sg,
         local_config_path='/io/mlr_config.json',
         mlr_hash_table='ica://mlrproj/ref/hashtable/hg38_alt_masked_graph_v2/DRAGEN/9',
+        tags=_TEST_TAGS,
     )
 
     assert analysis_id == 'analysis-42'
+    assert captured['tags'] == _TEST_TAGS
     argv = captured['argv']
     assert 'popgen-cli' not in argv  # flags only; the subprocess prefix is gone
     assert argv[argv.index('--run-id') + 1] == 'SYN00001-mlr'
@@ -159,6 +178,7 @@ def test_submit_callable_for_unprefetched_sg_fails_only_when_called():
         inputs_by_sg={},
         local_config_path='',
         mlr_hash_table='ht',
+        tags=_TEST_TAGS,
     )  # creation must not raise
     with pytest.raises(KeyError):
         submit()

@@ -5,15 +5,17 @@ submission POST sits in a retry loop that also retries permanent errors (400/401
 practically forever, the real reason only ever appears on its stdlib logging
 stream, and `capture_output=True` buffers that stream until the process exits —
 which it never does. Submitting in-process instead lets us inject a
-transient-only retry policy into popgen_cli's `ICAClient` and route its logging
-into loguru, so a permanent error (e.g. a stale MLR config JSON) fails the job
-loudly and immediately.
+transient-only retry policy into popgen_cli's `ICAClient`, route its logging
+into loguru, POST the analysis directly so a permanent error (e.g. a stale MLR
+config JSON) propagates as the real `HTTPError`, and populate the analysis tags
+the wheel hardcodes empty.
 """
 
+import json
 import logging
 import os
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Final
 
 import popgen_cli.utils.utils as popgen_utils
 import requests
@@ -22,19 +24,27 @@ from popgen_cli.dragen_mlr import submit as popgen_submit
 
 from dragen_align_pa import ica_api_utils
 
+# Mirrors ica_api_utils._RETRYABLE_ICA_STATUSES (429 rate-limit, 503 backend
+# unavailable) plus the gateway statuses (502/504) in front of ICA, which the
+# retired subprocess path retried indefinitely.
+_TRANSIENT_HTTP_STATUSES: Final = frozenset({429, 502, 503, 504})
+
 
 def _is_transient_popgen_error(exc: BaseException) -> bool:
-    """Tenacity predicate: True when the exception shows a transient ICA error (429/503).
+    """Tenacity predicate: True when the exception shows a transient ICA error.
 
     popgen_cli's `ICAClient._request_base` logs `API request failed: {status} - {body}`
     and then raises via `response.raise_for_status()`, so the propagating exception is a
-    `requests.exceptions.HTTPError` whose status code is matched structurally. The
-    message-marker fallback covers exceptions from other layers that only carry the
-    ICA error text.
+    `requests.exceptions.HTTPError` whose status code is matched structurally.
+    Connection errors and timeouts are transient by nature. The message-marker
+    fallback covers exceptions from other layers that only carry the ICA error text.
     """
+    if isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+        return True
     if isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None:
-        # Mirrors ica_api_utils._RETRYABLE_ICA_STATUSES (429 rate-limit, 503 backend unavailable).
-        return exc.response.status_code in {429, 503}
+        # `is not None`, not truthiness: Response.__bool__ is False for exactly
+        # the error statuses being matched here.
+        return exc.response.status_code in _TRANSIENT_HTTP_STATUSES
     message = str(exc)
     return any(marker in message for marker in ica_api_utils.TRANSIENT_ICA_ERROR_MARKERS)
 
@@ -43,9 +53,9 @@ class TransientRetryRunner:
     """Substitute for popgen_cli's `RetryRunner`, backed by the shared ICA backoff.
 
     popgen_cli's own runner retries every exception; this one retries only
-    transient ICA errors (429/503) and propagates anything else on the first
-    occurrence, so a permanent error surfaces with its full response text instead
-    of spinning silently.
+    transient ICA errors (429/502/503/504, connection errors, timeouts) and
+    propagates anything else on the first occurrence, so a permanent error
+    surfaces with its full response text instead of spinning silently.
     """
 
     def run(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -73,30 +83,40 @@ def _intercept_popgen_logging() -> None:
     logging.basicConfig(handlers=[_LoguruHandler()], level=logging.INFO, force=True)
 
 
-def submit_analysis(argv: list[str]) -> str:
+def submit_analysis(argv: list[str], tags: dict[str, list[str]]) -> str:
     """Submit one MLR analysis in-process and return its ICA analysis id.
 
-    Mirrors `popgen_cli.dragen_mlr.submit.main`/`submit_job` (see the vendored
-    wheel `third_party/popgen_cli-2.1.0-py3-none-any.whl`,
-    `popgen_cli/dragen_mlr/submit.py`) with two deliberate departures:
+    Mirrors `popgen_cli.dragen_mlr.submit.main`/`submit_job`/`submit_cwl_analysis`
+    (see the vendored wheel `third_party/popgen_cli-2.1.0-py3-none-any.whl`,
+    `popgen_cli/dragen_mlr/submit.py` and `popgen_cli/utils/utils.py`) with these
+    deliberate departures:
 
     - `ICAClient` gets `TransientRetryRunner`, so only transient ICA errors are
-      retried and a permanent one (e.g. a 401 from a stale MLR config JSON that
-      needs regenerating) propagates immediately with its response text.
-    - `submit_cwl_analysis(max_retry=1, retry_sleep=0)` disables the outer
-      retry loop; all retrying happens in the runner.
+      retried, and the analysis-creation POST is made directly instead of via
+      `submit_cwl_analysis`, whose do-or-die loop replaces the real error with a
+      generic terminal exception — here a permanent error (e.g. a 401 from a
+      stale MLR config JSON that needs regenerating) propagates as the actual
+      `HTTPError` carrying the response text.
+    - `tags` is populated from the caller; the wheel hardcodes all three tag
+      lists empty.
+    - The request ids come straight from the config JSON rather than the wheel's
+      cache-or-fetch getters: a stale config fails loudly on the POST instead of
+      being silently patched over by a by-name lookup.
     - The analysis-details JSON file write is dropped; the analysis id is
       returned directly.
 
     Args:
         argv: The flag list `popgen-cli dragen-mlr submit` would receive (the
             same argv the subprocess call used to pass).
+        tags: ICA analysis tags (keys `technicalTags`, `userTags`,
+            `referenceTags`). ICA exposes no API to read tags back, so they are
+            purely for GUI filtering.
 
     Returns:
         The `id` of the created ICA analysis.
 
     Raises:
-        ValueError: If the submission response carries no `id`.
+        ValueError: If the submission response is not JSON or carries no `id`.
     """
     _intercept_popgen_logging()
 
@@ -111,9 +131,6 @@ def submit_analysis(argv: list[str]) -> str:
         api_key=project_config_dict['ica_api_key'],
         retry_runner=TransientRetryRunner(),
     )
-    # Pre-populates the client cache so submit_cwl_analysis makes no lookup calls,
-    # only the analysis-creation POST.
-    ica_client._set_cache_using_project_config(project_config_dict)  # noqa: SLF001
 
     project_config_file = project_config_dict['ica_job_project_config_file']
     project_config_file_name = os.path.basename(project_config_file['data']['details']['path'])
@@ -138,19 +155,33 @@ def submit_analysis(argv: list[str]) -> str:
         {'dataId': project_config_file['data']['id'], 'mountPath': project_config_file_name},
     ]
 
-    analysis_details = ica_client.submit_cwl_analysis(
-        project_name=project_config_dict['ica_job_project']['name'],
-        project_jobs_folder_path=project_config_dict['ica_job_project_jobs_folder']['data']['details']['path'],
-        pipeline_name=project_config_dict['ica_analysis_pipeline']['pipeline']['code'],
-        analysis_name=job_config_dict['analysis_name'],
-        activation_code_name=project_config_dict['ica_analysis_activation_code']['pipelineBundle']['name'],
-        analysis_storage_name=project_config_dict['ica_analysis_storage']['name'],
-        input_json=input_json,
-        mount_list=mount_list,
-        max_retry=1,
-        retry_sleep=0,
+    # Request body mirrored from submit_cwl_analysis (utils.py:1742-1763), tags aside.
+    headers = {'Content-Type': 'application/vnd.illumina.v4+json'}
+    request_body = json.dumps(
+        {
+            'userReference': job_config_dict['analysis_name'],
+            'pipelineId': project_config_dict['ica_analysis_pipeline']['pipeline']['id'],
+            'tags': tags,
+            'activationCodeDetailId': project_config_dict['ica_analysis_activation_code']['id'],
+            'analysisStorageId': project_config_dict['ica_analysis_storage']['id'],
+            'outputParentFolderId': project_config_dict['ica_job_project_jobs_folder']['data']['id'],
+            'analysisInput': {
+                'objectType': 'JSON',
+                'inputJson': json.dumps(input_json),
+                'dataIds': [mount['dataId'] for mount in mount_list],
+                'mounts': mount_list,
+            },
+        },
     )
+    endpoint = f'/projects/{project_config_dict["ica_job_project"]["id"]}/analysis:cwl'
+    analysis_details = ica_client._post(endpoint=endpoint, headers=headers, data=request_body)  # noqa: SLF001
 
+    if not isinstance(analysis_details, dict):
+        # popgen's _request_base returns response.text (a str) for a non-JSON body.
+        raise ValueError(
+            f'MLR submission for "{job_config_dict["analysis_name"]}" returned a '
+            f'non-JSON response: {analysis_details!r}',
+        )
     analysis_id = analysis_details.get('id')
     if not analysis_id:
         raise ValueError(
