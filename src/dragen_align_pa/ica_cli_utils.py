@@ -141,46 +141,8 @@ def download_file_by_id(file_id: str, local_file_path: str) -> None:
 
 
 def find_ica_file_path_by_name(parent_folder: str, file_name: str) -> str:
-    """
-    Finds a file in ICA using the CLI and returns its full `details.path`.
-    """
-    command = [
-        'icav2',
-        'projectdata',
-        'list',
-        '--parent-folder',
-        parent_folder,
-        '--data-type',
-        'FILE',
-        '--file-name',
-        file_name,
-        '--match-mode',
-        'EXACT',
-        '-o',
-        'json',
-    ]
-    result: subprocess.CompletedProcess[Any] = _run_icav2_with_retry(command, f'Find ICA file {file_name}')
-    try:
-        data = json.loads(result.stdout)
-        if not data.get('items'):
-            raise ValueError(
-                f'No file found with name "{file_name}" in folder "{parent_folder}"',
-            )
-
-        file_path = data['items'][0].get('details', {}).get('path')
-        if not file_path:
-            raise ValueError(
-                f'File "{file_name}" found, but it has no "details.path" in API response.',
-            )
-
-        return file_path
-
-    except json.JSONDecodeError:
-        logger.error(f'Failed to decode JSON from icav2 list command: {result.stdout}')
-        raise
-    except (ValueError, IndexError) as e:
-        logger.error(f'Error parsing icav2 list output for {file_name}: {e}')
-        raise
+    """Finds a file in ICA using the CLI and returns its full `details.path`."""
+    return find_ica_file_paths_by_names(parent_folder, [file_name])[file_name]
 
 
 def find_ica_file_paths_by_names(parent_folder: str, file_names: Sequence[str]) -> dict[str, str]:
@@ -191,14 +153,21 @@ def find_ica_file_paths_by_names(parent_folder: str, file_names: Sequence[str]) 
 
     Args:
         parent_folder: The ICA folder to search (direct children).
-        file_names: Exact filenames to resolve.
+        file_names: Exact filenames to resolve (at least one).
 
     Returns:
         Mapping of each requested filename to its full `details.path`.
 
     Raises:
-        ValueError: If any requested file is missing (all missing names listed).
+        ValueError: If `file_names` is empty, any requested file is missing (all
+            missing names listed), or a name matches more than one file.
     """
+    if not file_names:
+        # An empty request would emit an unfiltered folder listing and silently
+        # return {} — a caller bug, not a lookup result.
+        raise ValueError(f'file_names must not be empty (folder "{parent_folder}")')
+    # `--parent-folder` is a boolean flag and the path that follows it is a
+    # positional argument, not the flag's value — don't "fix" the ordering.
     command = [
         'icav2',
         'projectdata',
@@ -224,8 +193,17 @@ def find_ica_file_paths_by_names(parent_folder: str, file_names: Sequence[str]) 
     found: dict[str, str] = {}
     for item in data.get('items', []):
         path = item.get('details', {}).get('path')
-        if path:
-            found[path.rsplit('/', 1)[-1]] = path
+        if not path:
+            continue
+        name = path.rsplit('/', 1)[-1]
+        if name in found and found[name] != path:
+            # A silent pick between same-named files would be response-order
+            # dependent (e.g. a stale nested re-run folder shadowing the real one).
+            raise ValueError(
+                f'Multiple files named "{name}" returned for folder "{parent_folder}": '
+                f'{found[name]} and {path}',
+            )
+        found[name] = path
 
     missing = [name for name in file_names if name not in found]
     if missing:

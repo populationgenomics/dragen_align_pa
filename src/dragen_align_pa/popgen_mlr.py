@@ -11,6 +11,7 @@ config JSON) propagates as the real `HTTPError`, and populate the analysis tags
 the wheel hardcodes empty.
 """
 
+import inspect
 import json
 import logging
 import os
@@ -70,16 +71,36 @@ class _LoguruHandler(logging.Handler):
             level: str | int = logger.level(record.levelname).name
         except ValueError:
             level = record.levelno
-        logger.opt(depth=6, exception=record.exc_info).log(level, record.getMessage())
+        # Attribute the loguru record to the frame that called into logging: starting
+        # from this emit() frame, walk up past the logging-module frames, counting the
+        # loguru `depth` as we go. A fixed depth only fits one exact call chain, and
+        # frames are matched by module name, not co_filename — standalone-build
+        # pythons compile the stdlib with a build-root path that never equals
+        # `logging.__file__`.
+        frame = inspect.currentframe()
+        depth = 0
+        if frame is not None:
+            frame = frame.f_back  # step out of emit() itself
+            depth = 1
+        while frame is not None and frame.f_globals.get('__name__') == 'logging':
+            frame = frame.f_back
+            depth += 1
+        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 
 def _intercept_popgen_logging() -> None:
     """Route stdlib logging into loguru.
 
     popgen_cli reports request failures and submission retries only via the root
-    stdlib logger; without this bridge those lines bypass the loguru sinks the
-    pipeline's error log monitoring reads.
+    stdlib logger (module-level `logging.warning`, so the records are named `root`
+    and cannot be filtered by name — owning the root logger is unavoidable);
+    without this bridge those lines bypass the loguru sinks the pipeline's error
+    log monitoring reads. Idempotent: `basicConfig(force=True)` removes every
+    existing root handler and raises the root level to INFO, so it must run once,
+    not once per submission.
     """
+    if any(isinstance(handler, _LoguruHandler) for handler in logging.getLogger().handlers):
+        return
     logging.basicConfig(handlers=[_LoguruHandler()], level=logging.INFO, force=True)
 
 
@@ -107,7 +128,10 @@ def submit_analysis(argv: list[str], tags: dict[str, list[str]]) -> str:
 
     Args:
         argv: The flag list `popgen-cli dragen-mlr submit` would receive (the
-            same argv the subprocess call used to pass).
+            same argv the subprocess call used to pass). `--dry-run true` is
+            rejected (this mirror has no dry-run path and would submit for
+            real); `--verbose` is accepted but ignored — the loguru bridge
+            replaces the wheel's `config_logging`.
         tags: ICA analysis tags (keys `technicalTags`, `userTags`,
             `referenceTags`). ICA exposes no API to read tags back, so they are
             purely for GUI filtering.
@@ -116,12 +140,18 @@ def submit_analysis(argv: list[str], tags: dict[str, list[str]]) -> str:
         The `id` of the created ICA analysis.
 
     Raises:
-        ValueError: If the submission response is not JSON or carries no `id`.
+        ValueError: If `--dry-run true` is passed, or the submission response is
+            not JSON or carries no `id`.
     """
     _intercept_popgen_logging()
 
     args = popgen_submit.parse_args(argv)
     popgen_submit.check_args(args)
+    if args.dry_run:
+        raise ValueError(
+            'dry-run is not supported by the in-process MLR submission (it would submit '
+            'for real); remove --dry-run.',
+        )
     job_config_dict = popgen_submit.make_job(args)
     # submit_job sets this after make_job; it is serialized into job_def_str below.
     job_config_dict['project_data_list'] = []

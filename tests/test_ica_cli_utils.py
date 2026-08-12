@@ -303,3 +303,31 @@ def test_find_paths_by_names_retries_rate_limited_cli_then_succeeds(monkeypatch)
 
     assert paths == {'SYN00001.cram': '/run/SYN00001/SYN00001.cram'}
     assert run.call_count == 2
+
+
+def test_find_paths_by_names_raises_on_ambiguous_basenames(monkeypatch):
+    """Two response items sharing a basename must be an error, not a silent
+    order-dependent last-wins pick (e.g. a stale nested re-run folder)."""
+    run = MagicMock(
+        return_value=_list_success(
+            ['/run/SYN00001/SYN00001.cram', '/run/SYN00001/stale/SYN00001.cram'],
+        ),
+    )
+    monkeypatch.setattr('dragen_align_pa.ica_cli_utils.utils.run_subprocess_with_log', run)
+
+    with pytest.raises(ValueError, match=re.escape('SYN00001.cram')) as exc_info:
+        ica_cli_utils.find_ica_file_paths_by_names('/run/SYN00001/', ['SYN00001.cram'])
+
+    assert 'stale' in str(exc_info.value)  # both candidate paths are named
+
+
+def test_find_paths_by_names_rejects_empty_request(monkeypatch):
+    """An empty name list would emit an unfiltered folder listing and silently
+    return {}; reject it before any CLI call."""
+    run = MagicMock()
+    monkeypatch.setattr('dragen_align_pa.ica_cli_utils.utils.run_subprocess_with_log', run)
+
+    with pytest.raises(ValueError, match='file_names'):
+        ica_cli_utils.find_ica_file_paths_by_names('/run/SYN00001/', [])
+
+    assert run.call_count == 0

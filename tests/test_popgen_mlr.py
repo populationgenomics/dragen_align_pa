@@ -166,6 +166,35 @@ def test_stdlib_logging_is_routed_to_loguru():
     assert any('API request failed: 401' in r for r in records)
 
 
+def test_logging_bridge_installs_once_and_stays_installed():
+    """The bridge mutates process-global logging state; re-invoking it (it used to
+    run once per SG submission) must be a no-op, not a remove-and-replace of the
+    root handlers each time."""
+    popgen_mlr._intercept_popgen_logging()
+    first_handler = next(
+        h for h in logging.getLogger().handlers if isinstance(h, popgen_mlr._LoguruHandler)
+    )
+    popgen_mlr._intercept_popgen_logging()
+
+    bridge_handlers = [h for h in logging.getLogger().handlers if isinstance(h, popgen_mlr._LoguruHandler)]
+    assert bridge_handlers == [first_handler]  # same instance, not a fresh install
+
+
+def test_logging_bridge_attributes_the_real_caller():
+    """A fixed frame depth only fits one exact call chain; module-level
+    `logging.warning(...)` (one frame deeper than `Logger.warning`) must still
+    attribute to the caller, so the bridge has to walk out of the logging module."""
+    functions: list[str] = []
+    sink_id = loguru_logger.add(lambda message: functions.append(message.record['function']), level='WARNING')
+    try:
+        popgen_mlr._intercept_popgen_logging()
+        logging.warning('who logged this?')
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert functions == ['test_logging_bridge_attributes_the_real_caller']
+
+
 # --- submit_analysis (in-process replacement for the popgen-cli subprocess) ---
 
 # The keys submit_analysis (and the wheel's check_args/make_job/cache getters) actually
@@ -344,5 +373,16 @@ def test_submit_analysis_runs_wheel_validation(tmp_path, monkeypatch):
     argv[ht_index] = 'ica://ourdna-dragen-mlr/ref/wrong-hashtable'
 
     with pytest.raises(Exception, match='hash table folder URL'):
+        popgen_mlr.submit_analysis(argv, tags=_TAGS)
+    assert calls == []
+
+
+def test_submit_analysis_rejects_dry_run(tmp_path, monkeypatch):
+    """The wheel's parser accepts --dry-run but this mirror would submit for real;
+    fail loudly rather than silently ignore the flag."""
+    calls = _stub_http(monkeypatch, _response(201, '{"id": "analysis-789"}'))
+    argv = [*_submit_argv(tmp_path), '--dry-run', 'true']
+
+    with pytest.raises(ValueError, match='dry-run'):
         popgen_mlr.submit_analysis(argv, tags=_TAGS)
     assert calls == []

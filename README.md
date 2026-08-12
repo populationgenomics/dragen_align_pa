@@ -243,3 +243,23 @@ The `cpg_sequencing_group_id` is the key used to join the manifest data to the s
 | 0001 | 0001_R2.fastq.gz | 9800998ecf8427e1d8cd98f00b204e98 | 1 | M0001 | AABBCC | ID0001 |
 | 0002 | 0002_R1.fastq.gz | 1234567890abcdef1234567890abcdef | 1 | M0001 | AABBCC | ID0002 |
 | 0002 | 0002_R2.fastq.gz | fedcba0987654321fedcba0987654321 | 1 | M0001 | AABBCC | ID0002 |
+
+## Local Development
+
+The test suite needs two dependencies that `pip install .[test]` does not cover
+(both are installed separately in CI and the Dockerfile). Without the vendored
+`popgen_cli` wheel, pytest aborts the entire collection with
+`ModuleNotFoundError: No module named 'popgen_cli'`.
+
+```bash
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install git+https://github.com/Illumina/ica-sdk-python.git
+pip install third_party/popgen_cli-2.1.0-py3-none-any.whl
+pip install -e .[test]
+pip install typing-extensions==4.13.0  # icasdk compatibility pin, matches CI
+pre-commit install
+pytest
+```
+
+The wheel is installed before this package on purpose — it pins `requests`,
+which caps the `urllib3` range (see the Dockerfile comment for the details).

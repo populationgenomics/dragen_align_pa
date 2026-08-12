@@ -32,48 +32,87 @@ class MlrInputs(NamedTuple):
     output_folder_url: str
 
 
+# Shared with the manage_ica_pipeline_loop call in run(): the pending-set check and
+# the loop's own submit condition must read the same marker file.
+_MLR_PIPELINE_ID_KEY_TEMPLATE = '{target_name}_mlr_pipeline_id'
+
+
 # Mirrors the loop's own condition (no pipeline-id file, or force_resubmit
-# deleting them all) so prefetch covers exactly the SGs that get submitted.
-# Cancellation submits nothing, so nothing is prefetched.
+# deleting them all) so prefetch covers the SGs that get submitted; the on-demand
+# fallback in run() handles any divergence, so this is an optimisation hint, not
+# a correctness invariant. Cancellation submits nothing, so nothing is prefetched.
 def _pending_sg_names(sg_names: Sequence[str], outputs: dict[str, cpg_utils.Path]) -> list[str]:
-    """Names of SGs the loop will actually submit this run."""
+    """Names of SGs the loop is expected to submit this run."""
     if config_retrieve(['ica', 'management', 'cancel_cohort_run'], default=False):
         return []
     if config_retrieve(['ica', 'management', 'force_resubmit'], default=False):
         return list(sg_names)
-    return [name for name in sg_names if not outputs[f'{name}_mlr_pipeline_id'].exists()]
+    return [
+        name
+        for name in sg_names
+        if not outputs[_MLR_PIPELINE_ID_KEY_TEMPLATE.format(target_name=name)].exists()
+    ]
 
 
-# Runs before anything is submitted, so a missing input fails the cohort with
-# zero analyses launched (previously a mid-cohort lookup failure aborted with
-# earlier SGs already running).
+def _resolve_mlr_inputs(
+    sg_name: str,
+    cohort_name: str,
+    pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path],
+) -> MlrInputs:
+    """Resolve one SG's CRAM/gVCF/output URLs with a single ICA list call.
+
+    Assumes the icav2 CLI has entered the DRAGEN align project.
+    """
+    state = load_per_sg_state(
+        pipeline_id_arguid_path_dict[f'{sg_name}_pipeline_id_and_arguid'],
+        required_keys=('pipeline_id', 'user_reference'),
+        expected_cohort_name=cohort_name,
+    )
+    # One IcaPath for this SG's folder feeds both the REST folder form (input
+    # lookup) and the ica:// URL form (pipeline output).
+    sample_path = ica_run_path(cohort_name, state['user_reference'], state['pipeline_id']) / sg_name
+    found = ica_cli_utils.find_ica_file_paths_by_names(
+        sample_path.as_folder(),
+        [f'{sg_name}.cram', f'{sg_name}.hard-filtered.gvcf.gz'],
+    )
+    # The CRAM and gVCF live in the dragen_align project, resolved via [ica.projects].
+    return MlrInputs(
+        cram_url=IcaPath.from_relpath(found[f'{sg_name}.cram']).as_url(ROLE_DRAGEN_ALIGN),
+        gvcf_url=IcaPath.from_relpath(found[f'{sg_name}.hard-filtered.gvcf.gz']).as_url(ROLE_DRAGEN_ALIGN),
+        output_folder_url=sample_path.as_url(ROLE_DRAGEN_ALIGN),
+    )
+
+
+# Runs before anything is submitted, so bad inputs fail the cohort with zero
+# analyses launched — and all failing SGs are reported in one pass rather than one
+# fix-and-rerun cycle each. (A submission failure inside the loop can still abort
+# mid-cohort; this guarantee covers input resolution only.)
 def _prefetch_mlr_inputs(
     pending: Sequence[str],
     cohort_name: str,
     pipeline_id_arguid_path_dict: dict[str, cpg_utils.Path],
 ) -> dict[str, MlrInputs]:
-    """Resolve every pending SG's CRAM/gVCF/output URLs with one auth and one list call per SG."""
+    """Resolve every pending SG's inputs with one auth and one list call per SG.
+
+    Raises:
+        ValueError: If any SG's inputs cannot be resolved, naming every affected SG.
+    """
     ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_ALIGN)
 
     inputs_by_sg: dict[str, MlrInputs] = {}
+    failures: dict[str, str] = {}
     for sg_name in pending:
-        state = load_per_sg_state(
-            pipeline_id_arguid_path_dict[f'{sg_name}_pipeline_id_and_arguid'],
-            required_keys=('pipeline_id', 'user_reference'),
-            expected_cohort_name=cohort_name,
-        )
-        # One IcaPath for this SG's folder feeds both the REST folder form (input
-        # lookup) and the ica:// URL form (pipeline output).
-        sample_path = ica_run_path(cohort_name, state['user_reference'], state['pipeline_id']) / sg_name
-        found = ica_cli_utils.find_ica_file_paths_by_names(
-            sample_path.as_folder(),
-            [f'{sg_name}.cram', f'{sg_name}.hard-filtered.gvcf.gz'],
-        )
-        # The CRAM and gVCF live in the dragen_align project, resolved via [ica.projects].
-        inputs_by_sg[sg_name] = MlrInputs(
-            cram_url=IcaPath.from_relpath(found[f'{sg_name}.cram']).as_url(ROLE_DRAGEN_ALIGN),
-            gvcf_url=IcaPath.from_relpath(found[f'{sg_name}.hard-filtered.gvcf.gz']).as_url(ROLE_DRAGEN_ALIGN),
-            output_folder_url=sample_path.as_url(ROLE_DRAGEN_ALIGN),
+        try:
+            inputs_by_sg[sg_name] = _resolve_mlr_inputs(sg_name, cohort_name, pipeline_id_arguid_path_dict)
+        except (ValueError, KeyError) as exc:
+            # Per-SG data problems (missing files, malformed state) are collected;
+            # infrastructure errors (CLI failures) propagate immediately.
+            failures[sg_name] = str(exc)
+    if failures:
+        summary = '; '.join(f'{sg_name}: {message}' for sg_name, message in failures.items())
+        raise ValueError(
+            f'MLR input resolution failed for {len(failures)}/{len(pending)} SGs '
+            f'(nothing submitted): {summary}',
         )
     return inputs_by_sg
 
@@ -88,6 +127,7 @@ def _mlr_download_config(mlr_config_json_fid: str, local_tmp_dir: str) -> str:
 
 def _mlr_submit_argv(
     local_config_path: str,
+    analysis_json_dir: str,
     run_id: str,
     sample_id: str,
     mlr_hash_table: str,
@@ -99,8 +139,11 @@ def _mlr_submit_argv(
     return [
         '--input-project-config-file-path',
         local_config_path,
+        # Required by the wheel's parser and mkdir'd by its check_args, but nothing
+        # writes to it since the analysis id is returned directly — point it at the
+        # batch tmp dir so it doesn't litter the CWD with one empty dir per SG.
         '--output-analysis-json-folder-path',
-        sample_id,
+        analysis_json_dir,
         '--run-id',
         run_id,
         '--sample-id',
@@ -131,17 +174,17 @@ def _mlr_analysis_tags() -> dict[str, list[str]]:
 
 def _submit_mlr_run(
     sg_name: str,
-    inputs_by_sg: dict[str, MlrInputs],
-    local_config_path: str,
+    resolve_inputs: Callable[[str], MlrInputs],
+    mlr_config_path: Callable[[], str],
     mlr_hash_table: str,
     tags: dict[str, list[str]],
 ) -> str:
-    """Submits one SG's DRAGEN MLR analysis from its prefetched inputs."""
-    # KeyError here means the loop tried to submit an SG the prefetch didn't
-    # cover — a bug in the pending-set mirror, worth failing loudly on.
-    inputs = inputs_by_sg[sg_name]
+    """Submits one SG's DRAGEN MLR analysis from its resolved inputs."""
+    inputs = resolve_inputs(sg_name)
+    local_config_path = mlr_config_path()
     argv = _mlr_submit_argv(
         local_config_path=local_config_path,
+        analysis_json_dir=os.path.join(os.path.dirname(local_config_path), 'mlr_analysis_json'),
         run_id=f'{sg_name}-mlr',
         sample_id=sg_name,
         mlr_hash_table=mlr_hash_table,
@@ -169,28 +212,47 @@ def run(
     mlr_tags = _mlr_analysis_tags()
     sg_names = [sg.name for sg in cohort.get_sequencing_groups()]
 
-    pending = _pending_sg_names(sg_names, outputs)
     inputs_by_sg: dict[str, MlrInputs] = {}
-    local_config_path = ''
+    mlr_config_cache: dict[str, str] = {}
+
+    def _resolve_with_fallback(sg_name: str) -> MlrInputs:
+        # The pending set is an optimisation hint, not a correctness invariant: if
+        # the loop submits an SG the prefetch didn't cover (a divergent marker-file
+        # state, or a future allow_retry=True resubmission), resolve it on demand
+        # instead of dying on a bare KeyError.
+        if sg_name not in inputs_by_sg:
+            logger.warning(f'{sg_name} was not prefetched; resolving its MLR inputs on demand.')
+            ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_ALIGN)
+            inputs_by_sg[sg_name] = _resolve_mlr_inputs(sg_name, cohort.name, pipeline_id_arguid_path_dict)
+        return inputs_by_sg[sg_name]
+
+    def _mlr_config_path() -> str:
+        # Lazy so the on-demand fallback works even when nothing was prefetched;
+        # cached so the MLR-project auth (only needed for this icav2 download) and
+        # the download itself still happen once per run.
+        if 'path' not in mlr_config_cache:
+            batch_tmpdir = os.environ.get('BATCH_TMPDIR')
+            if not batch_tmpdir:
+                raise ValueError(
+                    'BATCH_TMPDIR is not set — the MLR manager only runs as a Hail '
+                    'Batch job and needs it for the config download.',
+                )
+            ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_MLR)
+            mlr_config_cache['path'] = _mlr_download_config(ica_mlr_config_file_id(), batch_tmpdir)
+        return mlr_config_cache['path']
+
+    pending = _pending_sg_names(sg_names, outputs)
     if pending:
-        inputs_by_sg = _prefetch_mlr_inputs(pending, cohort.name, pipeline_id_arguid_path_dict)
-        # The MLR project context is only needed by the icav2 config download.
-        ica_cli_utils.authenticate_ica_cli(ROLE_DRAGEN_MLR)
-        local_config_path = _mlr_download_config(
-            ica_mlr_config_file_id(),
-            os.environ.get('BATCH_TMPDIR', '/io'),
-        )
+        inputs_by_sg.update(_prefetch_mlr_inputs(pending, cohort.name, pipeline_id_arguid_path_dict))
+        _mlr_config_path()
 
     def _create_submit_callable(sg_name: str) -> Callable[[], str]:
         """Creates a zero-argument callable for pipeline submission."""
-        # Bind the dict, not inputs_by_sg[sg_name]: the loop calls this factory
-        # for EVERY unfinished target each poll cycle, including already-submitted
-        # SGs that were never prefetched.
         return partial(
             _submit_mlr_run,
             sg_name=sg_name,
-            inputs_by_sg=inputs_by_sg,
-            local_config_path=local_config_path,
+            resolve_inputs=_resolve_with_fallback,
+            mlr_config_path=_mlr_config_path,
             mlr_hash_table=mlr_hash_table,
             tags=mlr_tags,
         )
