@@ -88,6 +88,7 @@ def run_subprocess_with_log(
     stdin_input: str | None = None,
     shell: bool = False,
     log_failure: bool = True,
+    log_output: bool = True,
 ) -> subprocess.CompletedProcess[Any]:
     """
     Runs a subprocess command with robust logging.
@@ -101,6 +102,9 @@ def run_subprocess_with_log(
         log_failure: Log a failure at ERROR level before re-raising. A retrying
             caller passes False and logs each attempt itself, so intermediate
             failures carry a RETRYING marker and only the final one is unmarked.
+        log_output: Log the captured stdout/stderr at INFO on success. A caller
+            whose stdout is bulk data it parses itself (e.g. an ICA list JSON
+            response) passes False; failures always keep their full output.
     """
     cmd_str = cmd if isinstance(cmd, str) else ' '.join(cmd)
     executable = '/bin/bash' if shell else None
@@ -116,9 +120,9 @@ def run_subprocess_with_log(
             executable=executable,
         )
         logger.info(f'{step_name} completed successfully.')
-        if process.stdout:
+        if log_output and process.stdout:
             logger.info(f'{step_name} STDOUT:\n{process.stdout.strip()}')
-        if process.stderr:
+        if log_output and process.stderr:
             logger.info(f'{step_name} STDERR:\n{process.stderr.strip()}')
         return process
     except subprocess.CalledProcessError as e:

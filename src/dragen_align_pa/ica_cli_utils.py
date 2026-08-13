@@ -35,7 +35,11 @@ def _is_transient_cli_error(exc: BaseException) -> bool:
     return any(marker in output for marker in ica_api_utils.TRANSIENT_ICA_ERROR_MARKERS)
 
 
-def _run_icav2_with_retry(cmd: list[str], step_name: str) -> subprocess.CompletedProcess[Any]:
+def _run_icav2_with_retry(
+    cmd: list[str],
+    step_name: str,
+    log_output: bool = True,
+) -> subprocess.CompletedProcess[Any]:
     """Run an icav2 command, retrying transient ICA errors (429/503) with the shared backoff.
 
     Every failed attempt logs its full detail at ERROR: intermediate (retried) attempts
@@ -45,12 +49,14 @@ def _run_icav2_with_retry(cmd: list[str], step_name: str) -> subprocess.Complete
     Args:
         cmd: The full icav2 command line.
         step_name: Human-readable step name for logging.
+        log_output: Log the command's stdout/stderr at INFO on success; a caller
+            that parses bulk stdout itself passes False.
     """
 
     def run_icav2() -> subprocess.CompletedProcess[Any]:
         # Failure logging is handled here per-attempt (with the RETRYING marker),
         # not inside run_subprocess_with_log, which can't know whether a retry follows.
-        return utils.run_subprocess_with_log(cmd, step_name, log_failure=False)
+        return utils.run_subprocess_with_log(cmd, step_name, log_failure=False, log_output=log_output)
 
     def log_retrying(retry_state: 'RetryCallState') -> None:
         exc = retry_state.outcome.exception() if retry_state.outcome else None
@@ -183,7 +189,9 @@ def find_ica_file_paths_by_names(parent_folder: str, file_names: Sequence[str]) 
     ]
     for file_name in file_names:
         command += ['--file-name', file_name]
-    result = _run_icav2_with_retry(command, f'Find ICA files {", ".join(file_names)}')
+    # The JSON response is parsed here, not read by humans: keep it out of the
+    # success-path INFO log (~150 lines per call) and surface it only on failure.
+    result = _run_icav2_with_retry(command, f'Find ICA files {", ".join(file_names)}', log_output=False)
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError:
@@ -207,6 +215,9 @@ def find_ica_file_paths_by_names(parent_folder: str, file_names: Sequence[str]) 
 
     missing = [name for name in file_names if name not in found]
     if missing:
+        # The success-path response log is suppressed, so show what the folder
+        # actually contained now that the lookup has failed.
+        logger.error(f'ICA list response for "{parent_folder}":\n{result.stdout.strip()}')
         raise ValueError(
             f'No file(s) named {", ".join(missing)} found in folder "{parent_folder}"',
         )
