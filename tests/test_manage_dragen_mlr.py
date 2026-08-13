@@ -240,6 +240,8 @@ def test_run_prefetches_then_prepares_mlr_project_then_starts_loop(tmp_path, mon
     assert order == ['prefetch', f'auth:{ROLE_DRAGEN_MLR}', 'download']
     assert loop_kwargs['pipeline_name'] == 'MLR'
     assert loop_kwargs['allow_retry'] is False
+    # The loop and the prefetch pending-set check must read the same marker file.
+    assert loop_kwargs['pipeline_id_file_key_template'] == manage_dragen_mlr._MLR_PIPELINE_ID_KEY_TEMPLATE
 
 
 def test_run_skips_all_cli_setup_when_nothing_pending(tmp_path, monkeypatch):

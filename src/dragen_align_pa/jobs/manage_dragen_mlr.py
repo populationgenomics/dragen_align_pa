@@ -263,7 +263,7 @@ def run(
         pipeline_name='MLR',
         is_mlr_pipeline=True,
         success_file_key_template='{target_name}_mlr_success',
-        pipeline_id_file_key_template='{target_name}_mlr_pipeline_id',
+        pipeline_id_file_key_template=_MLR_PIPELINE_ID_KEY_TEMPLATE,
         error_log_key=f'{cohort.name}_mlr_errors',
         submit_function_factory=_create_submit_callable,
         allow_retry=False,
