@@ -8,6 +8,9 @@ MLR-config lookups and reference-file-ID resolution). They reference the tables 
 A run operates within one dataset *family*, named by `[ica.projects].project_root`.
 `ICA_PROJECT_SETUP[family]` holds that family's per-role projects (`projects[role]` → name +
 id), API-key secret field, and MLR config JSON file id. A role resolves by direct indexing.
+`FAMILY_FILE_IDS[family]` holds the family's reference-file IDs — the same reference file is
+minted a different `fil.…` ID in each family's ICA domain — overlaid on the family-invariant
+`ICA_FILE_IDS`.
 """
 
 from typing import Final
@@ -193,28 +196,60 @@ def _reject_placeholder_file_id(name: str, file_id: str) -> str:
     return file_id
 
 
-def resolve_ica_file_id(name: str) -> str:
+def _family_file_ids(project_root: str) -> dict[str, str]:
+    """Return family `project_root`'s reference-file table from `FAMILY_FILE_IDS`.
+
+    Raises:
+        KeyError: If `project_root` has no registered file table (the message lists the
+            registered families).
+    """
+    try:
+        return ica_constants.FAMILY_FILE_IDS[project_root]
+    except KeyError:
+        registered = sorted(ica_constants.FAMILY_FILE_IDS)
+        raise KeyError(
+            f'ICA project family {project_root!r} has no FAMILY_FILE_IDS table. '
+            f'Registered families: {registered}.',
+        ) from None
+
+
+def resolve_ica_file_id(project_root: str, name: str) -> str:
     """Look up the ICA file ID for a registered reference-asset basename (BED / VCF / genome).
 
+    The same reference file is minted a different `fil.…` ID in each dataset family's ICA
+    domain, so the lookup reads family `project_root`'s `FAMILY_FILE_IDS` table overlaid on the
+    family-invariant `ICA_FILE_IDS`. The two tables' keys are disjoint by design — a shared ID
+    lives only in `ICA_FILE_IDS` (pinned by a registry-consistency test), so the overlay order
+    never decides a lookup.
+
     Args:
-        name: The registered basename to resolve (from `ICA_FILE_IDS`).
+        project_root: The dataset family whose ICA domain the ID must belong to.
+        name: The registered basename to resolve.
 
     Returns:
         The ICA `fil.…`/`fol.…` ID for `name`.
 
     Raises:
-        KeyError: If `name` is not registered (the message lists the registered basenames).
+        KeyError: If the family or `name` is not registered (the message lists what is
+            registered).
         ValueError: If the registered value is still the `fil.TODO_…` placeholder (not yet uploaded).
     """
+    registry = {**ica_constants.ICA_FILE_IDS, **_family_file_ids(project_root)}
     try:
-        file_id = ica_constants.ICA_FILE_IDS[name]
+        file_id = registry[name]
     except KeyError:
         raise KeyError(
-            f'{name!r} is not a registered ICA file basename. '
-            f'Add it to ICA_FILE_IDS in dragen_align_pa.constants.ica_constants, or check for typos. '
-            f'Registered names: {sorted(ica_constants.ICA_FILE_IDS)}',
+            f'{name!r} is not a registered ICA file basename for family {project_root!r}. '
+            f'Add it to FAMILY_FILE_IDS[{project_root!r}] (or, for a family-invariant ID, ICA_FILE_IDS) '
+            f'in dragen_align_pa.constants.ica_constants, or check for typos. '
+            f'Registered names: {sorted(registry)}',
         ) from None
     return _reject_placeholder_file_id(name, file_id)
+
+
+def ica_file_id(name: str) -> str:
+    """Resolve a registered reference-asset name to its ICA file ID for the configured family."""
+    return resolve_ica_file_id(configured_family(), name)
 
 
 # Keys in an ICA_PON_FILE_IDS panel entry: the `<panel>.normals.txt` list file

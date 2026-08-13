@@ -87,21 +87,46 @@ MLR_HASH_TABLE_RELPATH: Final = 'data/ref/hashtable/hg38_alt_masked_graph_v2/DRA
 ANALYSIS_INSTANCE_TIER: Final[str] = 'economy'
 
 
-# Registry of reference files/folders in ICA (BEDs, QC assets, reference genomes). Referenced
-# by basename from config or directly in code. Resolve via `constants_registry.resolve_ica_file_id`.
+# Reference files/folders in ICA whose IDs are the same in every dataset family's domain.
+# Currently just the DRAGEN hash table. Resolve via `constants_registry.resolve_ica_file_id`,
+# which overlays the per-family `FAMILY_FILE_IDS` table on this one.
+# DRAGEN 3.7.8 alt-aware graph hash-table tarball, version-locked to DRAGEN_VERSION.
+DRAGEN_HT_NAME: Final = 'hg38_altaware_graph_based.v8.tar'
 ICA_FILE_IDS: Final[dict[str, str]] = {
-    'Twist_VCGS_Exome_Covered_Targets_hg38.bed': 'fil.60130ada16264ed28a7008deb1d54636',
-    'S30409818_Regions.bed': 'fil.5d4da6b9c2c74abcb00608deb2229b88',
-    'S30409818_Covered.bed': 'fil.625777f457c84b508a7108deb1d54636',
-    # QC reference assets. The cross-contamination VCF is seqtype-agnostic; the
-    # two coverage-region BEDs are WGS QC regions (wired into [ica.qc.genome]).
-    'SNP_NCBI_GRCh38.vcf': 'fil.fd99781d0a9044c1441608de15afe1ac',
-    'wgs_coverage_regions.hg38_minus_N.interval_list.bed': 'fil.434cd66e92844a1f1f6a08de15159355',
-    'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed': 'fil.d37b27f6c28a4f6852ae08de17298bbd',
-    # Folders in ICA containing the reference genomes for CRAM -> BAM conversion
-    # When realigning existing non-Dragen CRAMs
-    'hg38_masked.fasta': 'fol.df2129db2c88419cbe0408dd600dce1f',
-    'hg38_unmasked.fasta': 'fol.d45ec3a17cf241f5b61b08dd7c524fb7',
+    DRAGEN_HT_NAME: 'fil.854d49a151a24edae5d708da2935b1b0',
+}
+
+# Per-family reference files/folders in ICA (BEDs, QC assets, reference genomes), keyed by the
+# same family names as ICA_PROJECT_SETUP. The same file is minted a different `fil.…` ID in each
+# family's ICA domain, so each family registers its own IDs. Referenced by basename from config
+# or directly in code. Resolve via `constants_registry.resolve_ica_file_id`.
+# A name registered in ICA_FILE_IDS is shared by design and must not also appear in any family
+# table (pinned by test_registry_tables_are_consistent).
+FAMILY_FILE_IDS: Final[dict[str, dict[str, str]]] = {
+    'ourdna': {
+        'Twist_VCGS_Exome_Covered_Targets_hg38.bed': 'fil.60130ada16264ed28a7008deb1d54636',
+        'S30409818_Regions.bed': 'fil.5d4da6b9c2c74abcb00608deb2229b88',
+        'S30409818_Covered.bed': 'fil.625777f457c84b508a7108deb1d54636',
+        # QC reference assets. The cross-contamination VCF is seqtype-agnostic; the
+        # two coverage-region BEDs are WGS QC regions (wired into [ica.qc.genome]).
+        'SNP_NCBI_GRCh38.vcf': 'fil.fd99781d0a9044c1441608de15afe1ac',
+        'wgs_coverage_regions.hg38_minus_N.interval_list.bed': 'fil.434cd66e92844a1f1f6a08de15159355',
+        'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed': 'fil.d37b27f6c28a4f6852ae08de17298bbd',
+        # Folders in ICA containing the reference genomes for CRAM -> BAM conversion
+        # When realigning existing non-Dragen CRAMs
+        'hg38_masked.fasta': 'fol.df2129db2c88419cbe0408dd600dce1f',
+        'hg38_unmasked.fasta': 'fol.d45ec3a17cf241f5b61b08dd7c524fb7',
+    },
+    # tenk10k runs WGS only: exome runs and unmasked-reference realignment are not
+    # supported, so the exome BEDs and hg38_unmasked.fasta are deliberately absent.
+    'tenk10k': {
+        'SNP_NCBI_GRCh38.vcf': 'fil.1a7a2d0442854127e5d608da2935b1b0',
+        'wgs_coverage_regions.hg38_minus_N.interval_list.bed': 'fil.ad60897bc97e4646f28c08da33ba0a20',
+        'acmg59_allofus_19dec2019.GRC38.wGenes.NEW.bed': 'fil.c4ade57f5ffe4baff28d08da33ba0a20',
+        # Folders in ICA containing the reference genomes for CRAM -> BAM conversion
+        # When realigning existing non-Dragen CRAMs
+        'hg38_masked.fasta': 'fol.5ce5384cf2724fc6db5108def74f582c',
+    },
 }
 
 
@@ -558,7 +583,10 @@ DESIGN_TO_CANONICAL: Final[dict[str, str]] = {
 
 # Per canonical design: the BED basenames known to belong to it, used by
 # validator.assert_cohort_design_matches_configured_bed to check [presets.exome.bed_names]
-# against the cohort's resolved design. All entries must also be in ICA_FILE_IDS above.
+# against the cohort's resolved design. Entries must be registered in the FAMILY_FILE_IDS
+# table of each family that runs the design (tenk10k runs WGS only, so registers none); the
+# validator also resolves the configured BEDs for the running family, so a family without the
+# entry fails at submit.
 # CRE (v1) intentionally has no entry (Agilent ships no Regions BED for CRE and the Covered BED
 # isn't uploaded yet), so a CRE cohort fails at the validator until the Covered BED is registered.
 DESIGN_TO_BEDS: Final[dict[str, frozenset[str]]] = {

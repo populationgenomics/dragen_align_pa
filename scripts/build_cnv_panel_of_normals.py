@@ -427,7 +427,7 @@ def _print_registration_snippet(panel_name: str, file_ids: dict[str, str]) -> No
 
 
 def main() -> None:
-    """Parse CLI args, build the panel, and print its ICA_FILE_IDS block."""
+    """Parse CLI args, build the panel, and print its ICA_PON_FILE_IDS block."""
     parser = argparse.ArgumentParser(description='Build a DRAGEN CNV Panel of Normals from existing target counts.')
     parser.add_argument('--panel-name', required=True, help='Panel label, used for the list filename and folder.')
     parser.add_argument(

@@ -10,24 +10,61 @@ read it off that module at call time.
 
 import pytest
 
-from dragen_align_pa.constants import constants_registry
+from dragen_align_pa.constants import constants_registry, ica_constants
 from dragen_align_pa.constants.ica_constants import _TODO_FID
 
 
-def test_resolve_ica_file_id_returns_registered_id(monkeypatch):
-    """Known basename mapped to a real fil.… ID → returns that ID."""
+def test_resolve_ica_file_id_is_family_scoped(monkeypatch):
+    """The same basename resolves to a different ID per family — the file is minted a distinct
+    fil.… ID in each family's ICA domain."""
+    monkeypatch.setattr(
+        'dragen_align_pa.constants.ica_constants.FAMILY_FILE_IDS',
+        {
+            'ourdna': {'shared.vcf': 'fil.ourdna0000000000'},
+            'tenk10k': {'shared.vcf': 'fil.tenk10k000000000'},
+        },
+    )
+    assert constants_registry.resolve_ica_file_id('ourdna', 'shared.vcf') == 'fil.ourdna0000000000'
+    assert constants_registry.resolve_ica_file_id('tenk10k', 'shared.vcf') == 'fil.tenk10k000000000'
+
+
+def test_resolve_ica_file_id_falls_back_to_family_invariant_table(monkeypatch):
+    """A name absent from the family table resolves from the family-invariant ICA_FILE_IDS
+    (the DRAGEN hash table has the same ID in every family's domain)."""
+    monkeypatch.setattr(
+        'dragen_align_pa.constants.ica_constants.FAMILY_FILE_IDS',
+        {'ourdna': {}},
+    )
     monkeypatch.setattr(
         'dragen_align_pa.constants.ica_constants.ICA_FILE_IDS',
-        {'real.bed': 'fil.0123456789abcdef'},
+        {'shared.tar': 'fil.hashtable0000000'},
     )
-    assert constants_registry.resolve_ica_file_id('real.bed') == 'fil.0123456789abcdef'
+    assert constants_registry.resolve_ica_file_id('ourdna', 'shared.tar') == 'fil.hashtable0000000'
+
+
+def test_registry_tables_are_consistent():
+    """Two invariants over the production tables. ICA_FILE_IDS holds IDs shared by design, so
+    its names must not also appear in any family table — a duplicate would silently shadow the
+    shared entry with a possibly stale ID. And every family in ICA_PROJECT_SETUP must have a
+    FAMILY_FILE_IDS table, so a new family fails here in CI rather than at the first
+    run-time resolve."""
+    assert ica_constants.FAMILY_FILE_IDS.keys() == ica_constants.ICA_PROJECT_SETUP.keys()
+    for family, table in ica_constants.FAMILY_FILE_IDS.items():
+        overlap = table.keys() & ica_constants.ICA_FILE_IDS.keys()
+        assert not overlap, f'FAMILY_FILE_IDS[{family!r}] re-registers family-invariant name(s): {sorted(overlap)}'
 
 
 def test_resolve_ica_file_id_raises_on_unknown_name():
     """Unknown basename → clear error naming the unknown entry."""
     unknown = 'this_bed_is_not_registered.bed'
     with pytest.raises(KeyError, match=r'this_bed_is_not_registered\.bed'):
-        constants_registry.resolve_ica_file_id(unknown)
+        constants_registry.resolve_ica_file_id('ourdna', unknown)
+
+
+def test_resolve_ica_file_id_raises_on_unknown_family():
+    """Unknown family → error naming the family, not a bare basename miss."""
+    with pytest.raises(KeyError, match=r'no-such-family'):
+        constants_registry.resolve_ica_file_id('no-such-family', 'real.bed')
 
 
 def test_resolve_ica_file_id_rejects_placeholder_id(monkeypatch):
@@ -36,16 +73,16 @@ def test_resolve_ica_file_id_rejects_placeholder_id(monkeypatch):
     opaque "no such file" failure mid-run. resolve_ica_file_id must instead
     raise at submitter startup with a clear actionable message."""
     monkeypatch.setattr(
-        'dragen_align_pa.constants.ica_constants.ICA_FILE_IDS',
-        {'staged_but_not_uploaded.bed': 'fil.TODO_REPLACE_AFTER_ICA_UPLOAD'},
+        'dragen_align_pa.constants.ica_constants.FAMILY_FILE_IDS',
+        {'ourdna': {'staged_but_not_uploaded.bed': 'fil.TODO_REPLACE_AFTER_ICA_UPLOAD'}},
     )
     with pytest.raises(ValueError, match=r'staged_but_not_uploaded\.bed'):
-        constants_registry.resolve_ica_file_id('staged_but_not_uploaded.bed')
+        constants_registry.resolve_ica_file_id('ourdna', 'staged_but_not_uploaded.bed')
 
 
 def test_resolve_mlr_config_file_id_returns_registered_id():
     """The MLR config JSON is registered per family in ICA_PROJECT_SETUP, separate from the
-    reference-asset basenames in ICA_FILE_IDS."""
+    reference-asset basenames in FAMILY_FILE_IDS."""
     assert constants_registry.resolve_mlr_config_file_id('ourdna') == 'fil.a1007afeae3741bb815108dedba2c6eb'
 
 
@@ -148,6 +185,9 @@ def test_config_reading_entry_points_use_configured_family():
     assert constants_registry.ica_api_key_field() == 'apiKey'
     assert constants_registry.ica_mlr_config_file_id() == 'fil.a1007afeae3741bb815108dedba2c6eb'
     assert constants_registry.ica_can_delete_fastq() is True
+    # ica_file_id reads ourdna's FAMILY_FILE_IDS table (overlaid on ICA_FILE_IDS).
+    assert constants_registry.ica_file_id('S30409818_Regions.bed') == 'fil.5d4da6b9c2c74abcb00608deb2229b88'
+    assert constants_registry.ica_file_id(ica_constants.DRAGEN_HT_NAME) == 'fil.854d49a151a24edae5d708da2935b1b0'
 
 
 def test_resolve_cnv_normals_panel_returns_list_basename_and_all_ids(monkeypatch):

@@ -25,9 +25,10 @@ from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.batches import IcaBatch, validate_error_strategy
 from dragen_align_pa.constants.constants_registry import (
     ROLE_DRAGEN_ALIGN,
+    ica_file_id,
     resolve_cnv_normals_panel,
-    resolve_ica_file_id,
 )
+from dragen_align_pa.constants.ica_constants import DRAGEN_HT_NAME
 from dragen_align_pa.utils import get_bed_names_for_seqtype
 
 # DRAGEN flags that don't depend on input type (CRAM vs FASTQ) or sequencing type (WGS vs WES).
@@ -208,7 +209,7 @@ def _build_cram_data_inputs(
         cram_fids.append(sg_state['cram_fid'])
 
     # Resolve the configured CRAM-reference folder ID from ica_constants.py via file name in config
-    selected_ref: str = resolve_ica_file_id(config_retrieve(['ica', 'cram_references', 'reference']))
+    selected_ref: str = ica_file_id(config_retrieve(['ica', 'cram_references', 'reference']))
 
     return (
         [
@@ -402,7 +403,9 @@ def _build_fastq_data_inputs(
 
 
 def _build_common_data_inputs() -> list[AnalysisDataInput]:
-    dragen_ht_id: str = config_retrieve(['ica', 'pipelines', 'dragen_ht_id'])
+    # The hash-table ID is the same in every family's ICA domain, so it lives in the
+    # ICA_FILE_IDS registry rather than config.
+    dragen_ht_id: str = ica_file_id(DRAGEN_HT_NAME)
     sequencing_type = config_retrieve(['workflow', 'sequencing_type'])
 
     # Coverage-region BEDs are configured per sequencing type under
@@ -420,25 +423,25 @@ def _build_common_data_inputs() -> list[AnalysisDataInput]:
         )
     # Resolve BED basenames to ICA file IDs here so a typo/unstaged BED fails fast
     # before any ICA round-trip.
-    coverage_region_bed_ids = [resolve_ica_file_id(name) for name in coverage_region_bed_names]
+    coverage_region_bed_ids = [ica_file_id(name) for name in coverage_region_bed_names]
 
     # Cross-contamination VCF is seqtype-agnostic, so it stays at [ica.qc]. Like
-    # the BEDs it's a basename resolved to an ICA file ID via ICA_FILE_IDS.
+    # the BEDs it's a basename resolved to an ICA file ID via the file-ID registry.
     cross_cont_vcf_name: str | None = config_retrieve(['ica', 'qc', 'cross_cont_vcf'], default=None)
-    cross_cont_vcf_id = resolve_ica_file_id(cross_cont_vcf_name) if cross_cont_vcf_name else None
+    cross_cont_vcf_id = ica_file_id(cross_cont_vcf_name) if cross_cont_vcf_name else None
 
     preset_files = config_retrieve(
         ['dragen_align_pa', 'manage_dragen_pipeline', 'presets', sequencing_type, 'additional_files'],
         default=[],
     )
     user_files = config_retrieve(['dragen_align_pa', 'manage_dragen_pipeline', 'user', 'additional_files'], default=[])
-    # additional_files entries are BED basenames, resolved via ICA_FILE_IDS.
+    # additional_files entries are BED basenames, resolved via the file-ID registry.
     # bed_names values are added too so the operator names a BED once.
     bed_name_files = list(get_bed_names_for_seqtype().values())
     additional_file_names: list[str] = list(dict.fromkeys(list(preset_files) + list(user_files) + bed_name_files))
-    additional_file_ids = [resolve_ica_file_id(name) for name in additional_file_names]
+    additional_file_ids = [ica_file_id(name) for name in additional_file_names]
 
-    # Raw ICA file IDs passed straight through, bypassing the ICA_FILE_IDS name
+    # Raw ICA file IDs passed straight through, bypassing the file-ID name
     # registry. For run-specific inputs whose per-sample IDs don't belong in
     # shared constants (e.g. CNV panel-of-normals count files + normals list).
     raw_file_ids: list[str] = config_retrieve(

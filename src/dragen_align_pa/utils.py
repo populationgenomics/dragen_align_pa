@@ -149,7 +149,7 @@ def get_bed_names_for_seqtype() -> dict[str, str]:
             raise ValueError(
                 '[dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names] '
                 'is missing or empty. Set vc_target, cnv_target, and sv_call_regions '
-                'in your run config to BED basenames registered in ICA_FILE_IDS.',
+                'in your run config to BED basenames registered in FAMILY_FILE_IDS.',
             )
         return {}
 
@@ -158,7 +158,7 @@ def get_bed_names_for_seqtype() -> dict[str, str]:
         raise ValueError(
             f'[dragen_align_pa.manage_dragen_pipeline.presets.{sequencing_type}.bed_names] '
             f'is missing values for {unset_entries}. Set each to a BED basename '
-            f'registered in ICA_FILE_IDS.',
+            f'registered in FAMILY_FILE_IDS.',
         )
     return {key: str(name) for key, name in bed_names.items()}
 
