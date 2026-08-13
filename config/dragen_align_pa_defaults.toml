@@ -99,8 +99,6 @@ job_timeout_seconds = 21600
 # The pipeline ID is from ICA and is specific to the exact pipeline being run. This should not need to be changed.
 [ica.pipelines]
 dragen_version = 'dragen_3_7_8'
-# Dragen hash table for 3.7.8
-dragen_ht_id = 'fil.854d49a151a24edae5d708da2935b1b0'
 
 #md5sum pipeline
 md5_pipeline_id = "e767f290-bc60-4281-b11d-6a65c9791253"
@@ -147,9 +145,10 @@ additional_files = []
 cnv_normals_panel = ""
 
 # BED basenames for each DRAGEN target slot. Set these in your run's config
-# TOML using names registered in dragen_align_pa.constants.ica_constants.ICA_FILE_IDS.
+# TOML using names registered in dragen_align_pa.constants.ica_constants.FAMILY_FILE_IDS
+# for the family named by [ica.projects].project_root.
 #
-# Registered BEDs today:
+# Registered BEDs today (ourdna only; tenk10k runs WGS exclusively):
 #   Twist_VCGS_Exome_Covered_Targets_hg38.bed   -- Twist exome design.
 #                                                  The narrower target coordinates
 #                                                  (Twist doesn't distribute a
@@ -169,31 +168,32 @@ sv_call_regions = "Twist_VCGS_Exome_Covered_Targets_hg38.bed"
 # Per-run user override hooks. Appended after the preset values.
 [dragen_align_pa.manage_dragen_pipeline.user]
 additional_args = ""
-# Extra input file basenames, resolved to ICA file IDs via ICA_FILE_IDS.
+# Extra input file basenames, resolved to ICA file IDs via FAMILY_FILE_IDS.
 additional_files = []
 # Raw ICA file IDs (fil.…) passed straight through without name resolution, for
-# run-specific inputs that shouldn't be registered in ICA_FILE_IDS (e.g. CNV
+# run-specific inputs that shouldn't be registered in FAMILY_FILE_IDS (e.g. CNV
 # panel-of-normals count files + normals list).
 additional_file_ids = []
 
 # IDs for all CRAM references that were previously used to generate the CRAM files that are to be realigned
 [ica.cram_references]
 
-# Choice for which CRAM reference to use.
-# Current choices are 'hg38_masked.fasta' or 'hg38_unmasked.fasta'
+# Choice for which CRAM reference to use. Availability is per family (FAMILY_FILE_IDS):
+# ourdna registers 'hg38_masked.fasta' and 'hg38_unmasked.fasta'; tenk10k registers
+# 'hg38_masked.fasta' only (unmasked-reference realignment is unsupported by design).
 # Check constants/ica_constants.py for more
 reference = 'hg38_masked.fasta'
 
 [ica.qc]
 # Cross-contamination SNP VCF basename — resolved to an ICA file ID at
-# submission time via `dragen_align_pa.constants.ica_constants.ICA_FILE_IDS`. Seqtype-agnostic,
+# submission time via `dragen_align_pa.constants.ica_constants.FAMILY_FILE_IDS`. Seqtype-agnostic,
 # so it lives at [ica.qc] (not under a per-seqtype block below).
 cross_cont_vcf = 'SNP_NCBI_GRCh38.vcf'
 
 # Coverage-region BED basenames, split by sequencing type. The submitter reads
 # the [ica.qc.<workflow.sequencing_type>] block matching the run, so WGS regions
 # never reach an exome run (or vice versa). Names are resolved to ICA file IDs
-# via `dragen_align_pa.constants.ica_constants.ICA_FILE_IDS`; an unregistered name raises at
+# via `dragen_align_pa.constants.ica_constants.FAMILY_FILE_IDS`; an unregistered name raises at
 # submitter startup. DRAGEN accepts at most 3 coverage-region BEDs per run.
 [ica.qc.genome]
 coverage_region_beds = [

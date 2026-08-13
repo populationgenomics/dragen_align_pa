@@ -6,6 +6,7 @@ import pytest
 
 from dragen_align_pa import utils
 from dragen_align_pa.batches import IcaBatch
+from dragen_align_pa.constants import ica_constants
 from dragen_align_pa.jobs import submit_dragen_batch
 from dragen_align_pa.jobs.submit_dragen_batch import _MAX_COVERAGE_REGION_BEDS
 
@@ -64,13 +65,11 @@ def _common_data_cfg(
 ):
     """Build the config dict the `_build_common_data_inputs` tests share.
 
-    Collapses the recurring six-key block (dragen_ht_id, per-seqtype
-    coverage_region_beds, cross_cont_vcf, sequencing_type, preset + user
-    additional_files). `extra` merges in the per-test tuple-keyed entries
-    (bed_names, cnv_normals_panel).
+    Collapses the recurring five-key block (per-seqtype coverage_region_beds,
+    cross_cont_vcf, sequencing_type, preset + user additional_files). `extra`
+    merges in the per-test tuple-keyed entries (bed_names, cnv_normals_panel).
     """
     cfg: dict[tuple, object] = {
-        ('ica', 'pipelines', 'dragen_ht_id'): 'fil.refref',
         ('ica', 'qc', sequencing_type, 'coverage_region_beds'): list(coverage_region_beds),
         ('ica', 'qc', 'cross_cont_vcf'): cross_cont_vcf,
         ('workflow', 'sequencing_type'): sequencing_type,
@@ -222,7 +221,7 @@ def test_build_additional_args_rejects_unknown_token(monkeypatch):
 
 def test_build_common_data_inputs_adds_bed_names_to_additional_files(monkeypatch):
     """bed_names basenames are added to additional_files (resolved via
-    ICA_FILE_IDS) and deduped against preset entries. Twist case: a
+    FAMILY_FILE_IDS) and deduped against preset entries. Twist case: a
     basename used by multiple bed_names entries appears only once."""
     _stub_registry(
         monkeypatch,
@@ -380,13 +379,26 @@ def test_run_rejects_mixed_cram_and_fastq_inputs():
 
 
 def _stub_registry(monkeypatch, mapping: dict[str, str]) -> None:
-    """Replace constants.ICA_FILE_IDS for the duration of one test so we don't
-    couple the test to the production registry's current contents.
+    """Replace ourdna's FAMILY_FILE_IDS table (conftest configures `project_root='ourdna'`)
+    for the duration of one test so we don't couple the test to the production registry's
+    current contents. The family-invariant ICA_FILE_IDS (the DRAGEN hash table) stays real.
 
-    resolve_ica_file_id() reads ICA_FILE_IDS from its own module at call time,
+    resolve_ica_file_id() reads FAMILY_FILE_IDS from its own module at call time,
     so patching the name on `dragen_align_pa.constants.ica_constants` is enough — no matter
     how submit_dragen_batch imports the resolver."""
-    monkeypatch.setattr('dragen_align_pa.constants.ica_constants.ICA_FILE_IDS', mapping)
+    monkeypatch.setattr('dragen_align_pa.constants.ica_constants.FAMILY_FILE_IDS', {'ourdna': mapping})
+
+
+def test_build_common_data_inputs_ref_tar_from_registry(monkeypatch):
+    """The DRAGEN hash-table ID is the same in every family's ICA domain, so ref_tar
+    resolves from the family-invariant ICA_FILE_IDS registry, not from config."""
+    _stub_registry(monkeypatch, {})
+    cfg = _common_data_cfg()
+    _patch_config(monkeypatch, lambda key, default=None: cfg.get(tuple(key), default))
+    inputs = submit_dragen_batch._build_common_data_inputs()
+    ref_tar = [i for i in inputs if i['parameterCode'] == 'ref_tar']
+    assert len(ref_tar) == 1
+    assert list(ref_tar[0]['dataIds']) == [ica_constants.ICA_FILE_IDS[ica_constants.DRAGEN_HT_NAME]]
 
 
 def test_build_common_data_inputs_rejects_too_many_coverage_beds(monkeypatch):
@@ -403,7 +415,7 @@ def test_build_common_data_inputs_rejects_too_many_coverage_beds(monkeypatch):
 
 def test_build_common_data_inputs_accepts_max_coverage_beds(monkeypatch):
     """3 entries is the documented maximum — must not raise. Basenames in
-    config are resolved to ICA file IDs via constants.ICA_FILE_IDS before
+    config are resolved to ICA file IDs via constants.FAMILY_FILE_IDS before
     being passed to ICA."""
     bed_names = [f'bed{i}.bed' for i in range(_MAX_COVERAGE_REGION_BEDS)]
     registry = {name: f'fil.{i:07d}' for i, name in enumerate(bed_names)}
@@ -428,7 +440,7 @@ def test_build_common_data_inputs_rejects_unregistered_bed_name(monkeypatch):
 
 
 def test_build_common_data_inputs_resolves_cross_cont_vcf_basename(monkeypatch):
-    """cross_cont_vcf is a basename resolved to an ICA file ID via ICA_FILE_IDS;
+    """cross_cont_vcf is a basename resolved to an ICA file ID via FAMILY_FILE_IDS;
     the qc_cross_cont_vcf data input must carry the resolved fil.… ID, not the
     basename from config."""
     _stub_registry(monkeypatch, {'SNP_NCBI_GRCh38.vcf': 'fil.crosscont'})

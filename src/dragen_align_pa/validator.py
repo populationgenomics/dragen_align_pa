@@ -21,6 +21,7 @@ from dragen_align_pa.constants.constants_registry import (
     configured_family,
     resolve_ica_api_key_field,
     resolve_ica_can_delete_fastq,
+    resolve_ica_file_id,
     resolve_ica_project_id,
     resolve_ica_project_name,
     resolve_mlr_config_file_id,
@@ -129,7 +130,9 @@ def assert_cohort_design_matches_configured_bed(cohort: Cohort) -> None:
             to a design absent from `DESIGN_TO_BEDS`, or the configured BEDs fall outside the
             resolved design's valid set.
         ValueError: If `get_bed_names_for_seqtype` rejects a missing or empty exome
-            bed_names block.
+            bed_names block, or a configured BED's registered ID is still a placeholder.
+        KeyError: If a configured BED isn't registered in the running family's
+            `FAMILY_FILE_IDS` table.
     """
     if config_retrieve(['workflow', 'sequencing_type']) != 'exome':
         return
@@ -167,6 +170,13 @@ def assert_cohort_design_matches_configured_bed(cohort: Cohort) -> None:
             f"aren't in DESIGN_TO_BEDS[{cohort_design!r}] = "
             f'{sorted(valid_beds)}. Check the config against the cohort design.',
         )
+
+    # A design-valid BED must also be minted in the running family's ICA domain. tenk10k runs
+    # WGS only and registers no exome BEDs, so a tenk10k exome config fails here at submit
+    # rather than per-batch inside the submitter.
+    project_root = configured_family()
+    for bed_name in sorted(set(bed_names.values())):
+        resolve_ica_file_id(project_root, bed_name)
     logger.info(
         f'Exome design check passed: cohort {cohort.id} -> {cohort_design}, beds {sorted(set(bed_names.values()))}.',
     )

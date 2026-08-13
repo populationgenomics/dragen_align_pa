@@ -194,6 +194,24 @@ def test_validator_happy_path_crev2(monkeypatch):
     assert_cohort_design_matches_configured_bed(cohort)  # type: ignore[arg-type]
 
 
+def test_validator_rejects_exome_bed_unregistered_for_family(monkeypatch):
+    """tenk10k runs WGS only and registers no exome BEDs in FAMILY_FILE_IDS, so a tenk10k
+    exome config must be rejected once, up front, by the validator — not per batch inside
+    the submitter. The family is read via `constants_registry.configured_family`, so patch
+    config in that binding."""
+    _patch_config(
+        monkeypatch,
+        _config_factory(bed_names={'vc_target': 'Twist_VCGS_Exome_Covered_Targets_hg38.bed'}),
+    )
+    monkeypatch.setattr(
+        'dragen_align_pa.constants.constants_registry.config_retrieve',
+        lambda key, default=None: 'tenk10k',  # noqa: ARG005
+    )
+    cohort = _FakeCohort(id='COH0001', sgs=[_make_sg('CPG_A', 'TwistWES1VCGS1')])
+    with pytest.raises(KeyError, match=r'tenk10k'):
+        assert_cohort_design_matches_configured_bed(cohort)  # type: ignore[arg-type]
+
+
 def test_validator_happy_path_twist(monkeypatch):
     _patch_config(
         monkeypatch,
