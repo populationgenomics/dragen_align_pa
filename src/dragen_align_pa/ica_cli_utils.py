@@ -7,8 +7,9 @@ authentication and running CLI commands via subprocess.
 import json
 import os
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -23,15 +24,7 @@ if TYPE_CHECKING:
 # icav2 surfaces a transient ICA error only as exit code 1 with the HTTP reason phrase
 # and ICA error code in its output (e.g. the JWT fetch prints
 # "429 Too Many Requests : ICA_API_429 : Too many requests..."), so retryability is
-# matched on these markers — there is no structured status to inspect. The statuses
-# mirror the SDK path's `_RETRYABLE_ICA_STATUSES` (429 rate-limit, 503 backend
-# unavailable); anything else propagates on the first occurrence.
-_TRANSIENT_CLI_MARKERS: Final = (
-    'ICA_API_429',
-    '429 Too Many Requests',
-    'ICA_API_503',
-    '503 Service Unavailable',
-)
+# matched on the shared textual markers — there is no structured status to inspect.
 
 
 def _is_transient_cli_error(exc: BaseException) -> bool:
@@ -39,10 +32,14 @@ def _is_transient_cli_error(exc: BaseException) -> bool:
     if not isinstance(exc, subprocess.CalledProcessError):
         return False
     output = f'{exc.stdout or ""}\n{exc.stderr or ""}'
-    return any(marker in output for marker in _TRANSIENT_CLI_MARKERS)
+    return any(marker in output for marker in ica_api_utils.TRANSIENT_ICA_ERROR_MARKERS)
 
 
-def _run_icav2_with_retry(cmd: list[str], step_name: str) -> subprocess.CompletedProcess[Any]:
+def _run_icav2_with_retry(
+    cmd: list[str],
+    step_name: str,
+    log_output: bool = True,
+) -> subprocess.CompletedProcess[Any]:
     """Run an icav2 command, retrying transient ICA errors (429/503) with the shared backoff.
 
     Every failed attempt logs its full detail at ERROR: intermediate (retried) attempts
@@ -52,12 +49,14 @@ def _run_icav2_with_retry(cmd: list[str], step_name: str) -> subprocess.Complete
     Args:
         cmd: The full icav2 command line.
         step_name: Human-readable step name for logging.
+        log_output: Log the command's stdout/stderr at INFO on success; a caller
+            that parses bulk stdout itself passes False.
     """
 
     def run_icav2() -> subprocess.CompletedProcess[Any]:
         # Failure logging is handled here per-attempt (with the RETRYING marker),
         # not inside run_subprocess_with_log, which can't know whether a retry follows.
-        return utils.run_subprocess_with_log(cmd, step_name, log_failure=False)
+        return utils.run_subprocess_with_log(cmd, step_name, log_failure=False, log_output=log_output)
 
     def log_retrying(retry_state: 'RetryCallState') -> None:
         exc = retry_state.outcome.exception() if retry_state.outcome else None
@@ -148,9 +147,33 @@ def download_file_by_id(file_id: str, local_file_path: str) -> None:
 
 
 def find_ica_file_path_by_name(parent_folder: str, file_name: str) -> str:
+    """Finds a file in ICA using the CLI and returns its full `details.path`."""
+    return find_ica_file_paths_by_names(parent_folder, [file_name])[file_name]
+
+
+def find_ica_file_paths_by_names(parent_folder: str, file_names: Sequence[str]) -> dict[str, str]:
+    """Find several files under one ICA folder with a single CLI call.
+
+    `--file-name` is a repeatable flag, so all names are resolved in one
+    `projectdata list` invocation instead of one call per file.
+
+    Args:
+        parent_folder: The ICA folder to search (direct children).
+        file_names: Exact filenames to resolve (at least one).
+
+    Returns:
+        Mapping of each requested filename to its full `details.path`.
+
+    Raises:
+        ValueError: If `file_names` is empty, any requested file is missing (all
+            missing names listed), or a name matches more than one file.
     """
-    Finds a file in ICA using the CLI and returns its full `details.path`.
-    """
+    if not file_names:
+        # An empty request would emit an unfiltered folder listing and silently
+        # return {} — a caller bug, not a lookup result.
+        raise ValueError(f'file_names must not be empty (folder "{parent_folder}")')
+    # `--parent-folder` is a boolean flag and the path that follows it is a
+    # positional argument, not the flag's value — don't "fix" the ordering.
     command = [
         'icav2',
         'projectdata',
@@ -159,35 +182,46 @@ def find_ica_file_path_by_name(parent_folder: str, file_name: str) -> str:
         parent_folder,
         '--data-type',
         'FILE',
-        '--file-name',
-        file_name,
         '--match-mode',
         'EXACT',
         '-o',
         'json',
     ]
-    result: subprocess.CompletedProcess[Any] = _run_icav2_with_retry(command, f'Find ICA file {file_name}')
+    for file_name in file_names:
+        command += ['--file-name', file_name]
+    # The JSON response is parsed here, not read by humans: keep it out of the
+    # success-path INFO log (~150 lines per call) and surface it only on failure.
+    result = _run_icav2_with_retry(command, f'Find ICA files {", ".join(file_names)}', log_output=False)
     try:
         data = json.loads(result.stdout)
-        if not data.get('items'):
-            raise ValueError(
-                f'No file found with name "{file_name}" in folder "{parent_folder}"',
-            )
-
-        file_path = data['items'][0].get('details', {}).get('path')
-        if not file_path:
-            raise ValueError(
-                f'File "{file_name}" found, but it has no "details.path" in API response.',
-            )
-
-        return file_path
-
     except json.JSONDecodeError:
         logger.error(f'Failed to decode JSON from icav2 list command: {result.stdout}')
         raise
-    except (ValueError, IndexError) as e:
-        logger.error(f'Error parsing icav2 list output for {file_name}: {e}')
-        raise
+
+    found: dict[str, str] = {}
+    for item in data.get('items', []):
+        path = item.get('details', {}).get('path')
+        if not path:
+            continue
+        name = path.rsplit('/', 1)[-1]
+        if name in found and found[name] != path:
+            # A silent pick between same-named files would be response-order
+            # dependent (e.g. a stale nested re-run folder shadowing the real one).
+            raise ValueError(
+                f'Multiple files named "{name}" returned for folder "{parent_folder}": '
+                f'{found[name]} and {path}',
+            )
+        found[name] = path
+
+    missing = [name for name in file_names if name not in found]
+    if missing:
+        # The success-path response log is suppressed, so show what the folder
+        # actually contained now that the lookup has failed.
+        logger.error(f'ICA list response for "{parent_folder}":\n{result.stdout.strip()}')
+        raise ValueError(
+            f'No file(s) named {", ".join(missing)} found in folder "{parent_folder}"',
+        )
+    return {name: found[name] for name in file_names}
 
 
 def perform_upload_if_needed(cram_status: str | None, paths: dict[str, str], role: str) -> None:

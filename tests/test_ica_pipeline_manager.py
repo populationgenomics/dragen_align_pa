@@ -6,6 +6,8 @@ in isolation; the SUCCEEDED-branch logic is extracted into a small helper
 exercised directly.
 """
 
+from collections.abc import Callable
+
 import pytest
 
 from dragen_align_pa.batches import IcaBatch, PassfailStatusError
@@ -15,6 +17,7 @@ from dragen_align_pa.jobs.ica_pipeline_manager import (
     PipelineStatus,
     _failed_final_target_names,
     _process_succeeded_transition,
+    manage_ica_pipeline_loop,
 )
 
 
@@ -169,3 +172,47 @@ def test_failed_final_target_names_empty_when_none_failed():
         _target_with_status(1, PipelineStatus.SUCCEEDED),
     ]
     assert _failed_final_target_names(targets) == []
+
+
+def test_cancel_marks_never_submitted_target_cancelled_without_submitting(tmp_path, monkeypatch):
+    """A PENDING target with no pipeline-id file, under cancel_cohort_run=true, must be
+    marked CANCELLED without the loop ever invoking the submit callable. Before this fix,
+    the cancel branch required `target.pipeline_id`, so a never-submitted target fell
+    through to the else branch and called submit_callable() — wastefully submitting a
+    doomed analysis (or, after the prefetch rewrite, raising KeyError against the empty
+    inputs dict and aborting the manager mid-cancellation)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.ica_pipeline_manager.config_retrieve',
+        lambda key, default=None: True if key == ['ica', 'management', 'cancel_cohort_run'] else default,
+    )
+
+    batch = IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
+    target_name = batch.name
+
+    outputs = {
+        'COH0001_errors': tmp_path / 'errors.log',
+        f'{target_name}_pipeline_id': tmp_path / f'{target_name}_pipeline_id.json',
+        f'{target_name}_success': tmp_path / f'{target_name}_success.json',
+    }
+
+    def _submit_function_factory(name: str) -> Callable[[], str]:
+        def _submit() -> str:
+            pytest.fail(f'submit callable must never be invoked for {name} during cancellation')
+            return ''
+
+        return _submit
+
+    with pytest.raises(Exception, match='have been cancelled'):
+        manage_ica_pipeline_loop(
+            targets_to_process=[batch],
+            outputs=outputs,
+            pipeline_name='Dragen',
+            is_mlr_pipeline=False,
+            success_file_key_template='{target_name}_success',
+            pipeline_id_file_key_template='{target_name}_pipeline_id',
+            error_log_key='COH0001_errors',
+            submit_function_factory=_submit_function_factory,
+            allow_retry=False,
+            sleep_time_seconds=0,
+        )

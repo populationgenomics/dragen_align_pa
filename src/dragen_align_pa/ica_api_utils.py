@@ -63,6 +63,18 @@ _DEFAULT_ICA_MAX_RETRIES: Final = 10
 # error just delays the real signal.
 _RETRYABLE_ICA_STATUSES: Final = frozenset({429, 503})
 
+# Textual forms of the transient statuses above, for callers whose only failure
+# signal is message text: the icav2 CLI surfaces a transient error as exit code 1
+# plus these markers in its output. (popgen_cli's ICAClient raises requests
+# `HTTPError`s — matched structurally in `popgen_mlr`; its marker fallback there
+# is defence-in-depth for exceptions from other layers, not the primary path.)
+TRANSIENT_ICA_ERROR_MARKERS: Final = (
+    'ICA_API_429',
+    '429 Too Many Requests',
+    'ICA_API_503',
+    '503 Service Unavailable',
+)
+
 # Create-data only adds 409 — ICA_DATA_105 "Conflict while updating file/folder.
 # Please try again later." A retried 409 is only safe when the caller re-checks
 # for the landed object inside the retry boundary, which only
