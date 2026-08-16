@@ -174,6 +174,43 @@ def test_failed_final_target_names_empty_when_none_failed():
     assert _failed_final_target_names(targets) == []
 
 
+def test_force_resubmit_and_cancel_together_are_rejected(tmp_path, monkeypatch):
+    """`force_resubmit` + `cancel_cohort_run` must raise up front: the resubmit
+    cleanup deletes the pipeline-id file before the cancel branch reads it, so the
+    ICA abort would never be sent and the analysis would be orphaned."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.ica_pipeline_manager.config_retrieve',
+        lambda key, default=None: (
+            True
+            if key in (['ica', 'management', 'force_resubmit'], ['ica', 'management', 'cancel_cohort_run'])
+            else default
+        ),
+    )
+
+    batch = IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
+    target_name = batch.name
+    outputs = {
+        'COH0001_errors': tmp_path / 'errors.log',
+        f'{target_name}_pipeline_id': tmp_path / f'{target_name}_pipeline_id.json',
+        f'{target_name}_success': tmp_path / f'{target_name}_success.json',
+    }
+
+    with pytest.raises(ValueError, match='mutually exclusive'):
+        manage_ica_pipeline_loop(
+            targets_to_process=[batch],
+            outputs=outputs,
+            pipeline_name='Dragen',
+            is_mlr_pipeline=False,
+            success_file_key_template='{target_name}_success',
+            pipeline_id_file_key_template='{target_name}_pipeline_id',
+            error_log_key='COH0001_errors',
+            submit_function_factory=lambda name: pytest.fail(f'must not submit {name}'),  # type: ignore[arg-type]
+            allow_retry=False,
+            sleep_time_seconds=0,
+        )
+
+
 def test_cancel_marks_never_submitted_target_cancelled_without_submitting(tmp_path, monkeypatch):
     """A PENDING target with no pipeline-id file, under cancel_cohort_run=true, must be
     marked CANCELLED without the loop ever invoking the submit callable. Before this fix,

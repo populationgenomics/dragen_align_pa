@@ -3,6 +3,7 @@ import os
 import time
 from collections.abc import Callable
 from functools import partial
+from typing import NoReturn
 
 import cpg_utils.config
 import pandas as pd
@@ -120,10 +121,10 @@ def _submit_md5_run(
     return md5_pipeline_id
 
 
-# The loop's cancel branch never submits, so reaching this callable means the
-# loop's control flow regressed; fail loudly rather than launch an analysis the
-# user just asked to cancel.
-def _fail_submit_during_cancellation() -> str:
+# manage_ica_pipeline_loop's cancel branch never submits, so reaching this
+# callable means the loop's control flow regressed; fail loudly rather than
+# launch an analysis the user just asked to cancel.
+def _fail_submit_during_cancellation() -> NoReturn:
     """Raise on any submission attempt made while cancellation is requested."""
     raise RuntimeError(
         'MD5 pipeline submission attempted while cancel_cohort_run=true; '
@@ -260,7 +261,9 @@ def run(
 
     Performs the pre-submission setup (resolving FASTQ IDs, uploading the
     ID-list file, creating the output folder) and then calls the generic
-    pipeline management loop.
+    pipeline management loop. When `ica.management.cancel_cohort_run` is set,
+    skips the setup and hands the loop a submit callable that raises; the
+    loop cancels the stored pipeline run.
 
     Args:
         cohort: The cohort whose FASTQs are checksummed.
@@ -271,7 +274,8 @@ def run(
 
     # Cancellation submits nothing (the loop aborts the run from the stored
     # pipeline-id file), so skip the FASTQ-ID collection, ID-list upload, and
-    # output-folder creation — matching the DRAGEN and MLR managers.
+    # output-folder creation — matching the skip-setup-on-cancel behaviour of
+    # manage_dragen_pipeline.py and manage_dragen_mlr.py.
     if cpg_utils.config.config_retrieve(['ica', 'management', 'cancel_cohort_run'], default=False):
         submit_callable: Callable[[], str] = _fail_submit_during_cancellation
     else:
@@ -289,6 +293,7 @@ def run(
         success_file_key_template='md5sum_pipeline_success',
         pipeline_id_file_key_template='md5sum_pipeline_run',
         error_log_key=f'{cohort_name}_md5_errors',
+        # Single-cohort pipeline: the loop's per-target name is unused.
         submit_function_factory=lambda _target_name: submit_callable,
         allow_retry=True,
         sleep_time_seconds=300,
