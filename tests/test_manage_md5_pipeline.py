@@ -59,6 +59,42 @@ def test_get_fastq_ica_id_list_all_found(monkeypatch):
     assert result == {'fid-a': 'a.fastq.gz', 'fid-b': 'b.fastq.gz'}
 
 
+def test_run_skips_presubmission_setup_on_cancel(monkeypatch, tmp_path):
+    """`cancel_cohort_run=true` must go straight to the management loop without
+    collecting FASTQ IDs, uploading the ID-list file, or creating the output
+    folder — the loop aborts the run from the stored pipeline-id file."""
+    monkeypatch.setattr(
+        manage_md5_pipeline.cpg_utils.config,
+        'config_retrieve',
+        lambda key, default=None: True if key == ['ica', 'management', 'cancel_cohort_run'] else default,
+    )
+
+    def _fail_setup(*args: object, **kwargs: object) -> None:  # noqa: ARG001
+        raise AssertionError('pre-submission setup must not run during cancellation')
+
+    monkeypatch.setattr(manage_md5_pipeline.ica_api_utils, 'ica_project_data_api', _fail_setup)
+    monkeypatch.setattr(manage_md5_pipeline.ica_cli_utils, 'upload_local_file', _fail_setup)
+    monkeypatch.setattr(manage_md5_pipeline, '_get_fastq_ica_id_list', _fail_setup)
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        manage_md5_pipeline,
+        'manage_ica_pipeline_loop',
+        lambda **kwargs: captured.update(kwargs),
+    )
+
+    manage_md5_pipeline.run(
+        cohort=SimpleNamespace(name='COH1'),
+        outputs={},
+        # Never opened on the cancel path; the file deliberately does not exist.
+        manifest_file_path=tmp_path / 'manifest.csv',
+    )
+
+    submit_callable = captured['submit_function_factory']('COH1')
+    with pytest.raises(RuntimeError, match='cancel_cohort_run'):
+        submit_callable()
+
+
 def test_get_fastq_ica_id_list_mismatch_names_missing_files(monkeypatch):
     """A mismatch must raise and name exactly the files ICA didn't return."""
     # ICA only knows about a.fastq.gz; b and c from the manifest are absent.
