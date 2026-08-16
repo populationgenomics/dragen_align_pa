@@ -217,7 +217,7 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
     if force_resubmit and config_retrieve(['ica', 'management', 'cancel_cohort_run'], default=False):
         raise ValueError(
             f'{pipeline_name} pipeline management for {run_context_name}: force_resubmit and '
-            f'cancel_cohort_run are mutually exclusive — set exactly one. Cancelling requires '
+            f'cancel_cohort_run are mutually exclusive — set at most one. Cancelling requires '
             f'the stored pipeline-id files that force_resubmit deletes.',
         )
 
