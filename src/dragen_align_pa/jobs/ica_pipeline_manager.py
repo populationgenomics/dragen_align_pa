@@ -296,7 +296,10 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                     logger.info(f'Cancelling {pipeline_name} pipeline run: {target.pipeline_id} for {target_name}')
                     # If the ICA abort API fails, log but still mark CANCELLED locally:
                     # user intent overrides the API result, and an uncaught blip here
-                    # would bypass run()'s CohortCancelled translation.
+                    # would bypass run()'s CohortCancelled translation. The pipeline-id
+                    # file is deleted only on a successful abort — a failed abort keeps
+                    # the pointer so a rerun with the flag still set retries the abort,
+                    # instead of orphaning a running analysis with no local reference.
                     try:
                         cancel_ica_pipeline_run.run(
                             ica_pipeline_id=target.pipeline_id,
@@ -306,9 +309,12 @@ def manage_ica_pipeline_loop(  # noqa: PLR0915
                         logger.error(
                             f'ICA abort API call failed for {target_name} '
                             f'(pipeline {target.pipeline_id}): {e}. '
-                            f'Marking CANCELLED locally anyway — user intent overrides the API result.',
+                            f'Marking CANCELLED locally anyway — user intent overrides the API '
+                            f'result — but keeping {pipeline_id_arguid_file} so a rerun can '
+                            f'retry the abort.',
                         )
-                    delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
+                    else:
+                        delete_pipeline_id_file(pipeline_id_file=str(pipeline_id_arguid_file))
                 else:
                     logger.info(
                         f'Cancellation requested; {target_name} was never submitted — '

@@ -192,3 +192,6 @@ reference_data/
 
 # persona-review report (transient)
 tmp_review_feedback.md
+
+# per-user agent instructions (never committed)
+CLAUDE.md

@@ -37,14 +37,42 @@ def validate_configuration() -> None:
 
     Raises:
         KeyError / ValueError: If `[ica.projects].project_root` isn't a registered family whose
-            projects cover every required role.
+            projects cover every required role, or if more than one `[ica.management]` flag is set.
         RuntimeError: If `[workflow].input_cohorts` doesn't name exactly one cohort, or if any
             cohort's exome design doesn't match the configured BEDs.
     """
     assert_single_input_cohort()
+    assert_management_flags_exclusive()
     assert_ica_project_root_resolves()
     for cohort in get_multicohort().get_cohorts():
         assert_cohort_design_matches_configured_bed(cohort)
+
+
+# Pure config validation (no I/O), so it belongs on the submitter: a flag conflict
+# aborts before any PythonJob boots, and one check covers the DRAGEN, MLR, and MD5
+# managers. `manage_dragen_pipeline._handle_management_flags` and the shared loop's
+# force_resubmit+cancel guard remain as executor-side defence for direct callers.
+def assert_management_flags_exclusive() -> None:
+    """Fail loud at submit if more than one `[ica.management]` flag is set.
+
+    Raises:
+        ValueError: If more than one of `force_resubmit` / `monitor_previous` /
+            `cancel_cohort_run` / `force_retry` is true.
+    """
+    active_flags = [
+        name
+        for name in ('force_resubmit', 'monitor_previous', 'cancel_cohort_run', 'force_retry')
+        if config_retrieve(['ica', 'management', name], default=False)
+    ]
+    if len(active_flags) > 1:
+        raise ValueError(
+            f'[ica.management] flags {active_flags} are mutually exclusive — set at most one of '
+            f'force_resubmit / monitor_previous / cancel_cohort_run / force_retry. '
+            f'force_resubmit starts a fresh submission; monitor_previous resumes monitoring; '
+            f'cancel_cohort_run aborts in-flight runs; force_retry reconciles against ICA and '
+            f'reruns genuine failures.',
+        )
+    logger.info(f'Management-flag check passed: {active_flags or "none set"}.')
 
 
 # Every GCS state file is written under a prefix keyed on the single configured cohort id
