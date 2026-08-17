@@ -1,7 +1,9 @@
 import json
 import os
 import time
+from collections.abc import Callable
 from functools import partial
+from typing import NoReturn
 
 import cpg_utils.config
 import pandas as pd
@@ -119,19 +121,36 @@ def _submit_md5_run(
     return md5_pipeline_id
 
 
-def run(
-    cohort: Cohort,
+# manage_ica_pipeline_loop's cancel branch never submits, so reaching this
+# callable means the loop's control flow regressed; fail loudly rather than
+# launch an analysis the user just asked to cancel.
+def _fail_submit_during_cancellation() -> NoReturn:
+    """Raise on any submission attempt made while cancellation is requested."""
+    raise RuntimeError(
+        'MD5 pipeline submission attempted while cancel_cohort_run=true; '
+        'the management loop must never submit during cancellation.',
+    )
+
+
+def _prepare_md5_submission(
+    cohort_name: str,
     outputs: dict[str, cpg_utils.Path],
     manifest_file_path: cpg_utils.Path,
-) -> None:
-    """
-    This function runs inside the PythonJob.
-    It performs the pre-submission setup (getting FASTQ IDs, creating folders)
-    and then calls the generic pipeline manager.
+) -> Callable[[], str]:
+    """Perform the MD5 pre-submission setup and build the submit callable.
 
-    """
+    Reads the manifest, resolves the ICA file ID for every FASTQ, uploads the
+    ID-list file to ICA, and creates the pipeline output folder.
 
-    cohort_name: str = cohort.name
+    Args:
+        cohort_name: The cohort being processed.
+        outputs: The stage's declared outputs (receives the FASTQ ID mapping).
+        manifest_file_path: Path to the manifest naming the expected FASTQs.
+
+    Returns:
+        A no-argument callable that submits the MD5 pipeline run and returns
+        the ICA pipeline ID.
+    """
     with cpg_utils.to_path(manifest_file_path).open() as manifest_fh:
         try:
             supplied_manifest_data: pd.DataFrame = pd.read_csv(
@@ -224,13 +243,47 @@ def run(
             path_parameters=path_parameters,
         )
 
-    submit_callable = partial(
+    return partial(
         _submit_md5_run,
         cohort_name=cohort_name,
         fastq_list_file_id=fastq_list_file_id,
         ar_guid=ar_guid,
         md5_outputs_folder_id=md5_outputs_folder_id,
     )
+
+
+def run(
+    cohort: Cohort,
+    outputs: dict[str, cpg_utils.Path],
+    manifest_file_path: cpg_utils.Path,
+) -> None:
+    """Manage the MD5 pipeline run for a cohort inside the PythonJob.
+
+    Performs the pre-submission setup (resolving FASTQ IDs, uploading the
+    ID-list file, creating the output folder) and then calls the generic
+    pipeline management loop. When `ica.management.cancel_cohort_run` is set,
+    skips the setup and hands the loop a submit callable that raises; the
+    loop cancels the stored pipeline run.
+
+    Args:
+        cohort: The cohort whose FASTQs are checksummed.
+        outputs: The stage's declared outputs.
+        manifest_file_path: Path to the manifest naming the expected FASTQs.
+    """
+    cohort_name: str = cohort.name
+
+    # Cancellation submits nothing (the loop aborts the run from the stored
+    # pipeline-id file), so skip the FASTQ-ID collection, ID-list upload, and
+    # output-folder creation — matching the skip-setup-on-cancel behaviour of
+    # manage_dragen_pipeline.py and manage_dragen_mlr.py.
+    if cpg_utils.config.config_retrieve(['ica', 'management', 'cancel_cohort_run'], default=False):
+        submit_callable: Callable[[], str] = _fail_submit_during_cancellation
+    else:
+        submit_callable = _prepare_md5_submission(
+            cohort_name=cohort_name,
+            outputs=outputs,
+            manifest_file_path=manifest_file_path,
+        )
 
     manage_ica_pipeline_loop(
         targets_to_process=[cohort],
@@ -240,6 +293,7 @@ def run(
         success_file_key_template='md5sum_pipeline_success',
         pipeline_id_file_key_template='md5sum_pipeline_run',
         error_log_key=f'{cohort_name}_md5_errors',
+        # Single-cohort pipeline: the loop's per-target name is unused.
         submit_function_factory=lambda _target_name: submit_callable,
         allow_retry=True,
         sleep_time_seconds=300,

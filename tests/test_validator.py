@@ -14,6 +14,7 @@ from dragen_align_pa.validator import (
     _resolve_sg_canonical_design,
     assert_cohort_design_matches_configured_bed,
     assert_ica_project_root_resolves,
+    assert_management_flags_exclusive,
     assert_single_input_cohort,
 )
 from tests._config_helpers import _config_factory
@@ -65,6 +66,32 @@ def test_single_input_cohort_rejects_missing_config(monkeypatch):
     _patch_input_cohorts(monkeypatch, None)
     with pytest.raises(RuntimeError, match=r'exactly one cohort'):
         assert_single_input_cohort()
+
+
+# ----- assert_management_flags_exclusive -----
+
+
+def _patch_management_flags(monkeypatch, **flags: bool) -> None:
+    cfg = {('ica', 'management', name): value for name, value in flags.items()}
+    monkeypatch.setattr(validator, 'config_retrieve', lambda key, default=None: cfg.get(tuple(key), default))
+
+
+def test_management_flags_none_set_accepted(monkeypatch):
+    _patch_management_flags(monkeypatch)
+    assert_management_flags_exclusive()  # no raise
+
+
+def test_management_flags_single_flag_accepted(monkeypatch):
+    _patch_management_flags(monkeypatch, cancel_cohort_run=True)
+    assert_management_flags_exclusive()  # no raise
+
+
+def test_management_flags_conflict_rejected(monkeypatch):
+    """force_resubmit deletes the pipeline-id files a cancel needs to send the ICA
+    abort, so the combination must die on the submitter before any job is queued."""
+    _patch_management_flags(monkeypatch, cancel_cohort_run=True, force_resubmit=True)
+    with pytest.raises(ValueError, match=r'mutually exclusive'):
+        assert_management_flags_exclusive()
 
 
 # ----- assert_ica_project_root_resolves -----

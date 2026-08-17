@@ -7,6 +7,7 @@ exercised directly.
 """
 
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
@@ -172,6 +173,118 @@ def test_failed_final_target_names_empty_when_none_failed():
         _target_with_status(1, PipelineStatus.SUCCEEDED),
     ]
     assert _failed_final_target_names(targets) == []
+
+
+def _run_cancel_loop_with_stored_pipeline(tmp_path, monkeypatch, abort_stub: Callable[..., object]) -> Path:
+    """Drive the loop's cancel branch for one target with a stored pipeline-id file.
+
+    Args:
+        tmp_path: The test's tmp directory (chdir'd into; holds the state files).
+        monkeypatch: The pytest monkeypatch fixture.
+        abort_stub: Stand-in for `cancel_ica_pipeline_run.run`.
+
+    Returns:
+        The pipeline-id file path, after the loop has raised its cancelled error.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.ica_pipeline_manager.config_retrieve',
+        lambda key, default=None: True if key == ['ica', 'management', 'cancel_cohort_run'] else default,
+    )
+    monkeypatch.setattr('dragen_align_pa.jobs.ica_pipeline_manager.cancel_ica_pipeline_run.run', abort_stub)
+    # Production deletes a GCS path via `gcloud storage rm`; emulate on the local
+    # filesystem so the file-existence assertions below stay meaningful.
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.ica_pipeline_manager.delete_pipeline_id_file',
+        lambda pipeline_id_file: Path(pipeline_id_file).unlink(),
+    )
+
+    batch = IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
+    target_name = batch.name
+    pipeline_id_file = tmp_path / f'{target_name}_pipeline_id.json'
+    pipeline_id_file.write_text('{"pipeline_id": "pip-123", "ar_guid": "guid-1"}')
+    outputs = {
+        'COH0001_errors': tmp_path / 'errors.log',
+        f'{target_name}_pipeline_id': pipeline_id_file,
+        f'{target_name}_success': tmp_path / f'{target_name}_success.json',
+    }
+
+    with pytest.raises(Exception, match='have been cancelled'):
+        manage_ica_pipeline_loop(
+            targets_to_process=[batch],
+            outputs=outputs,
+            pipeline_name='Dragen',
+            is_mlr_pipeline=False,
+            success_file_key_template='{target_name}_success',
+            pipeline_id_file_key_template='{target_name}_pipeline_id',
+            error_log_key='COH0001_errors',
+            submit_function_factory=lambda name: pytest.fail(f'must not submit {name}'),  # type: ignore[arg-type]
+            allow_retry=False,
+            sleep_time_seconds=0,
+        )
+    return pipeline_id_file
+
+
+def test_cancel_deletes_pipeline_id_file_when_abort_succeeds(tmp_path, monkeypatch):
+    """A successful ICA abort deletes the pipeline-id file: the pointer's job is done."""
+    aborted: list[str] = []
+
+    def _abort(ica_pipeline_id: str, is_mlr: bool) -> None:  # noqa: ARG001
+        aborted.append(ica_pipeline_id)
+
+    pipeline_id_file = _run_cancel_loop_with_stored_pipeline(tmp_path, monkeypatch, _abort)
+    assert aborted == ['pip-123']
+    assert not pipeline_id_file.exists()
+
+
+def test_cancel_keeps_pipeline_id_file_when_abort_fails(tmp_path, monkeypatch):
+    """A failed ICA abort must keep the pipeline-id file — it is the only local
+    pointer a rerun can use to retry the abort. Deleting it would orphan a
+    still-running analysis. The target is still marked CANCELLED (user intent)
+    and the loop still raises."""
+
+    def _abort(ica_pipeline_id: str, is_mlr: bool) -> None:  # noqa: ARG001
+        raise RuntimeError('401 unauthorised')
+
+    pipeline_id_file = _run_cancel_loop_with_stored_pipeline(tmp_path, monkeypatch, _abort)
+    assert pipeline_id_file.exists(), 'failed abort must keep the pipeline-id pointer for a retry'
+
+
+def test_force_resubmit_and_cancel_together_are_rejected(tmp_path, monkeypatch):
+    """`force_resubmit` + `cancel_cohort_run` must raise up front: the resubmit
+    cleanup deletes the pipeline-id file before the cancel branch reads it, so the
+    ICA abort would never be sent and the analysis would be orphaned."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        'dragen_align_pa.jobs.ica_pipeline_manager.config_retrieve',
+        lambda key, default=None: (
+            True
+            if key in (['ica', 'management', 'force_resubmit'], ['ica', 'management', 'cancel_cohort_run'])
+            else default
+        ),
+    )
+
+    batch = IcaBatch(cohort_name='COH0001', batch_index=0, sg_names=['CPG_A'])
+    target_name = batch.name
+    outputs = {
+        'COH0001_errors': tmp_path / 'errors.log',
+        f'{target_name}_pipeline_id': tmp_path / f'{target_name}_pipeline_id.json',
+        f'{target_name}_success': tmp_path / f'{target_name}_success.json',
+    }
+
+    with pytest.raises(ValueError, match='mutually exclusive'):
+        manage_ica_pipeline_loop(
+            targets_to_process=[batch],
+            outputs=outputs,
+            pipeline_name='Dragen',
+            is_mlr_pipeline=False,
+            success_file_key_template='{target_name}_success',
+            pipeline_id_file_key_template='{target_name}_pipeline_id',
+            error_log_key='COH0001_errors',
+            submit_function_factory=lambda name: pytest.fail(f'must not submit {name}'),  # type: ignore[arg-type]
+            allow_retry=False,
+            sleep_time_seconds=0,
+        )
 
 
 def test_cancel_marks_never_submitted_target_cancelled_without_submitting(tmp_path, monkeypatch):

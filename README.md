@@ -1,4 +1,4 @@
-# Dragen Align PA Pipeline v4.2.0
+# Dragen Align PA Pipeline v4.2.1
 
 ## Purpose
 
@@ -92,7 +92,7 @@ Your TOML configuration file must specify the following key options:
    * `[ica.projects]`: Set `project_root` to the dataset family (e.g. `ourdna`). Everything ICA needs for the run is derived from that family's `ICA_PROJECT_SETUP` block in [`ica_constants.py`](src/dragen_align_pa/constants/ica_constants.py) — the DRAGEN-align, DRAGEN-MLR and FASTQ-upload projects, the API-key secret field, the MLR config file id, and the `can_delete_fastq` flag — so only the family is named here. Must be a registered family. **Onboarding a new family** means adding one `ICA_PROJECT_SETUP` block and setting the matching API-key value in the `illumina_cpg_workbench_api` Secret Manager secret; the submitter's validator then fails fast if anything in the block is missing or a placeholder. Note that a *registered* family can still be non-runnable until its MLR config file id is minted (a `fil.TODO_…` placeholder is rejected at submit).
    * `[ica.management]`:
       * `monitor_previous`: Set to `false` for new runs, set to `true` if the pipeline in GCS crashes, but the pipelines in ICA are still running fine.
-      * `force_resubmit`: This should almost always be set to `false`. Set to `true` to start a fresh run: it deletes the GCS state (batches file, completion marker, per-SG state) and re-submits every batch from scratch, even ones that had completed. Use this only when you want to discard prior work entirely.
+      * `force_resubmit`: This should almost always be set to `false`. Set to `true` to start a fresh run: it deletes the GCS state (batches file, completion marker, per-SG state) and re-submits every batch from scratch, even ones that had completed. Use this only when you want to discard prior work entirely. Mutually exclusive with `cancel_cohort_run`: cancelling needs the stored pipeline-id files that `force_resubmit` deletes, so setting both fails fast with a `ValueError`.
       * `force_retry`: Non-destructive recovery counterpart to `force_resubmit`. Set to `true` to reconcile the GCS state against ICA and rerun only what genuinely failed, keeping the successful work. Requires an existing state file; mutually exclusive with the other three `[ica.management]` flags. See "Recovering a Desynced Run (`force_retry`)" below for the full behaviour.
   * `[ica.tags]`: Set these to sensible values. It is recommended to set reads type and sequencing type in the technical tags, project name in the user tags, correct reference in the reference tags at a minimum.
   * `[dragen_align_pa.manage_dragen_pipeline.presets.exome.bed_names]`: Set these to the names of the BED files to use for exome alignment. These must match the name(s) of BED files defined in [`ica_constants.py`](src/dragen_align_pa/constants/ica_constants.py).
@@ -116,7 +116,7 @@ If you need to cancel a pipeline that is running in ICA:
 1.  Cancel the `analysis-runner` job in Hail Batch.
 2.  In your TOML configuration file, set `ica.management.cancel_cohort_run = true`.
 3.  Re-launch the pipeline using the same `analysis-runner` command.
-4.  Both `Manage` stages will detect the `cancel_cohort_run` flag, read the pipeline ID from the state file, and send an "abort" request to the ICA API.
+4.  Both `Manage` stages will detect the `cancel_cohort_run` flag, read the pipeline ID from the state file, and send an "abort" request to the ICA API. For `reads_type = "fastq"` cohorts the `FastqIntakeQc` stage's MD5 pipeline manager does the same, skipping its pre-submission setup (FASTQ-ID collection, ID-list upload, output-folder creation) since cancelling submits nothing.
 5.  It will then delete all of the state files in GCS, so that you don't hit an error `The pipeline has been cancelled` when resubmitting.
 
 This sequence avoids the need of cancelling hundreds of pipeline runs in ICA manually.
