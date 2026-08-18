@@ -11,36 +11,51 @@ import pytest
 from dragen_align_pa.jobs import manage_md5_pipeline
 
 
+_QUARTER_TB = 250_000_000_000
+
+
 @pytest.mark.parametrize(
-    ('n_files', 'max_concurrent_pods', 'waves', 'expected'),
+    ('n_files', 'total_bytes', 'expected'),
     [
-        (1000, 25, 2, 20),  # divides evenly
-        (3784, 25, 2, 76),  # remainder rounds up
-        (5001, 25, 2, 101),  # one file over an even split still rounds up
-        (30, 25, 2, 1),  # fewer files than pod slots -> one file per chunk
-        (1, 25, 2, 1),
-        (5000, 10, 4, 125),  # quota and waves both scale the divisor
+        # 30 TB needs 120 byte-capped chunks -> 5 full waves of 25 -> 125 chunks.
+        (3784, 30_000_000_000_000, 31),
+        # 2.5 TB fits one wave; all 25 pods get a chunk (~0.1 TB each).
+        (500, 2_500_000_000_000, 20),
+        # Exactly 25 pod-loads of bytes -> one wave at the cap.
+        (1000, 25 * _QUARTER_TB, 40),
+        # One byte over 25 pod-loads -> a second wave halves the chunks.
+        (1000, 25 * _QUARTER_TB + 1, 20),
+        # Fewer files than pod slots -> one file per chunk.
+        (10, 1_000_000_000, 1),
+        # More files than slots but tiny bytes -> spread over one wave of 25.
+        (30, 1_000_000_000, 2),
     ],
 )
-def test_compute_md5_chunk_size_spreads_files_over_pod_waves(n_files, max_concurrent_pods, waves, expected):
-    """Chunk size is ceil(n_files / (pods * waves)) so no wave exceeds the pod quota."""
+def test_compute_md5_chunk_size_caps_per_pod_bytes_and_fills_waves(n_files, total_bytes, expected):
+    """Chunks are sized so no pod streams more than the byte cap, in full 25-pod waves."""
     assert (
         manage_md5_pipeline.compute_md5_chunk_size(
-            n_files=n_files, max_concurrent_pods=max_concurrent_pods, waves=waves
+            n_files=n_files,
+            total_bytes=total_bytes,
+            max_concurrent_pods=25,
+            max_pod_bytes=_QUARTER_TB,
         )
         == expected
     )
 
 
 @pytest.mark.parametrize(
-    ('n_files', 'max_concurrent_pods', 'waves'),
-    [(0, 25, 2), (100, 0, 2), (100, 25, 0)],
+    ('n_files', 'total_bytes', 'max_concurrent_pods', 'max_pod_bytes'),
+    [(0, 1, 25, _QUARTER_TB), (100, -1, 25, _QUARTER_TB), (100, 1, 0, _QUARTER_TB), (100, 1, 25, 0)],
 )
-def test_compute_md5_chunk_size_rejects_non_positive_inputs(n_files, max_concurrent_pods, waves):
-    """Zero files, pods, or waves is a caller bug and must raise, not return a size."""
-    with pytest.raises(ValueError, match=r'must be positive'):
+def test_compute_md5_chunk_size_rejects_invalid_inputs(n_files, total_bytes, max_concurrent_pods, max_pod_bytes):
+    """Zero files or pods, a zero byte cap, or negative total bytes is a caller bug and must raise."""
+    with pytest.raises(ValueError, match=r'must be'):
         manage_md5_pipeline.compute_md5_chunk_size(
-            n_files=n_files, max_concurrent_pods=max_concurrent_pods, waves=waves
+            n_files=n_files,
+            total_bytes=total_bytes,
+            max_concurrent_pods=max_concurrent_pods,
+            max_pod_bytes=max_pod_bytes,
         )
 
 
@@ -106,9 +121,9 @@ def _fastq_info(n: int) -> dict[str, manage_md5_pipeline.FastqFileDetails]:
 
 
 def test_plan_md5_chunks_computes_chunk_size_from_the_pod_quota():
-    """The chunk size comes from the fixed ICA pod quota and wave count, not config."""
+    """The chunk size comes from the fixed ICA pod quota and the cohort's bytes, not config."""
     info = _fastq_info(151)
     ordered_ids, chunk_size = manage_md5_pipeline._plan_md5_chunks(info)
-    # 25 pods x 2 waves -> ceil(151 / 50) = 4 files per chunk.
-    assert chunk_size == 4
+    # Tiny total bytes -> one wave of 25 pods -> ceil(151 / 25) = 7 files per chunk.
+    assert chunk_size == 7
     assert sorted(ordered_ids) == sorted(info)

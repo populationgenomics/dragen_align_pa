@@ -25,7 +25,11 @@ The workflow performs the following main steps:
     - (optionally) Creates input folders for CRAM files.
 2.  **Input Data Handling (Conditional):**
     - **If `reads_type = "fastq"`:**
-      1.  Runs a pipeline to calculate the MD5 sums of all input fastqs
+      1.  Runs a pipeline to calculate the MD5 sums of all input fastqs. The pipeline checksums the
+          files in chunks; the chunk size is computed at submit time so that no chunk exceeds
+          0.25 TB and the chunks fill ICA's 25-concurrent-pod quota in full waves, and the uploaded
+          file-ID list is reordered (largest files spread first) so every chunk carries a
+          near-equal share of the cohort's bytes. There is no config override for the chunk size.
       2.  Downloads the results and validates them against the manifest file.
       3.  Generates a `fastq_list.csv` file for DRAGEN and uploads it to ICA.
     - **If `reads_type = "cram"`:**

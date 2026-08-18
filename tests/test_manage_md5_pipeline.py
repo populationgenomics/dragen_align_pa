@@ -214,6 +214,47 @@ def test_prepare_md5_submission_packs_ids_and_wires_chunk_size(monkeypatch, tmp_
     assert submit.keywords['fastq_list_file_id'] == 'fil.list'
 
 
+@pytest.mark.parametrize('details', [{'name': 'a.fastq.gz'}, {'name': 'a.fastq.gz', 'fileSizeInBytes': None}])
+def test_get_fastq_ica_id_list_names_file_when_size_is_absent(monkeypatch, details):
+    """A file without a usable size (e.g. still uploading) must raise an error naming it."""
+    response = SimpleNamespace(body={'items': [{'data': {'id': 'fid-a', 'details': details}}]})
+    monkeypatch.setattr(
+        manage_md5_pipeline.ica_api_utils,
+        'ica_retry',
+        lambda *args, **kwargs: response,  # noqa: ARG005
+    )
+    with pytest.raises(ValueError, match=r'a\.fastq\.gz.*fid-a|fid-a.*a\.fastq\.gz'):
+        manage_md5_pipeline._get_fastq_ica_id_list(
+            fastq_filenames=['a.fastq.gz'],
+            api_instance=_STUB_API,
+            path_parameters={},
+        )
+
+
+def test_get_fastq_ica_id_list_duplicate_name_cannot_mask_a_missing_file(monkeypatch):
+    """Two ICA files sharing one manifest name plus one truly missing name keeps the
+    counts equal, so a count-only check would pass; the reconciliation must raise,
+    naming both the missing and the duplicated file."""
+    items = [
+        {'data': {'id': 'fid-a1', 'details': {'name': 'a.fastq.gz', 'fileSizeInBytes': 1}}},
+        {'data': {'id': 'fid-a2', 'details': {'name': 'a.fastq.gz', 'fileSizeInBytes': 1}}},
+    ]
+    monkeypatch.setattr(
+        manage_md5_pipeline.ica_api_utils,
+        'ica_retry',
+        lambda *args, **kwargs: SimpleNamespace(body={'items': items}),  # noqa: ARG005
+    )
+    with pytest.raises(ValueError) as excinfo:
+        manage_md5_pipeline._get_fastq_ica_id_list(
+            fastq_filenames=['a.fastq.gz', 'b.fastq.gz'],
+            api_instance=_STUB_API,
+            path_parameters={},
+        )
+    message = str(excinfo.value)
+    assert 'b.fastq.gz' in message
+    assert 'a.fastq.gz' in message
+
+
 def test_get_fastq_ica_id_list_mismatch_names_missing_files(monkeypatch):
     """A mismatch must raise and name exactly the files ICA didn't return."""
     # ICA only knows about a.fastq.gz; b and c from the manifest are absent.

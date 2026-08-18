@@ -3,6 +3,7 @@ import json
 import math
 import os
 import time
+from collections import Counter
 from collections.abc import Callable
 from functools import partial
 from typing import NamedTuple, NoReturn
@@ -21,27 +22,36 @@ from dragen_align_pa.jobs import run_intake_qc_pipeline
 from dragen_align_pa.jobs.ica_pipeline_manager import manage_ica_pipeline_loop
 
 
-def compute_md5_chunk_size(n_files: int, max_concurrent_pods: int, waves: int) -> int:
-    """Return the per-chunk file count that fills the pod quota in `waves` waves.
+def compute_md5_chunk_size(n_files: int, total_bytes: int, max_concurrent_pods: int, max_pod_bytes: int) -> int:
+    """Return the per-chunk file count that respects the per-pod byte cap.
+
+    Derives the number of waves from the cohort's bytes: enough chunks that no
+    pod streams more than `max_pod_bytes`, rounded up to full waves of
+    `max_concurrent_pods` so every running pod carries a near-equal share.
 
     Args:
         n_files: Total number of FASTQ files to checksum.
+        total_bytes: Combined size of all FASTQ files in bytes.
         max_concurrent_pods: Maximum pods ICA runs concurrently for this pipeline.
-        waves: Number of sequential rounds of pods to spread the chunks over.
+        max_pod_bytes: Upper bound on the bytes a single chunk may hold.
 
     Returns:
-        The number of files per chunk, so that the chunk count is at most
-        `max_concurrent_pods * waves`.
+        The number of files per chunk.
 
     Raises:
-        ValueError: If any argument is not a positive integer.
+        ValueError: If `n_files`, `max_concurrent_pods`, or `max_pod_bytes` is
+            not positive, or `total_bytes` is negative.
     """
-    if n_files <= 0 or max_concurrent_pods <= 0 or waves <= 0:
+    if n_files <= 0 or max_concurrent_pods <= 0 or max_pod_bytes <= 0 or total_bytes < 0:
         raise ValueError(
-            f'n_files, max_concurrent_pods, and waves must be positive, '
-            f'got {n_files=}, {max_concurrent_pods=}, {waves=}',
+            f'n_files, max_concurrent_pods, and max_pod_bytes must be positive and '
+            f'total_bytes must be non-negative, '
+            f'got {n_files=}, {total_bytes=}, {max_concurrent_pods=}, {max_pod_bytes=}',
         )
-    return math.ceil(n_files / (max_concurrent_pods * waves))
+    min_chunks_for_bytes = math.ceil(total_bytes / max_pod_bytes)
+    waves = max(1, math.ceil(min_chunks_for_bytes / max_concurrent_pods))
+    n_chunks = min(n_files, waves * max_concurrent_pods)
+    return math.ceil(n_files / n_chunks)
 
 
 def pack_fastq_ids_by_size(id_to_size: dict[str, int], chunk_size: int) -> list[str]:
@@ -56,8 +66,14 @@ def pack_fastq_ids_by_size(id_to_size: dict[str, int], chunk_size: int) -> list[
         chunk_size: Number of lines per block in the pipeline's split.
 
     Returns:
-        All file IDs, ordered so that each consecutive `chunk_size`-line block
-        has a near-equal byte total.
+        All file IDs, ordered to balance each consecutive `chunk_size`-line
+        block's byte total as far as the fixed block capacities allow. For
+        chunk sizes from `compute_md5_chunk_size` the blocks come out
+        near-equal; a pathological standalone `chunk_size` (e.g. one forcing a
+        tiny remainder block) cannot balance regardless of order.
+
+    Raises:
+        ValueError: If `chunk_size` is not positive.
     """
     if chunk_size <= 0:
         raise ValueError(f'chunk_size must be positive, got {chunk_size}')
@@ -83,25 +99,29 @@ def pack_fastq_ids_by_size(id_to_size: dict[str, int], chunk_size: int) -> list[
 
 
 class FastqFileDetails(NamedTuple):
+    """Name and size a FASTQ file resolves to in ICA."""
+
     name: str
     size_in_bytes: int
 
 
 # ICA runs at most this many concurrent pods for the MD5 pipeline; a tenant-side
-# quota we cannot alter (observed: chunks beyond 25 queue until a pod frees up).
+# quota we cannot alter or query — it was measured from run metrics (a hard
+# plateau of exactly 25 running pods), not read from any API or config.
 _MD5_MAX_CONCURRENT_PODS = 25
-# Spread the chunks over two rounds of pods: chunks stay small enough that a
-# failed or hung pod costs little, without the per-pod startup overhead of many
-# tiny chunks.
-_MD5_CHUNK_WAVES = 2
+# Byte cap per chunk: keeps any single pod's serial streaming work bounded
+# (~0.25 TB is under an hour at the observed ~75 MB/s single-stream rate).
+# The chunk size is always computed from these two constants; there is
+# deliberately no config override.
+_MD5_MAX_POD_BYTES = 250_000_000_000
 
 
 def _plan_md5_chunks(ica_fastq_info: dict[str, FastqFileDetails]) -> tuple[list[str], int]:
     """Choose the chunk size and byte-balanced ID order for a cohort's FASTQs.
 
-    Computes the chunk size that spreads the files over the ICA pod quota in
-    `_MD5_CHUNK_WAVES` waves, then orders the IDs so each chunk holds a
-    near-equal share of the cohort's bytes.
+    Computes the chunk size that keeps every chunk under the per-pod byte cap
+    while filling the ICA pod quota in full waves, then orders the IDs so each
+    chunk holds a near-equal share of the cohort's bytes.
 
     Args:
         ica_fastq_info: Mapping of ICA file ID to the file's name and size.
@@ -110,14 +130,22 @@ def _plan_md5_chunks(ica_fastq_info: dict[str, FastqFileDetails]) -> tuple[list[
         The file IDs ordered for byte-balanced chunks, and the chunk size to
         pass to the pipeline.
     """
+    id_to_size = {file_id: details.size_in_bytes for file_id, details in ica_fastq_info.items()}
     chunk_size = compute_md5_chunk_size(
-        n_files=len(ica_fastq_info),
+        n_files=len(id_to_size),
+        total_bytes=sum(id_to_size.values()),
         max_concurrent_pods=_MD5_MAX_CONCURRENT_PODS,
-        waves=_MD5_CHUNK_WAVES,
+        max_pod_bytes=_MD5_MAX_POD_BYTES,
     )
-    ordered_ids = pack_fastq_ids_by_size(
-        id_to_size={file_id: details.size_in_bytes for file_id, details in ica_fastq_info.items()},
-        chunk_size=chunk_size,
+    ordered_ids = pack_fastq_ids_by_size(id_to_size=id_to_size, chunk_size=chunk_size)
+    block_byte_totals = [
+        sum(id_to_size[file_id] for file_id in ordered_ids[i : i + chunk_size])
+        for i in range(0, len(ordered_ids), chunk_size)
+    ]
+    logger.info(
+        f'MD5 chunk plan: {len(block_byte_totals)} chunks of up to {chunk_size} files '
+        f'({len(ordered_ids)} files, {sum(block_byte_totals):,} bytes total); '
+        f'per-chunk bytes min {min(block_byte_totals):,}, max {max(block_byte_totals):,}',
     )
     return ordered_ids, chunk_size
 
@@ -143,9 +171,10 @@ def _get_fastq_ica_id_list(
         every resolved FASTQ file.
 
     Raises:
-        ValueError: If the number of resolved file IDs does not match the
-            number of expected filenames. The message names the files that
-            were missing in ICA.
+        ValueError: If any manifest filename is missing in ICA, resolves to
+            more than one ICA file, or ICA returns a filename the manifest
+            does not expect, or a returned file has no usable size. The
+            message names the offending files.
     """
     ica_fastq_info: dict[str, FastqFileDetails] = {}
 
@@ -163,19 +192,37 @@ def _get_fastq_ica_id_list(
         )
         for item in api_response.body['items']:
             file_id: str = item['data']['id']
-            ica_fastq_info[file_id] = FastqFileDetails(
-                name=item['data']['details']['name'],
-                size_in_bytes=int(item['data']['details']['fileSizeInBytes']),
-            )
+            file_name: str = item['data']['details']['name']
+            # Optional in the ICA schema (e.g. a file still uploading); a
+            # defaulted size would silently unbalance the chunk packing.
+            size_in_bytes = item['data']['details'].get('fileSizeInBytes')
+            if size_in_bytes is None:
+                raise ValueError(
+                    f'ICA returned no fileSizeInBytes for {file_name!r} ({file_id}); '
+                    f'the file may not be fully uploaded (status not AVAILABLE).',
+                )
+            ica_fastq_info[file_id] = FastqFileDetails(name=file_name, size_in_bytes=int(size_in_bytes))
 
-    if len(ica_fastq_info) != len(fastq_filenames):
-        found_filenames: set[str] = {details.name for details in ica_fastq_info.values()}
-        missing_filenames: list[str] = [name for name in fastq_filenames if name not in found_filenames]
-        message: str = (
-            f'Mismatch: Found {len(ica_fastq_info)} file IDs in ICA, '
-            f'but {len(fastq_filenames)} were expected from manifest. '
-            f'{len(missing_filenames)} file(s) missing in ICA: {missing_filenames}'
-        )
+    # Reconcile by name, not count: a filename existing twice in ICA plus a
+    # genuinely missing manifest file leaves the counts equal, so a count-only
+    # check would vouch for a file that was never checksummed.
+    found_name_counts = Counter(details.name for details in ica_fastq_info.values())
+    expected_names = set(fastq_filenames)
+    missing_filenames: list[str] = [name for name in fastq_filenames if name not in found_name_counts]
+    duplicated_filenames: list[str] = sorted(name for name, count in found_name_counts.items() if count > 1)
+    unexpected_filenames: list[str] = sorted(name for name in found_name_counts if name not in expected_names)
+    if missing_filenames or duplicated_filenames or unexpected_filenames:
+        problems: list[str] = []
+        if missing_filenames:
+            problems.append(f'{len(missing_filenames)} file(s) missing in ICA: {missing_filenames}')
+        if duplicated_filenames:
+            problems.append(
+                f'{len(duplicated_filenames)} filename(s) resolving to more than one ICA file: '
+                f'{duplicated_filenames}',
+            )
+        if unexpected_filenames:
+            problems.append(f'{len(unexpected_filenames)} filename(s) not in the manifest: {unexpected_filenames}')
+        message: str = 'Manifest FASTQs did not reconcile against ICA. ' + ' '.join(problems)
         logger.error(message)
         raise ValueError(message)
 

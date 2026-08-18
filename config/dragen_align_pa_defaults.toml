@@ -102,10 +102,9 @@ dragen_version = 'dragen_3_7_8'
 
 #md5sum pipeline
 md5_pipeline_id = "e767f290-bc60-4281-b11d-6a65c9791253"
-
-# Chunk size for the new streaming MD5 pipeline
-[ica.pipelines.md5]
-chunk_size = "100"
+# The MD5 chunk size is computed at submit time from the ICA pod quota and the
+# cohort's total bytes (see manage_md5_pipeline._plan_md5_chunks); there is no
+# config override.
 
 # Allow upload of Dragen crams, as they are not referenced directly by sequencing_group.cram
 [dragen_align_pa.upload_data_to_ica]
