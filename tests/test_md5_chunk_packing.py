@@ -29,6 +29,12 @@ _QUARTER_TB = 250_000_000_000
         (10, 1_000_000_000, 1),
         # More files than slots but tiny bytes -> spread over one wave of 25.
         (30, 1_000_000_000, 2),
+        # Few, large files: ceil(26 / 25) = 2 would merge to 13 blocks of
+        # ~385 GB, over the cap; the size must shrink to 1 (26 blocks).
+        (26, 5_000_000_000_000, 1),
+        # Same collapse with a remainder: ceil(30 / 25) = 2 gives 15 blocks
+        # against a 24-block byte minimum; shrink to 1 (30 blocks).
+        (30, 6_000_000_000_000, 1),
     ],
 )
 def test_compute_md5_chunk_size_caps_per_pod_bytes_and_fills_waves(n_files, total_bytes, expected):

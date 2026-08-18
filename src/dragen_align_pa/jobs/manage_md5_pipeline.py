@@ -51,7 +51,14 @@ def compute_md5_chunk_size(n_files: int, total_bytes: int, max_concurrent_pods: 
     min_chunks_for_bytes = math.ceil(total_bytes / max_pod_bytes)
     waves = max(1, math.ceil(min_chunks_for_bytes / max_concurrent_pods))
     n_chunks = min(n_files, waves * max_concurrent_pods)
-    return math.ceil(n_files / n_chunks)
+    chunk_size = math.ceil(n_files / n_chunks)
+    # With few, large files the ceil can merge blocks below the byte minimum
+    # (e.g. 26 files into 25 chunks -> size 2 -> only 13 actual blocks over the
+    # cap); shrink until the actual block count meets it. chunk_size 1 yields
+    # n_files blocks, the most possible without splitting files.
+    while chunk_size > 1 and math.ceil(n_files / chunk_size) < min_chunks_for_bytes:
+        chunk_size -= 1
+    return chunk_size
 
 
 def pack_fastq_ids_by_size(id_to_size: dict[str, int], chunk_size: int) -> list[str]:
