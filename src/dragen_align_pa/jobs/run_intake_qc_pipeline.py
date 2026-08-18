@@ -18,9 +18,9 @@ def run_md5_pipeline(
     path_parameters: dict[str, str],
     ar_guid: str,
     md5_outputs_folder_id: str,
+    chunk_size: int,
 ) -> str:
     header_params: dict[Any, Any] = {}
-    chunk_size = str(cpg_utils.config.config_retrieve(['ica', 'pipelines', 'md5', 'chunk_size'], default='100'))
     # The projectId comes from the caller's session (one resolution per submission); the DRAGEN
     # project id is also passed to the pipeline itself as the `ica_project_id` parameter value.
     project_id: str = path_parameters['projectId']
@@ -42,7 +42,7 @@ def run_md5_pipeline(
             parameters=[
                 AnalysisParameterInput(code='ica_project_id', value=project_id),
                 AnalysisParameterInput(code='ica_api_key', value=api_key),
-                AnalysisParameterInput(code='chunk_size', value=chunk_size),
+                AnalysisParameterInput(code='chunk_size', value=str(chunk_size)),
             ],
         ),
     )
