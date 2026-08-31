@@ -215,6 +215,59 @@ production cohorts that realign the same samples. Without it, both cohorts share
 `{SG}_pipeline_id_and_arguid.json`, and the later run repoints the earlier cohort's
 downloads at a batch that does not exist for it.
 
+## Backfilling Externally Produced Outputs
+
+Backfill mode ingests results that were produced outside this pipeline (e.g. downloaded
+from ICA manually, reheadered and re-checksummed) without running any ICA stage. The
+staged files are copied server-side into their final `-main` locations, registered in
+metamist (cram, then base gVCF, then recal gVCF — strictly last, so
+`sequencing_group.gvcf` resolves to the recal file), and Somalier fingerprints are
+extracted from the copied CRAMs. The `analysis-runner` invocation is unchanged; only
+config differs.
+
+**1. Stage the data** in the dataset's `-upload` bucket under a literal `output/`
+prefix (no `ica/{DRAGEN_VERSION}` prefix), named exactly by sequencing-group *name*:
+
+  * `gs://{DATASET}-upload/output/cram/{SG}.cram` and `{SG}.cram.crai`
+  * `gs://{DATASET}-upload/output/base_gvcf/{SG}.hard-filtered.gvcf.gz` and `.tbi`
+  * `gs://{DATASET}-upload/output/recal_gvcf/{SG}.hard-filtered.recal.gvcf.gz`, `.tbi`,
+    `.md5sum` and `.tbi.md5sum`
+
+Every file must be present for every sequencing group in the cohort — a missing or
+misnamed source fails that group's copy job (the `gcloud storage cp` error names the
+missing URL).
+
+**2. Configure the run.** In the run's config TOML:
+
+```toml
+[workflow]
+input_cohorts = ['COH...']
+last_stages = []                        # override the ICA-flow default; required
+skip_stages = ['DeleteBackfillUpload']  # keep the -upload sources (the default)
+
+[dragen_align_pa.backfill]
+enabled = true
+```
+
+The submit-time validator rejects a `first_stages`/`last_stages` entry naming any
+non-backfill stage (the defaults TOML sets `last_stages = ['DownloadDataFromIca']` for
+the ICA flow, so the override above is required).
+
+**3. Optionally delete the staged sources.** Remove `DeleteBackfillUpload` from
+`skip_stages` (on the first run or a re-run) and each `-upload` source is deleted only
+after its `-main` copy matches its crc32c checksum. Outcomes are recorded per file in
+`gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/backfill_delete/{SG}.txt`; sources already
+absent from a previous run are skipped, and any other failure (e.g. a transient gcloud
+error) fails the job so nothing is silently left behind.
+
+Copies verify crc32c checksums end-to-end: a pre-existing `-main` object that doesn't
+match the staged source fails the run rather than being silently kept. Registration is
+gated by a marker at
+`gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/backfill_registration/{SG}.json`, so a run
+that copied files but failed to register re-runs registration; like the outputs it
+gates, the marker is cohort-independent, so re-backfilling the same sequencing group
+under another cohort doesn't create duplicate analyses.
+
 ## Panel of Normals (Exome CNV)
 **Generation**
 - The standalone `scripts/build_cnv_panel_of_normals.py`

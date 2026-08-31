@@ -26,7 +26,25 @@ from dragen_align_pa.constants.constants_registry import (
     resolve_ica_project_name,
     resolve_mlr_config_file_id,
 )
+from dragen_align_pa.stages import (
+    BackfillCramFromUpload,
+    BackfillGvcfsFromUpload,
+    DeleteBackfillUpload,
+    SomalierExtract,
+)
 from dragen_align_pa.utils import get_bed_names_for_seqtype
+
+# functools.wraps in cpg-flow's @stage preserves the class name, which is also the
+# name cpg-flow matches against first/last/skip_stages config values.
+_BACKFILL_STAGE_NAMES: frozenset[str] = frozenset(
+    stage_decorator.__name__
+    for stage_decorator in (
+        BackfillCramFromUpload,
+        BackfillGvcfsFromUpload,
+        SomalierExtract,
+        DeleteBackfillUpload,
+    )
+)
 
 
 def validate_configuration() -> None:
@@ -46,6 +64,7 @@ def validate_configuration() -> None:
     # -upload), so the ICA-facing guards below don't apply and must not require a
     # backfill config to carry ICA project/BED settings.
     if config_retrieve(['dragen_align_pa', 'backfill', 'enabled'], False):
+        assert_backfill_stage_selection()
         return
     assert_management_flags_exclusive()
     assert_ica_project_root_resolves()
@@ -98,6 +117,29 @@ def assert_single_input_cohort() -> None:
             f'launch a separate run per cohort.',
         )
     logger.info(f'Single-cohort check passed: {input_cohorts[0]}.')
+
+
+def assert_backfill_stage_selection() -> None:
+    """Fail loud at submit when a backfill run's stage selection can never build a graph.
+
+    The defaults TOML ships `last_stages = ['DownloadDataFromIca']` for the ICA flow;
+    a backfill graph contains no ICA stage, and cpg-flow rejects any `first_stages` /
+    `last_stages` name that is absent from the graph with a message that doesn't
+    mention backfill. Catch it here with instructions instead.
+
+    Raises:
+        ValueError: If `[workflow].first_stages` or `[workflow].last_stages` name a
+            stage outside the backfill graph.
+    """
+    for key in ('first_stages', 'last_stages'):
+        names: list[str] = config_retrieve(['workflow', key], default=[])
+        if unknown := [name for name in names if name not in _BACKFILL_STAGE_NAMES]:
+            raise ValueError(
+                f'[workflow].{key} names {unknown}, which are not part of the backfill '
+                f'graph {sorted(_BACKFILL_STAGE_NAMES)}. The defaults TOML sets '
+                f"last_stages for the ICA flow, so a backfill run config must override "
+                f'it (e.g. last_stages = []).',
+            )
 
 
 def assert_ica_project_root_resolves() -> None:

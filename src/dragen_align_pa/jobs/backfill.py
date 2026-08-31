@@ -1,6 +1,6 @@
 """Hail Batch jobs for the backfill entry point: copy externally produced
 outputs from the -upload bucket into their final -main locations, register the
-gVCFs in metamist, and (opt-in) delete the -upload sources once verified.
+CRAM and gVCFs in metamist, and (opt-in) delete the -upload sources once verified.
 
 All jobs are BashJobs: the copies are server-side `gcloud storage cp` between
 buckets (nothing is localized), and registration shells out to the
@@ -21,43 +21,68 @@ if TYPE_CHECKING:
     import cpg_utils
     from hailtop.batch.job import BashJob
 
+# gcloud prints not-found describe failures with wording that has varied across
+# releases; match the stable fragments. Anything else (429/503, auth) is a real
+# failure and must fail the job — see delete_command.
+_GCLOUD_NOT_FOUND_PATTERN = 'not found|matched no objects|404'
+
 
 def copy_command(pairs: list[tuple[str, str]]) -> str:
-    """Bash to copy each (source, destination) pair, then verify the destination exists.
+    """Bash to copy each (source, destination) pair, then compare crc32c checksums.
 
-    `--no-clobber` makes stage re-runs cheap: a destination object that already
-    exists is complete (GCS object creation is atomic), so it is skipped rather
-    than re-copied. The describe re-verifies the skipped case too.
+    `--no-clobber` makes stage re-runs cheap: an existing destination object is
+    skipped rather than re-copied. Because a skipped destination may be a stale
+    pre-existing object rather than a prior copy of this source, the checksum
+    comparison is what actually certifies the copy — a mismatch fails the job.
     """
-    blocks = [
-        f"gcloud storage cp --no-clobber '{source}' '{destination}'\n"
-        f"gcloud storage objects describe '{destination}' --format='value(name)' > /dev/null"
-        for source, destination in pairs
-    ]
+    blocks = []
+    for source, destination in pairs:
+        quoted_source, quoted_destination = shlex.quote(source), shlex.quote(destination)
+        blocks.append(
+            f"""gcloud storage cp --no-clobber {quoted_source} {quoted_destination}
+src_hash=$(gcloud storage objects describe {quoted_source} --format='value(crc32c_hash)')
+dst_hash=$(gcloud storage objects describe {quoted_destination} --format='value(crc32c_hash)')
+if [ "$src_hash" != "$dst_hash" ]; then
+    echo "Checksum mismatch for {destination}: source $src_hash vs destination $dst_hash" >&2
+    exit 1
+fi"""
+        )
     return 'set -euo pipefail\n' + '\n'.join(blocks)
 
 
 def delete_command(pairs: list[tuple[str, str]]) -> str:
-    """Bash to delete each source only after its destination matches it in size.
+    """Bash to delete each source only after its destination matches its crc32c checksum.
 
-    An already-absent source is skipped (a re-run after a part-way failure must
-    not fail on files deleted last time), but a present source whose destination
-    is missing or differs in size aborts the job before any rm.
+    Expects the caller to have set `RESULTS` to a writable path; each source is
+    recorded there as `deleted` or `already-absent` as it is actually handled.
+
+    A genuinely absent source is skipped (a re-run after a part-way failure must
+    not fail on files deleted last time), recognised by gcloud's not-found error
+    text; any other describe failure (429/503, auth) fails the job so the stage
+    re-runs instead of silently orphaning the -upload file. A present source whose
+    destination is missing or differs aborts before any rm.
     """
-    blocks = [
-        f"""if src_size=$(gcloud storage objects describe '{source}' --format='value(size)'); then
-    dst_size=$(gcloud storage objects describe '{destination}' --format='value(size)')
-    if [ "$src_size" != "$dst_size" ]; then
-        echo "Size mismatch for {source}: source $src_size vs destination $dst_size" >&2
+    blocks = []
+    for source, destination in pairs:
+        quoted_source, quoted_destination = shlex.quote(source), shlex.quote(destination)
+        describe_source = f"gcloud storage objects describe {quoted_source} --format='value(crc32c_hash)'"
+        blocks.append(
+            f"""if src_hash=$({describe_source} 2> describe_err.txt); then
+    dst_hash=$(gcloud storage objects describe {quoted_destination} --format='value(crc32c_hash)')
+    if [ "$src_hash" != "$dst_hash" ]; then
+        echo "Checksum mismatch for {source}: source $src_hash vs destination $dst_hash" >&2
         exit 1
     fi
-    gcloud storage rm '{source}'
+    gcloud storage rm {quoted_source}
+    echo "deleted {source}" >> "$RESULTS"
+elif grep -qiE {shlex.quote(_GCLOUD_NOT_FOUND_PATTERN)} describe_err.txt; then
+    echo "already-absent {source}" >> "$RESULTS"
 else
-    echo "Source already absent, skipping: {source}"
+    cat describe_err.txt >&2
+    exit 1
 fi"""
-        for source, destination in pairs
-    ]
-    return 'set -euo pipefail\n' + '\n'.join(blocks)
+        )
+    return 'set -euo pipefail\n: > "$RESULTS"\n' + '\n'.join(blocks)
 
 
 def _source_destination_pairs(rel_filenames: list[str]) -> list[tuple[str, str]]:
@@ -85,17 +110,18 @@ def copy_from_upload_job(
     return job
 
 
-def register_gvcfs_job(
+def register_backfill_job(
     sequencing_group: SequencingGroup,
+    cram: 'cpg_utils.Path',
     base_gvcf: 'cpg_utils.Path',
     recal_gvcf: 'cpg_utils.Path',
     marker_path: 'cpg_utils.Path',
     stage_name: str,
 ) -> 'BashJob':
-    """Register the base then recal gVCF in metamist, in that order, in one process."""
+    """Register the cram, base gVCF and recal gVCF in metamist, in that order, in one process."""
     b = get_batch()
     job: BashJob = b.new_bash_job(
-        name=f'Register backfill gVCFs {sequencing_group.id}',
+        name=f'Register backfill analyses {sequencing_group.id}',
         attributes=(sequencing_group.get_job_attrs() or {}) | {'tool': 'metamist', 'stage': stage_name},
     )
     job.image(get_driver_image())
@@ -112,12 +138,13 @@ def register_gvcfs_job(
     job.command(
         'set -euo pipefail\n'
         'python3 -m dragen_align_pa.backfill_registration '
+        f'--cram {shlex.quote(str(cram))} '
         f'--base-gvcf {shlex.quote(str(base_gvcf))} '
         f'--recal-gvcf {shlex.quote(str(recal_gvcf))} '
         f'--sg-id {shlex.quote(sequencing_group.id)} '
         f'--project-name {shlex.quote(project_name)} '
         f'--meta-json {shlex.quote(json.dumps(meta))} '
-        f'> {job.ofile}'
+        f'--marker-file {job.ofile}'
     )
     b.write_output(job.ofile, str(marker_path))
     return job
@@ -128,11 +155,14 @@ def delete_upload_job(
     rel_filenames: list[str],
     marker_path: 'cpg_utils.Path',
 ) -> 'BashJob':
-    """Verify every -main destination matches its -upload source, then delete the sources."""
+    """Verify every -main destination matches its -upload source, then delete the sources.
+
+    The marker records each source's actual outcome (`deleted` / `already-absent`),
+    written by the script as it goes, never claims computed ahead of execution.
+    """
     b = get_batch()
     job = _new_gcloud_job('DeleteBackfillUpload', sequencing_group)
-    pairs = _source_destination_pairs(rel_filenames)
-    job.command(delete_command(pairs))
-    job.command(f'echo {shlex.quote(json.dumps({"deleted_sources": [source for source, _ in pairs]}))} > {job.ofile}')
+    job.command(f'RESULTS={job.ofile}')
+    job.command(delete_command(_source_destination_pairs(rel_filenames)))
     b.write_output(job.ofile, str(marker_path))
     return job

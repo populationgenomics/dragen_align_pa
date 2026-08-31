@@ -610,12 +610,17 @@ class DownloadBatchArtefactsFromIca(CohortStage):
         return self.make_outputs(target=cohort, data=marker_path, jobs=job)
 
 
-@stage(analysis_type='cram', analysis_keys=['cram'])
+@stage()
 class BackfillCramFromUpload(SequencingGroupStage):
     """Copy an externally produced CRAM + CRAI from -upload to its final -main path.
 
     Root stage of the backfill entry point. Outputs are byte-identical to
     `DownloadCramFromIca`'s, so downstream consumers see the same paths.
+
+    No `analysis_type` here: decorator registration is not covered by any expected
+    output, so a copy-succeeded / registration-failed re-run would REUSE the stage
+    and the cram analysis would never exist. The cram is registered alongside the
+    gVCFs in `BackfillGvcfsFromUpload`'s marker-gated registration job instead.
     """
 
     def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -641,11 +646,13 @@ class BackfillCramFromUpload(SequencingGroupStage):
 # gVCF (sequencing_group.gvcf resolves to the latest gvcf analysis by timestamp), and
 # cpg-flow's decorator registration cannot order registrations across stages — the
 # registration job never joins the stage's job list, so downstream dependency edges
-# don't cover it. Both registrations run sequentially in one job instead (see
-# dragen_align_pa.backfill_registration).
-@stage()
+# don't cover it. All three backfill registrations (cram, base, recal) run
+# sequentially in one marker-gated job instead (see dragen_align_pa.backfill_registration);
+# the BackfillCramFromUpload dependency exists so the cram is copied before it is
+# registered.
+@stage(required_stages=[BackfillCramFromUpload])
 class BackfillGvcfsFromUpload(SequencingGroupStage):
-    """Copy the base + reheadered recal gVCF sets from -upload, then register both."""
+    """Copy the base + reheadered recal gVCF sets from -upload, then register all backfill analyses."""
 
     def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
@@ -660,11 +667,23 @@ class BackfillGvcfsFromUpload(SequencingGroupStage):
             for key, filename in recal_gvcf_output_filenames(sequencing_group.name).items()
         }
         # The registration marker gates re-runs: copied files without it mean the
-        # metamist registration didn't complete, so the stage must run again.
-        return base | recal | {'registration': get_pipeline_path(f'backfill_registration/{sequencing_group.id}.json')}
+        # metamist registration didn't complete, so the stage must run again. It
+        # lives under the cohort-independent output prefix (like the files it
+        # gates), so backfilling the same SG under another cohort doesn't
+        # re-register duplicate analyses.
+        return (
+            base
+            | recal
+            | {'registration': get_output_path(filename=f'backfill_registration/{sequencing_group.id}.json')}
+        )
 
-    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:  # noqa: ARG002
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
+        cram_path: cpg_utils.Path = inputs.as_path(
+            target=sequencing_group,
+            stage=BackfillCramFromUpload,
+            key='cram',
+        )
 
         rel_filenames: list[str] = [
             *base_gvcf_output_filenames(sequencing_group.name).values(),
@@ -675,8 +694,9 @@ class BackfillGvcfsFromUpload(SequencingGroupStage):
             sequencing_group=sequencing_group,
             rel_filenames=rel_filenames,
         )
-        register_job: BashJob = backfill.register_gvcfs_job(
+        register_job: BashJob = backfill.register_backfill_job(
             sequencing_group=sequencing_group,
+            cram=cram_path,
             base_gvcf=outputs['base_gvcf'],
             recal_gvcf=outputs['recal_gvcf'],
             marker_path=outputs['registration'],
@@ -858,10 +878,15 @@ class DeleteDataInIca(CohortStage):
 # consumer of the copied files before any -upload source is removed.
 @stage(required_stages=[BackfillGvcfsFromUpload, SomalierExtract])
 class DeleteBackfillUpload(SequencingGroupStage):
-    """Delete this SG's -upload sources once every -main destination is verified."""
+    """Delete this SG's -upload sources once every -main destination is verified.
+
+    The marker records each source's actual outcome (`deleted` / `already-absent`)
+    as plain text lines, and lives under the cohort-independent output prefix like
+    the files whose deletion it records.
+    """
 
     def expected_outputs(self, sequencing_group: SequencingGroup) -> cpg_utils.Path:
-        return get_pipeline_path(filename=f'backfill_delete/{sequencing_group.id}.json')
+        return get_output_path(filename=f'backfill_delete/{sequencing_group.id}.txt')
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:  # noqa: ARG002
         marker_path: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)

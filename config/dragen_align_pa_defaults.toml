@@ -109,11 +109,17 @@ md5_pipeline_id = "e767f290-bc60-4281-b11d-6a65c9791253"
 # Backfill entry point: the run's outputs were produced outside this pipeline (already
 # aligned, reheadered, checksummed) and staged in the dataset's -upload bucket under a
 # literal `output/` prefix, mirroring the final structure (output/cram, output/base_gvcf,
-# output/recal_gvcf). When enabled, the ICA chain is replaced by the Backfill* stages:
-# copy to -main, register cram + base gVCF + recal gVCF in metamist (recal strictly
-# last, so sequencing_group.gvcf resolves to it), then SomalierExtract. The
-# DeleteBackfillUpload stage (removes the -upload sources after verification) is
-# opt-in via [workflow].skip_stages, like DeleteDataInIca.
+# output/recal_gvcf) with files named by sequencing-group name (see the README section
+# "Backfilling Externally Produced Outputs" for the exact filenames). When enabled, the
+# ICA chain is replaced by the Backfill* stages: copy to -main, register cram + base
+# gVCF + recal gVCF in metamist (recal strictly last, so sequencing_group.gvcf resolves
+# to it), then SomalierExtract. The DeleteBackfillUpload stage (removes the -upload
+# sources after verification) is opt-in via [workflow].skip_stages, like DeleteDataInIca.
+#
+# A backfill run config MUST also override the ICA-flow stage selections in this file:
+# set last_stages = [] (or a backfill stage name) — the default
+# last_stages = ['DownloadDataFromIca'] names a stage that doesn't exist in the
+# backfill graph and the validator rejects it at submit.
 [dragen_align_pa.backfill]
 enabled = false
 
