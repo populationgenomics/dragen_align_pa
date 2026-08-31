@@ -5,7 +5,7 @@ output_prefix = ""
 sequencing_type = "genome"
 input_cohorts = [ "COH0000",]
 last_stages = ['DownloadDataFromIca']
-skip_stages = ['DeleteDataInIca', 'DeleteBackfillUpload']
+skip_stages = ['DeleteDataInIca']
 
 # Can be fastq or CRAM, depending on the source of the reads for alignment
 reads_type = "fastq"
@@ -113,15 +113,17 @@ md5_pipeline_id = "e767f290-bc60-4281-b11d-6a65c9791253"
 # "Backfilling Externally Produced Outputs" for the exact filenames). When enabled, the
 # ICA chain is replaced by the Backfill* stages: copy to -main, register cram + base
 # gVCF + recal gVCF in metamist (recal strictly last, so sequencing_group.gvcf resolves
-# to it), then SomalierExtract. The DeleteBackfillUpload stage (removes the -upload
-# sources after verification) is opt-in via [workflow].skip_stages, like DeleteDataInIca.
+# to it), then SomalierExtract.
 #
-# A backfill run config MUST also override the ICA-flow stage selections in this file:
-# set last_stages = [] (or a backfill stage name) — the default
-# last_stages = ['DownloadDataFromIca'] names a stage that doesn't exist in the
-# backfill graph and the validator rejects it at submit.
+# The backfill graph is fixed: a backfill run config MUST override the ICA-flow
+# default above with last_stages = [] (the validator rejects any non-empty
+# first/last/only_stages in backfill mode, and any skip_stages entry naming a
+# backfill stage). Completed stages are skipped by output reuse.
 [dragen_align_pa.backfill]
 enabled = false
+# Delete each -upload source after its -main copy is checksum-verified. Off by
+# default; the delete stage still appears in the graph but queues no jobs.
+delete_upload = false
 
 # Allow upload of Dragen crams, as they are not referenced directly by sequencing_group.cram
 [dragen_align_pa.upload_data_to_ica]

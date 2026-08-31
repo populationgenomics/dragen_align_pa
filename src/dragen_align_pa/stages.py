@@ -693,6 +693,12 @@ class BackfillGvcfsFromUpload(SequencingGroupStage):
             job_name='BackfillGvcfsFromUpload',
             sequencing_group=sequencing_group,
             rel_filenames=rel_filenames,
+            # BackfillCramFromUpload is REUSEd without ever running its checksum
+            # comparison when a prior run (e.g. a partial ICA download) already
+            # left cram+crai at the destination; certifying the cram here — the
+            # marker-gated stage that must run before registration — guarantees
+            # the registered cram matches the staged -upload source.
+            verify_only_rel_filenames=list(cram_output_filenames(sequencing_group.name).values()),
         )
         register_job: BashJob = backfill.register_backfill_job(
             sequencing_group=sequencing_group,
@@ -872,8 +878,10 @@ class DeleteDataInIca(CohortStage):
         return self.make_outputs(target=cohort, data=output_path, jobs=ica_delete_job)
 
 
-# Terminal stage of the backfill entry point (the counterpart of DeleteDataInIca,
-# and like it opt-in via skip_stages in the defaults TOML). Depending on
+# Terminal stage of the backfill entry point (the counterpart of DeleteDataInIca).
+# Always requested and never in skip_stages — cpg-flow aborts at graph build when a
+# requested-but-skipped stage's expected outputs are missing — so the opt-in lives
+# in queue_jobs, gated by [dragen_align_pa.backfill].delete_upload. Depending on
 # SomalierExtract as well as BackfillGvcfsFromUpload transitively covers every
 # consumer of the copied files before any -upload source is removed.
 @stage(required_stages=[BackfillGvcfsFromUpload, SomalierExtract])
@@ -890,6 +898,9 @@ class DeleteBackfillUpload(SequencingGroupStage):
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:  # noqa: ARG002
         marker_path: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
+        if not config_retrieve(['dragen_align_pa', 'backfill', 'delete_upload'], False):
+            logger.info(f'delete_upload is off; keeping -upload sources for {sequencing_group.id}')
+            return self.make_outputs(target=sequencing_group, data=marker_path, skipped=True)
         rel_filenames: list[str] = [
             *cram_output_filenames(sequencing_group.name).values(),
             *base_gvcf_output_filenames(sequencing_group.name).values(),

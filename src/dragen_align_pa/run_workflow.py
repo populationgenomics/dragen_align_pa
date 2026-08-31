@@ -21,10 +21,11 @@ def cli_main():
     parser.add_argument('--dry_run', action='store_true', help='Dry run')
     args = parser.parse_args()
 
-    # cpg-flow drops a requested stage that appears in skip_stages WITHOUT expanding
-    # its dependencies (`_resolve_implicit_stages` stops at it), so the opt-in delete
-    # stage cannot be the sole requested stage: request its ancestors explicitly and
-    # let skip_stages toggle only the delete itself.
+    # The backfill graph is fixed: all three sinks are requested, and the delete
+    # opt-in lives inside DeleteBackfillUpload.queue_jobs (the delete_upload flag),
+    # never in stage selection — a requested stage in skip_stages aborts cpg-flow's
+    # graph build when its expected outputs are missing, and the validator rejects
+    # any backfill-mode stage selection for the same reason.
     stages = (  # type: ignore[ReportUnknownVariableType]
         [BackfillGvcfsFromUpload, SomalierExtract, DeleteBackfillUpload] if BACKFILL_MODE else [DeleteDataInIca]
     )

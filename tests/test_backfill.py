@@ -141,6 +141,44 @@ def test_copy_command_quotes_awkward_paths(tmp_path):
     assert f'storage cp --no-clobber {source} {destination}' in _gcloud_calls(tmp_path)
 
 
+def test_copy_command_fails_when_checksum_output_is_empty(tmp_path):
+    fake = _fake_gcloud("""
+        *) exit 0 ;;
+""")
+
+    result = _run_script(tmp_path, backfill.copy_command([_PAIR]), fake)
+
+    assert result.returncode != 0
+
+
+def test_verify_command_passes_on_matching_checksums(tmp_path):
+    source, destination = _PAIR
+    fake = _fake_gcloud(f"""
+        '{source}') echo 'abc123' ;;
+        '{destination}') echo 'abc123' ;;
+""")
+
+    result = _run_script(tmp_path, backfill.verify_command([_PAIR]), fake)
+
+    assert result.returncode == 0, result.stderr
+    # Verification never copies or deletes anything.
+    assert 'storage cp' not in _gcloud_calls(tmp_path)
+    assert 'storage rm' not in _gcloud_calls(tmp_path)
+
+
+def test_verify_command_fails_on_checksum_mismatch(tmp_path):
+    source, destination = _PAIR
+    fake = _fake_gcloud(f"""
+        '{source}') echo 'abc123' ;;
+        '{destination}') echo 'zzz999' ;;
+""")
+
+    result = _run_script(tmp_path, backfill.verify_command([_PAIR]), fake)
+
+    assert result.returncode != 0
+    assert 'mismatch' in result.stderr.lower()
+
+
 def _run_delete(tmp_path: Path, fake_gcloud_body: str) -> subprocess.CompletedProcess:
     script = f'RESULTS={tmp_path}/results.txt\n{backfill.delete_command([_PAIR])}'
     return _run_script(tmp_path, script, fake_gcloud_body)
@@ -185,6 +223,69 @@ def test_delete_command_skips_source_that_is_genuinely_absent(tmp_path):
     assert result.returncode == 0, result.stderr
     assert 'storage rm' not in _gcloud_calls(tmp_path)
     assert (tmp_path / 'results.txt').read_text() == f'already-absent {source}\n'
+
+
+def test_delete_command_fails_on_not_found_wording_that_lacks_the_source_url(tmp_path):
+    # gcloud's real not-found error names the URL; auth errors ("Your default
+    # credentials were not found") don't. Wording alone must not count as absence.
+    source, destination = _PAIR
+    fake = _fake_gcloud(f"""
+        '{source}') echo 'ERROR: Your default credentials were not found.' >&2; exit 1 ;;
+        '{destination}') echo 'abc123' ;;
+""")
+
+    result = _run_delete(tmp_path, fake)
+
+    assert result.returncode != 0
+    assert 'storage rm' not in _gcloud_calls(tmp_path)
+
+
+def test_delete_command_fails_when_gcloud_is_missing(tmp_path):
+    # bash's own `gcloud: command not found` must not classify as object absence.
+    empty_bin = tmp_path / 'bin'
+    empty_bin.mkdir()
+    script = f'RESULTS={tmp_path}/results.txt\n{backfill.delete_command([_PAIR])}'
+    result = subprocess.run(  # noqa: S603
+        ['/bin/bash', '-c', script],  # noqa: S607
+        env={'PATH': f'{empty_bin}:/usr/bin:/bin'},
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    results = tmp_path / 'results.txt'
+    assert not results.exists() or 'already-absent' not in results.read_text()
+
+
+def test_delete_command_fails_before_rm_when_checksum_output_is_empty(tmp_path):
+    # `--format='value(...)'` prints nothing (exit 0) for an unknown field; an
+    # empty-vs-empty comparison must not certify the destructive rm.
+    fake = _fake_gcloud("""
+        *) exit 0 ;;
+""")
+
+    result = _run_delete(tmp_path, fake)
+
+    assert result.returncode != 0
+    assert 'storage rm' not in _gcloud_calls(tmp_path)
+
+
+def test_delete_command_records_hostile_path_without_executing_it(tmp_path):
+    # A `$(...)` in a path must be recorded inertly, never expanded by bash.
+    source = 'gs://up/output/cram/$(touch pwned).cram'
+    destination = 'gs://main/ica/v/output/cram/SG1.cram'
+    fake = _fake_gcloud("""
+        *) echo 'abc123' ;;
+""")
+    script = f'RESULTS={tmp_path}/results.txt\n{backfill.delete_command([(source, destination)])}'
+
+    result = _run_script(tmp_path, script, fake)
+
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / 'pwned').exists()
+    assert (tmp_path / 'results.txt').read_text() == f'deleted {source}\n'
 
 
 def test_delete_command_fails_on_transient_describe_error(tmp_path):
@@ -325,27 +426,53 @@ def test_normal_mode_wiring_keeps_somalier_on_the_ica_download():
     assert stages._SOMALIER_CRAM_SOURCE is stages.DownloadCramFromIca
 
 
-def test_backfill_stage_selection_rejects_ica_stage_in_last_stages(monkeypatch):
-    # The defaults TOML ships last_stages=['DownloadDataFromIca'], which names a
-    # stage that doesn't exist in the backfill graph; the validator must fail loud
-    # at submit rather than let cpg-flow abort with a generic message.
-    def fake_config_retrieve(key, default=None):
-        if tuple(key) == ('workflow', 'last_stages'):
-            return ['DownloadDataFromIca']
+def _selection_config(monkeypatch, key: str, names: list[str]) -> None:
+    def fake_config_retrieve(config_key, default=None):
+        if tuple(config_key) == ('workflow', key):
+            return names
         return default
 
     monkeypatch.setattr(validator, 'config_retrieve', fake_config_retrieve)
+
+
+def test_backfill_stage_selection_rejects_the_shipped_last_stages_default(monkeypatch):
+    # The defaults TOML ships last_stages=['DownloadDataFromIca'] for the ICA flow;
+    # the validator must fail loud at submit with backfill-specific instructions.
+    _selection_config(monkeypatch, 'last_stages', ['DownloadDataFromIca'])
 
     with pytest.raises(ValueError, match='DownloadDataFromIca'):
         validator.assert_backfill_stage_selection()
 
 
-def test_backfill_stage_selection_accepts_backfill_stage_names(monkeypatch):
-    def fake_config_retrieve(key, default=None):
-        if tuple(key) == ('workflow', 'last_stages'):
-            return ['SomalierExtract']
-        return default
+def test_backfill_stage_selection_rejects_backfill_names_that_prune_registration(monkeypatch):
+    # last_stages=['SomalierExtract'] would prune BackfillGvcfsFromUpload, so the
+    # run would complete green with nothing registered. The backfill graph is
+    # fixed: any stage selection is rejected, backfill names included.
+    _selection_config(monkeypatch, 'last_stages', ['SomalierExtract'])
 
-    monkeypatch.setattr(validator, 'config_retrieve', fake_config_retrieve)
+    with pytest.raises(ValueError, match='SomalierExtract'):
+        validator.assert_backfill_stage_selection()
+
+
+def test_backfill_stage_selection_rejects_only_stages(monkeypatch):
+    _selection_config(monkeypatch, 'only_stages', ['DownloadDataFromIca'])
+
+    with pytest.raises(ValueError, match='only_stages'):
+        validator.assert_backfill_stage_selection()
+
+
+def test_backfill_stage_selection_rejects_skipping_a_backfill_stage(monkeypatch):
+    # Skipping a requested backfill stage aborts the workflow at graph build
+    # (missing expected outputs); the delete opt-out is the delete_upload flag.
+    _selection_config(monkeypatch, 'skip_stages', ['DeleteBackfillUpload'])
+
+    with pytest.raises(ValueError, match='delete_upload'):
+        validator.assert_backfill_stage_selection()
+
+
+def test_backfill_stage_selection_accepts_empty_selection_and_ica_skip_names(monkeypatch):
+    # The shipped skip_stages=['DeleteDataInIca'] names no backfill stage and is
+    # harmless; empty first/last/only_stages is the required configuration.
+    _selection_config(monkeypatch, 'skip_stages', ['DeleteDataInIca'])
 
     validator.assert_backfill_stage_selection()

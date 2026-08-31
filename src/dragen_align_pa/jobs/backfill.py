@@ -22,9 +22,30 @@ if TYPE_CHECKING:
     from hailtop.batch.job import BashJob
 
 # gcloud prints not-found describe failures with wording that has varied across
-# releases; match the stable fragments. Anything else (429/503, auth) is a real
+# releases; match the stable fragments, but only on lines that also name the
+# source URL — gcloud's not-found error names the object, while auth/transport
+# errors and bash's own `command not found` don't. Anything unmatched is a real
 # failure and must fail the job — see delete_command.
 _GCLOUD_NOT_FOUND_PATTERN = 'not found|matched no objects|404'
+
+
+def _checksum_compare_block(source: str, destination: str) -> str:
+    """Bash certifying destination == source by crc32c, failing loud on any doubt.
+
+    An empty describe result (exit 0 but no value, e.g. after a gcloud field
+    rename) must not certify anything — least of all the delete path's rm.
+    """
+    quoted_source, quoted_destination = shlex.quote(source), shlex.quote(destination)
+    return f"""src_hash=$(gcloud storage objects describe {quoted_source} --format='value(crc32c_hash)')
+dst_hash=$(gcloud storage objects describe {quoted_destination} --format='value(crc32c_hash)')
+if [ -z "$src_hash" ] || [ -z "$dst_hash" ]; then
+    printf 'Empty crc32c for %s or %s; cannot certify the copy\\n' {quoted_source} {quoted_destination} >&2
+    exit 1
+fi
+if [ "$src_hash" != "$dst_hash" ]; then
+    printf 'Checksum mismatch for %s: source %s vs destination %s\\n' {quoted_destination} "$src_hash" "$dst_hash" >&2
+    exit 1
+fi"""
 
 
 def copy_command(pairs: list[tuple[str, str]]) -> str:
@@ -37,17 +58,21 @@ def copy_command(pairs: list[tuple[str, str]]) -> str:
     """
     blocks = []
     for source, destination in pairs:
-        quoted_source, quoted_destination = shlex.quote(source), shlex.quote(destination)
-        blocks.append(
-            f"""gcloud storage cp --no-clobber {quoted_source} {quoted_destination}
-src_hash=$(gcloud storage objects describe {quoted_source} --format='value(crc32c_hash)')
-dst_hash=$(gcloud storage objects describe {quoted_destination} --format='value(crc32c_hash)')
-if [ "$src_hash" != "$dst_hash" ]; then
-    echo "Checksum mismatch for {destination}: source $src_hash vs destination $dst_hash" >&2
-    exit 1
-fi"""
-        )
+        copy_line = f'gcloud storage cp --no-clobber {shlex.quote(source)} {shlex.quote(destination)}'
+        blocks.append(f'{copy_line}\n{_checksum_compare_block(source, destination)}')
     return 'set -euo pipefail\n' + '\n'.join(blocks)
+
+
+def verify_command(pairs: list[tuple[str, str]]) -> str:
+    """Bash certifying each destination matches its source by crc32c, copying nothing.
+
+    Used for files whose copy stage may have been reused without running (its
+    outputs pre-existed), so the checksum comparison still happens exactly once
+    before registration.
+    """
+    return 'set -euo pipefail\n' + '\n'.join(
+        _checksum_compare_block(source, destination) for source, destination in pairs
+    )
 
 
 def delete_command(pairs: list[tuple[str, str]]) -> str:
@@ -58,9 +83,10 @@ def delete_command(pairs: list[tuple[str, str]]) -> str:
 
     A genuinely absent source is skipped (a re-run after a part-way failure must
     not fail on files deleted last time), recognised by gcloud's not-found error
-    text; any other describe failure (429/503, auth) fails the job so the stage
-    re-runs instead of silently orphaning the -upload file. A present source whose
-    destination is missing or differs aborts before any rm.
+    text on a line naming the source URL; any other describe failure (429/503,
+    auth, missing gcloud) fails the job so the stage re-runs instead of silently
+    orphaning the -upload file. A present source whose destination is missing,
+    differs, or yields an empty checksum aborts before any rm.
     """
     blocks = []
     for source, destination in pairs:
@@ -69,14 +95,18 @@ def delete_command(pairs: list[tuple[str, str]]) -> str:
         blocks.append(
             f"""if src_hash=$({describe_source} 2> describe_err.txt); then
     dst_hash=$(gcloud storage objects describe {quoted_destination} --format='value(crc32c_hash)')
+    if [ -z "$src_hash" ] || [ -z "$dst_hash" ]; then
+        printf 'Empty crc32c for %s or %s; refusing to delete\\n' {quoted_source} {quoted_destination} >&2
+        exit 1
+    fi
     if [ "$src_hash" != "$dst_hash" ]; then
-        echo "Checksum mismatch for {source}: source $src_hash vs destination $dst_hash" >&2
+        printf 'Checksum mismatch for %s: source %s vs destination %s\\n' {quoted_source} "$src_hash" "$dst_hash" >&2
         exit 1
     fi
     gcloud storage rm {quoted_source}
-    echo "deleted {source}" >> "$RESULTS"
-elif grep -qiE {shlex.quote(_GCLOUD_NOT_FOUND_PATTERN)} describe_err.txt; then
-    echo "already-absent {source}" >> "$RESULTS"
+    echo deleted {quoted_source} >> "$RESULTS"
+elif grep -F {quoted_source} describe_err.txt | grep -qiE {shlex.quote(_GCLOUD_NOT_FOUND_PATTERN)}; then
+    echo already-absent {quoted_source} >> "$RESULTS"
 else
     cat describe_err.txt >&2
     exit 1
@@ -103,10 +133,18 @@ def copy_from_upload_job(
     job_name: str,
     sequencing_group: SequencingGroup,
     rel_filenames: list[str],
+    verify_only_rel_filenames: list[str] | None = None,
 ) -> 'BashJob':
-    """Server-side copy of this SG's files from -upload to their final -main paths."""
+    """Server-side copy of this SG's files from -upload to their final -main paths.
+
+    `verify_only_rel_filenames` are certified (crc32c source == destination) without
+    copying — for files owned by another stage that may have been reused without
+    running its copy job, e.g. a pre-existing -main CRAM.
+    """
     job = _new_gcloud_job(job_name, sequencing_group)
     job.command(copy_command(_source_destination_pairs(rel_filenames)))
+    if verify_only_rel_filenames:
+        job.command(verify_command(_source_destination_pairs(verify_only_rel_filenames)))
     return job
 
 

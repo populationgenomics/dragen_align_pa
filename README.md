@@ -242,31 +242,39 @@ missing URL).
 ```toml
 [workflow]
 input_cohorts = ['COH...']
-last_stages = []                        # override the ICA-flow default; required
-skip_stages = ['DeleteBackfillUpload']  # keep the -upload sources (the default)
+last_stages = []   # override the ICA-flow default; required
 
 [dragen_align_pa.backfill]
 enabled = true
+delete_upload = false   # true to remove the -upload sources after verification
 ```
 
-The submit-time validator rejects a `first_stages`/`last_stages` entry naming any
-non-backfill stage (the defaults TOML sets `last_stages = ['DownloadDataFromIca']` for
-the ICA flow, so the override above is required).
+The backfill graph is fixed, so the submit-time validator rejects any non-empty
+`first_stages`/`last_stages`/`only_stages` (the defaults TOML sets
+`last_stages = ['DownloadDataFromIca']` for the ICA flow, hence the required override)
+and any `skip_stages` entry naming a backfill stage. Completed stages are skipped by
+cpg-flow's normal output reuse, so re-runs are cheap without stage selection.
 
-**3. Optionally delete the staged sources.** Remove `DeleteBackfillUpload` from
-`skip_stages` (on the first run or a re-run) and each `-upload` source is deleted only
-after its `-main` copy matches its crc32c checksum. Outcomes are recorded per file in
-`gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/backfill_delete/{SG}.txt`; sources already
-absent from a previous run are skipped, and any other failure (e.g. a transient gcloud
-error) fails the job so nothing is silently left behind.
+**3. Optionally delete the staged sources.** Set
+`[dragen_align_pa.backfill] delete_upload = true` (on the first run or a re-run) and
+each `-upload` source is deleted only after its `-main` copy matches its crc32c
+checksum. Outcomes are recorded per file (`deleted` / `already-absent`) in
+`gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/backfill_delete/{SG_ID}.txt`; sources
+already absent from a previous run are skipped, and any other failure (e.g. a
+transient gcloud error) fails the job so nothing is silently left behind.
 
 Copies verify crc32c checksums end-to-end: a pre-existing `-main` object that doesn't
-match the staged source fails the run rather than being silently kept. Registration is
-gated by a marker at
-`gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/backfill_registration/{SG}.json`, so a run
-that copied files but failed to register re-runs registration; like the outputs it
+match the staged source fails the run rather than being silently kept (the CRAM pair
+is re-verified in the registration stage even when its copy stage was reused).
+Registration is gated by a marker at
+`gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/backfill_registration/{SG_ID}.json`, so a
+run that copied files but failed to register re-runs registration; like the outputs it
 gates, the marker is cohort-independent, so re-backfilling the same sequencing group
 under another cohort doesn't create duplicate analyses.
+
+Note the two different keys: staged filenames use the sequencing-group *name* (`{SG}`
+above), while the marker and delete-record paths use the sequencing group's CPG ID
+(`{SG_ID}`), which survives a sequencing-group rename.
 
 ## Panel of Normals (Exome CNV)
 **Generation**

@@ -120,26 +120,38 @@ def assert_single_input_cohort() -> None:
 
 
 def assert_backfill_stage_selection() -> None:
-    """Fail loud at submit when a backfill run's stage selection can never build a graph.
+    """Fail loud at submit when a backfill run carries any stage selection.
 
-    The defaults TOML ships `last_stages = ['DownloadDataFromIca']` for the ICA flow;
-    a backfill graph contains no ICA stage, and cpg-flow rejects any `first_stages` /
-    `last_stages` name that is absent from the graph with a message that doesn't
-    mention backfill. Catch it here with instructions instead.
+    The backfill graph is fixed (copy cram, copy+register gVCFs, Somalier, delete):
+    stage names outside it crash cpg-flow's graph build with a backfill-unaware
+    message (the defaults TOML ships `last_stages = ['DownloadDataFromIca']` for the
+    ICA flow), and names inside it silently prune stages — `last_stages =
+    ['SomalierExtract']` would drop the gVCF copy and every metamist registration
+    while the run reports green. Skipping a requested backfill stage likewise aborts
+    graph build on its missing expected outputs; the delete opt-in is the
+    `[dragen_align_pa.backfill].delete_upload` flag, not stage selection.
 
     Raises:
-        ValueError: If `[workflow].first_stages` or `[workflow].last_stages` name a
-            stage outside the backfill graph.
+        ValueError: If `[workflow].first_stages`, `last_stages` or `only_stages` is
+            non-empty, or `[workflow].skip_stages` names a backfill stage.
     """
-    for key in ('first_stages', 'last_stages'):
-        names: list[str] = config_retrieve(['workflow', key], default=[])
-        if unknown := [name for name in names if name not in _BACKFILL_STAGE_NAMES]:
+    for key in ('first_stages', 'last_stages', 'only_stages'):
+        if names := config_retrieve(['workflow', key], default=[]):
             raise ValueError(
-                f'[workflow].{key} names {unknown}, which are not part of the backfill '
-                f'graph {sorted(_BACKFILL_STAGE_NAMES)}. The defaults TOML sets '
-                f"last_stages for the ICA flow, so a backfill run config must override "
-                f'it (e.g. last_stages = []).',
+                f'[workflow].{key} = {names}: stage selection is not supported in backfill '
+                f'mode — the graph is fixed to {sorted(_BACKFILL_STAGE_NAMES)}, completed '
+                f'stages are skipped by output reuse, and deletion of the -upload sources '
+                f'is controlled by [dragen_align_pa.backfill].delete_upload. Override the '
+                f'defaults TOML value with {key} = [] in the run config.',
             )
+    skip_names: list[str] = config_retrieve(['workflow', 'skip_stages'], default=[])
+    if backfill_skips := [name for name in skip_names if name in _BACKFILL_STAGE_NAMES]:
+        raise ValueError(
+            f'[workflow].skip_stages names backfill stages {backfill_skips}; skipping a '
+            f'requested backfill stage aborts the workflow at graph build. To keep the '
+            f'-upload sources, set [dragen_align_pa.backfill].delete_upload = false '
+            f'(the default) instead.',
+        )
 
 
 def assert_ica_project_root_resolves() -> None:
