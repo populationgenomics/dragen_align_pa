@@ -5,7 +5,11 @@ from argparse import ArgumentParser
 
 from cpg_flow.workflow import run_workflow  # type: ignore[ReportUnknownVariableType]
 
-from dragen_align_pa.stages import DeleteDataInIca  # type: ignore[ReportUnknownVariableType]
+from dragen_align_pa.stages import (  # type: ignore[ReportUnknownVariableType]
+    BACKFILL_MODE,
+    DeleteBackfillUpload,
+    DeleteDataInIca,
+)
 from dragen_align_pa.validator import validate_configuration
 
 
@@ -15,7 +19,7 @@ def cli_main():
     parser.add_argument('--dry_run', action='store_true', help='Dry run')
     args = parser.parse_args()
 
-    stages = [DeleteDataInIca]  # type: ignore[ReportUnknownVariableType]
+    stages = [DeleteBackfillUpload] if BACKFILL_MODE else [DeleteDataInIca]  # type: ignore[ReportUnknownVariableType]
 
     # Fail fast on the submitter, before any job is queued to the executor.
     validate_configuration()

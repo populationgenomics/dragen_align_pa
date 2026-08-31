@@ -42,6 +42,11 @@ def validate_configuration() -> None:
             cohort's exome design doesn't match the configured BEDs.
     """
     assert_single_input_cohort()
+    # A backfill run never touches ICA (data was produced externally and staged in
+    # -upload), so the ICA-facing guards below don't apply and must not require a
+    # backfill config to carry ICA project/BED settings.
+    if config_retrieve(['dragen_align_pa', 'backfill', 'enabled'], False):
+        return
     assert_management_flags_exclusive()
     assert_ica_project_root_resolves()
     for cohort in get_multicohort().get_cohorts():

@@ -20,6 +20,7 @@ from dragen_align_pa.constants.ica_constants import (
 from dragen_align_pa.file_types import FileTypeSpec
 from dragen_align_pa.gcs_utils import SUCCESS_OBJECT_NAME
 from dragen_align_pa.jobs import (
+    backfill,
     delete_data_in_ica,
     download_batch_artefacts,
     download_ica_pipeline_outputs,
@@ -36,8 +37,10 @@ from dragen_align_pa.jobs import (
     validate_md5_sums,
 )
 from dragen_align_pa.utils import (
-    download_job_timeout_seconds,
+    base_gvcf_output_filenames,
     calculate_needed_storage,
+    cram_output_filenames,
+    download_job_timeout_seconds,
     get_batch_artefacts_root,
     get_manifest_path_for_cohort,
     get_output_path,
@@ -45,6 +48,7 @@ from dragen_align_pa.utils import (
     get_pipeline_path,
     get_prep_path,
     initialise_python_job,
+    recal_gvcf_output_filenames,
 )
 
 if TYPE_CHECKING:
@@ -53,6 +57,14 @@ if TYPE_CHECKING:
 
 logger.remove(0)
 logger.add(sink=sys.stdout, format='{time} - {level} - {message}')
+
+# Backfill entry point: the run's outputs were produced outside this pipeline and
+# staged in the -upload bucket under a literal `output/` prefix, in the exact final
+# structure. The whole ICA chain is replaced by the Backfill* stages, which copy the
+# files to their -main destinations and register them in metamist; SomalierExtract
+# then reads the copied CRAM. Read at import time because it selects stage wiring
+# (SomalierExtract's required_stages), which is fixed at class-decoration time.
+BACKFILL_MODE: bool = config_retrieve(['dragen_align_pa', 'backfill', 'enabled'], False)
 
 
 # No need to register this stage in Metamist I think, just ICA prep
@@ -399,8 +411,8 @@ class DownloadCramFromIca(SequencingGroupStage):
         sequencing_group: SequencingGroup,
     ) -> dict[str, cpg_utils.Path]:
         return {
-            'cram': get_output_path(filename=f'cram/{sequencing_group.name}.cram'),
-            'crai': get_output_path(filename=f'cram/{sequencing_group.name}.cram.crai'),
+            key: get_output_path(filename=filename)
+            for key, filename in cram_output_filenames(sequencing_group.name).items()
         }
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
@@ -436,8 +448,8 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         sequencing_group: SequencingGroup,
     ) -> dict[str, cpg_utils.Path]:
         return {
-            'gvcf': get_output_path(filename=f'base_gvcf/{sequencing_group.name}.hard-filtered.gvcf.gz'),
-            'gvcf_tbi': get_output_path(filename=f'base_gvcf/{sequencing_group.name}.hard-filtered.gvcf.gz.tbi'),
+            key: get_output_path(filename=filename)
+            for key, filename in base_gvcf_output_filenames(sequencing_group.name).items()
         }
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
@@ -598,7 +610,90 @@ class DownloadBatchArtefactsFromIca(CohortStage):
         return self.make_outputs(target=cohort, data=marker_path, jobs=job)
 
 
-@stage(required_stages=[DownloadCramFromIca])  # Depends on CRAM being downloaded
+@stage(analysis_type='cram', analysis_keys=['cram'])
+class BackfillCramFromUpload(SequencingGroupStage):
+    """Copy an externally produced CRAM + CRAI from -upload to its final -main path.
+
+    Root stage of the backfill entry point. Outputs are byte-identical to
+    `DownloadCramFromIca`'s, so downstream consumers see the same paths.
+    """
+
+    def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        sequencing_group: SequencingGroup,
+    ) -> dict[str, cpg_utils.Path]:
+        return {
+            key: get_output_path(filename=filename)
+            for key, filename in cram_output_filenames(sequencing_group.name).items()
+        }
+
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:  # noqa: ARG002
+        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
+        job: BashJob = backfill.copy_from_upload_job(
+            job_name='BackfillCramFromUpload',
+            sequencing_group=sequencing_group,
+            rel_filenames=list(cram_output_filenames(sequencing_group.name).values()),
+        )
+        return self.make_outputs(target=sequencing_group, data=outputs, jobs=job)  # pyright: ignore[reportArgumentType]
+
+
+# No analysis_type here: the base gVCF must be registered strictly before the recal
+# gVCF (sequencing_group.gvcf resolves to the latest gvcf analysis by timestamp), and
+# cpg-flow's decorator registration cannot order registrations across stages — the
+# registration job never joins the stage's job list, so downstream dependency edges
+# don't cover it. Both registrations run sequentially in one job instead (see
+# dragen_align_pa.backfill_registration).
+@stage()
+class BackfillGvcfsFromUpload(SequencingGroupStage):
+    """Copy the base + reheadered recal gVCF sets from -upload, then register both."""
+
+    def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        sequencing_group: SequencingGroup,
+    ) -> dict[str, cpg_utils.Path]:
+        base = {
+            f'base_{key}': get_output_path(filename=filename)
+            for key, filename in base_gvcf_output_filenames(sequencing_group.name).items()
+        }
+        recal = {
+            f'recal_{key}': get_output_path(filename=filename)
+            for key, filename in recal_gvcf_output_filenames(sequencing_group.name).items()
+        }
+        # The registration marker gates re-runs: copied files without it mean the
+        # metamist registration didn't complete, so the stage must run again.
+        return base | recal | {'registration': get_pipeline_path(f'backfill_registration/{sequencing_group.id}.json')}
+
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:  # noqa: ARG002
+        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(sequencing_group=sequencing_group)
+
+        rel_filenames: list[str] = [
+            *base_gvcf_output_filenames(sequencing_group.name).values(),
+            *recal_gvcf_output_filenames(sequencing_group.name).values(),
+        ]
+        copy_job: BashJob = backfill.copy_from_upload_job(
+            job_name='BackfillGvcfsFromUpload',
+            sequencing_group=sequencing_group,
+            rel_filenames=rel_filenames,
+        )
+        register_job: BashJob = backfill.register_gvcfs_job(
+            sequencing_group=sequencing_group,
+            base_gvcf=outputs['base_gvcf'],
+            recal_gvcf=outputs['recal_gvcf'],
+            marker_path=outputs['registration'],
+            stage_name=self.name,
+        )
+        register_job.depends_on(copy_job)
+
+        return self.make_outputs(target=sequencing_group, data=outputs, jobs=[copy_job, register_job])  # pyright: ignore[reportArgumentType]
+
+
+# In backfill mode the CRAM arrives via BackfillCramFromUpload instead of the ICA
+# chain; both stages declare identical output paths, so only the dependency edge
+# and the `inputs` lookup below change.
+_SOMALIER_CRAM_SOURCE = BackfillCramFromUpload if BACKFILL_MODE else DownloadCramFromIca
+
+
+@stage(required_stages=[_SOMALIER_CRAM_SOURCE])
 class SomalierExtract(SequencingGroupStage):
     """Run Somalier extract on CRAM files to generate fingerprints."""
 
@@ -614,12 +709,12 @@ class SomalierExtract(SequencingGroupStage):
         """Queue a job to run somalier extract."""
         cram_path = inputs.as_path(
             target=sequencing_group,
-            stage=DownloadCramFromIca,
+            stage=_SOMALIER_CRAM_SOURCE,
             key='cram',
         )
         crai_path = inputs.as_path(
             target=sequencing_group,
-            stage=DownloadCramFromIca,
+            stage=_SOMALIER_CRAM_SOURCE,
             key='crai',
         )
 
@@ -663,16 +758,13 @@ class SomalierExtract(SequencingGroupStage):
 class ReheaderMlrGvcf(SequencingGroupStage):
     """Reheader the MLR gVCF to reinsert reference-block info that the MLR process removes."""
 
-    def expected_outputs(self, sequencing_group: SequencingGroup) -> dict[str, cpg_utils.Path]:
+    def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        sequencing_group: SequencingGroup,
+    ) -> dict[str, cpg_utils.Path]:
         return {
-            'gvcf': get_output_path(filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz'),
-            'gvcf_tbi': get_output_path(filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz.tbi'),
-            'gvcf_md5': get_output_path(
-                filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz.md5sum'
-            ),
-            'gvcf_tbi_md5': get_output_path(
-                filename=f'recal_gvcf/{sequencing_group.name}.hard-filtered.recal.gvcf.gz.tbi.md5sum'
-            ),
+            key: get_output_path(filename=filename)
+            for key, filename in recal_gvcf_output_filenames(sequencing_group.name).items()
         }
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput | None:
@@ -758,3 +850,29 @@ class DeleteDataInIca(CohortStage):
         )
 
         return self.make_outputs(target=cohort, data=output_path, jobs=ica_delete_job)
+
+
+# Terminal stage of the backfill entry point (the counterpart of DeleteDataInIca,
+# and like it opt-in via skip_stages in the defaults TOML). Depending on
+# SomalierExtract as well as BackfillGvcfsFromUpload transitively covers every
+# consumer of the copied files before any -upload source is removed.
+@stage(required_stages=[BackfillGvcfsFromUpload, SomalierExtract])
+class DeleteBackfillUpload(SequencingGroupStage):
+    """Delete this SG's -upload sources once every -main destination is verified."""
+
+    def expected_outputs(self, sequencing_group: SequencingGroup) -> cpg_utils.Path:
+        return get_pipeline_path(filename=f'backfill_delete/{sequencing_group.id}.json')
+
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:  # noqa: ARG002
+        marker_path: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
+        rel_filenames: list[str] = [
+            *cram_output_filenames(sequencing_group.name).values(),
+            *base_gvcf_output_filenames(sequencing_group.name).values(),
+            *recal_gvcf_output_filenames(sequencing_group.name).values(),
+        ]
+        job: BashJob = backfill.delete_upload_job(
+            sequencing_group=sequencing_group,
+            rel_filenames=rel_filenames,
+            marker_path=marker_path,
+        )
+        return self.make_outputs(target=sequencing_group, data=marker_path, jobs=job)
