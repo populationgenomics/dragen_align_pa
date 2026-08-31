@@ -2,9 +2,9 @@
 register them in metamist in a guaranteed order, then delete the -upload sources.
 
 Covers the pure units (relative-filename maps shared with the download stages, the
--upload source path builder, registration ordering) and executes the generated bash
-command scripts against a fake `gcloud` on PATH, so the skip-vs-fail and
-verify-before-rm branches are proven by behavior rather than string matching.
+-upload source path builder, registration ordering, the submit-time stage-selection
+guard) and runs the transfer functions against a fake `gcloud` on PATH, so the
+skip-vs-fail and verify-before-rm branches are proven by behavior.
 """
 
 import json
@@ -14,8 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from dragen_align_pa import backfill_registration, stages, utils, validator
-from dragen_align_pa.jobs import backfill
+from dragen_align_pa import backfill_registration, backfill_transfer, stages, utils, validator
 
 
 def test_backfill_source_path_uses_upload_bucket(monkeypatch):
@@ -56,39 +55,23 @@ def test_recal_gvcf_output_filenames_shape():
     }
 
 
-# --- Command-script execution harness -------------------------------------------------
+# --- Transfer functions ----------------------------------------------------------------
 #
-# Each test installs a fake `gcloud` dispatch script on PATH and runs the generated
-# command under bash. The fake logs every invocation to gcloud_calls.log so tests can
-# assert exactly which operations ran (in particular: that `rm` did or did not).
+# Each test installs a fake `gcloud` dispatch script on PATH; the transfer functions
+# exec it via subprocess (no shell). The fake logs every invocation to gcloud_calls.log
+# so tests can assert exactly which operations ran (in particular: that `rm` did or
+# did not).
 
 _PAIR = ('gs://up/output/cram/SG1.cram', 'gs://main/ica/v/output/cram/SG1.cram')
 
 
-def _run_script(tmp_path: Path, script: str, fake_gcloud_body: str) -> subprocess.CompletedProcess:
+def _install_fake_gcloud(tmp_path: Path, monkeypatch, describe_case_body: str) -> None:
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir(exist_ok=True)
     fake_gcloud = bin_dir / 'gcloud'
-    fake_gcloud.write_text('#!/bin/bash\necho "$@" >> gcloud_calls.log\n' + fake_gcloud_body)
-    fake_gcloud.chmod(0o755)
-    return subprocess.run(  # noqa: S603
-        ['/bin/bash', '-c', script],  # noqa: S607
-        env=os.environ | {'PATH': f'{bin_dir}:{os.environ["PATH"]}'},
-        capture_output=True,
-        text=True,
-        cwd=tmp_path,
-        check=False,
-    )
-
-
-def _gcloud_calls(tmp_path: Path) -> str:
-    log = tmp_path / 'gcloud_calls.log'
-    return log.read_text() if log.exists() else ''
-
-
-# Fake gcloud: describe answers per-URL from DESCRIBE_<n> case branches; cp/rm succeed.
-def _fake_gcloud(describe_case_body: str) -> str:
-    return f"""
+    fake_gcloud.write_text(
+        f"""#!/bin/bash
+echo "$@" >> gcloud_calls.log
 if [ "$1 $2 $3" == 'storage objects describe' ]; then
     case "$4" in
 {describe_case_body}
@@ -97,224 +80,211 @@ elif [ "$1 $2" == 'storage cp' ] || [ "$1 $2" == 'storage rm' ]; then
     exit 0
 fi
 """
+    )
+    fake_gcloud.chmod(0o755)
+    monkeypatch.setenv('PATH', f'{bin_dir}:{os.environ["PATH"]}')
+    monkeypatch.chdir(tmp_path)  # gcloud_calls.log lands in cwd
 
 
-def test_copy_command_succeeds_when_checksums_match(tmp_path):
+def _gcloud_calls(tmp_path: Path) -> str:
+    log = tmp_path / 'gcloud_calls.log'
+    return log.read_text() if log.exists() else ''
+
+
+def test_copy_files_succeeds_when_checksums_match(tmp_path, monkeypatch):
     source, destination = _PAIR
-    fake = _fake_gcloud(f"""
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
         '{source}') echo 'abc123' ;;
         '{destination}') echo 'abc123' ;;
 """)
 
-    result = _run_script(tmp_path, backfill.copy_command([_PAIR]), fake)
+    backfill_transfer.copy_files([_PAIR])
 
-    assert result.returncode == 0, result.stderr
     assert f'storage cp --no-clobber {source} {destination}' in _gcloud_calls(tmp_path)
 
 
-def test_copy_command_fails_when_destination_checksum_differs(tmp_path):
+def test_copy_files_fails_when_destination_checksum_differs(tmp_path, monkeypatch):
     # A pre-existing stale destination survives --no-clobber; the checksum
     # comparison must fail the job rather than report a successful copy.
     source, destination = _PAIR
-    fake = _fake_gcloud(f"""
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
         '{source}') echo 'abc123' ;;
         '{destination}') echo 'zzz999' ;;
 """)
 
-    result = _run_script(tmp_path, backfill.copy_command([_PAIR]), fake)
-
-    assert result.returncode != 0
-    assert 'mismatch' in result.stderr.lower()
+    with pytest.raises(ValueError, match='mismatch'):
+        backfill_transfer.copy_files([_PAIR])
 
 
-def test_copy_command_quotes_awkward_paths(tmp_path):
-    # shlex-quoted arguments must reach gcloud intact even with a quote in the path.
-    source = "gs://up/output/cram/SG'1.cram"
-    destination = 'gs://main/ica/v/output/cram/SG1.cram'
-    fake = _fake_gcloud("""
-        *) echo 'abc123' ;;
-""")
-
-    result = _run_script(tmp_path, backfill.copy_command([(source, destination)]), fake)
-
-    assert result.returncode == 0, result.stderr
-    assert f'storage cp --no-clobber {source} {destination}' in _gcloud_calls(tmp_path)
-
-
-def test_copy_command_fails_when_checksum_output_is_empty(tmp_path):
-    fake = _fake_gcloud("""
+def test_copy_files_fails_when_checksum_output_is_empty(tmp_path, monkeypatch):
+    # `--format='value(...)'` prints nothing (exit 0) for an unknown field; an
+    # empty-vs-empty comparison must not certify anything.
+    _install_fake_gcloud(tmp_path, monkeypatch, """
         *) exit 0 ;;
 """)
 
-    result = _run_script(tmp_path, backfill.copy_command([_PAIR]), fake)
+    with pytest.raises(ValueError, match=r'[Ee]mpty'):
+        backfill_transfer.copy_files([_PAIR])
 
-    assert result.returncode != 0
+
+def test_copy_files_passes_hostile_paths_verbatim(tmp_path, monkeypatch):
+    # No shell is involved: a `$(...)` in a path reaches gcloud as one literal
+    # argument and is never expanded.
+    source = 'gs://up/output/cram/$(touch pwned).cram'
+    destination = 'gs://main/ica/v/output/cram/SG1.cram'
+    _install_fake_gcloud(tmp_path, monkeypatch, """
+        *) echo 'abc123' ;;
+""")
+
+    backfill_transfer.copy_files([(source, destination)])
+
+    assert not (tmp_path / 'pwned').exists()
+    assert f'storage cp --no-clobber {source} {destination}' in _gcloud_calls(tmp_path)
 
 
-def test_verify_command_passes_on_matching_checksums(tmp_path):
+def test_verify_files_passes_on_matching_checksums(tmp_path, monkeypatch):
     source, destination = _PAIR
-    fake = _fake_gcloud(f"""
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
         '{source}') echo 'abc123' ;;
         '{destination}') echo 'abc123' ;;
 """)
 
-    result = _run_script(tmp_path, backfill.verify_command([_PAIR]), fake)
+    backfill_transfer.verify_files([_PAIR])
 
-    assert result.returncode == 0, result.stderr
     # Verification never copies or deletes anything.
     assert 'storage cp' not in _gcloud_calls(tmp_path)
     assert 'storage rm' not in _gcloud_calls(tmp_path)
 
 
-def test_verify_command_fails_on_checksum_mismatch(tmp_path):
+def test_verify_files_fails_on_checksum_mismatch(tmp_path, monkeypatch):
     source, destination = _PAIR
-    fake = _fake_gcloud(f"""
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
         '{source}') echo 'abc123' ;;
         '{destination}') echo 'zzz999' ;;
 """)
 
-    result = _run_script(tmp_path, backfill.verify_command([_PAIR]), fake)
-
-    assert result.returncode != 0
-    assert 'mismatch' in result.stderr.lower()
+    with pytest.raises(ValueError, match='mismatch'):
+        backfill_transfer.verify_files([_PAIR])
 
 
-def _run_delete(tmp_path: Path, fake_gcloud_body: str) -> subprocess.CompletedProcess:
-    script = f'RESULTS={tmp_path}/results.txt\n{backfill.delete_command([_PAIR])}'
-    return _run_script(tmp_path, script, fake_gcloud_body)
-
-
-def test_delete_command_removes_source_when_checksums_match(tmp_path):
+def test_delete_files_removes_source_when_checksums_match(tmp_path, monkeypatch):
     source, destination = _PAIR
-    fake = _fake_gcloud(f"""
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
         '{source}') echo 'abc123' ;;
         '{destination}') echo 'abc123' ;;
 """)
 
-    result = _run_delete(tmp_path, fake)
+    backfill_transfer.delete_files([_PAIR], results_file=tmp_path / 'results.txt')
 
-    assert result.returncode == 0, result.stderr
     assert f'storage rm {source}' in _gcloud_calls(tmp_path)
     assert (tmp_path / 'results.txt').read_text() == f'deleted {source}\n'
 
 
-def test_delete_command_aborts_before_rm_on_checksum_mismatch(tmp_path):
+def test_delete_files_aborts_before_rm_on_checksum_mismatch(tmp_path, monkeypatch):
     source, destination = _PAIR
-    fake = _fake_gcloud(f"""
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
         '{source}') echo 'abc123' ;;
         '{destination}') echo 'zzz999' ;;
 """)
 
-    result = _run_delete(tmp_path, fake)
+    with pytest.raises(ValueError, match='mismatch'):
+        backfill_transfer.delete_files([_PAIR], results_file=tmp_path / 'results.txt')
 
-    assert result.returncode != 0
     assert 'storage rm' not in _gcloud_calls(tmp_path)
 
 
-def test_delete_command_skips_source_that_is_genuinely_absent(tmp_path):
+def test_delete_files_skips_source_that_is_genuinely_absent(tmp_path, monkeypatch):
     source, destination = _PAIR
-    fake = _fake_gcloud(f"""
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
         '{source}') echo 'ERROR: {source} not found: 404.' >&2; exit 1 ;;
         '{destination}') echo 'abc123' ;;
 """)
 
-    result = _run_delete(tmp_path, fake)
+    backfill_transfer.delete_files([_PAIR], results_file=tmp_path / 'results.txt')
 
-    assert result.returncode == 0, result.stderr
     assert 'storage rm' not in _gcloud_calls(tmp_path)
     assert (tmp_path / 'results.txt').read_text() == f'already-absent {source}\n'
 
 
-def test_delete_command_fails_on_not_found_wording_that_lacks_the_source_url(tmp_path):
+def test_delete_files_fails_on_not_found_wording_that_lacks_the_source_url(tmp_path, monkeypatch):
     # gcloud's real not-found error names the URL; auth errors ("Your default
     # credentials were not found") don't. Wording alone must not count as absence.
     source, destination = _PAIR
-    fake = _fake_gcloud(f"""
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
         '{source}') echo 'ERROR: Your default credentials were not found.' >&2; exit 1 ;;
         '{destination}') echo 'abc123' ;;
 """)
 
-    result = _run_delete(tmp_path, fake)
+    with pytest.raises(subprocess.CalledProcessError):
+        backfill_transfer.delete_files([_PAIR], results_file=tmp_path / 'results.txt')
 
-    assert result.returncode != 0
     assert 'storage rm' not in _gcloud_calls(tmp_path)
 
 
-def test_delete_command_fails_when_gcloud_is_missing(tmp_path):
-    # bash's own `gcloud: command not found` must not classify as object absence.
-    empty_bin = tmp_path / 'bin'
-    empty_bin.mkdir()
-    script = f'RESULTS={tmp_path}/results.txt\n{backfill.delete_command([_PAIR])}'
-    result = subprocess.run(  # noqa: S603
-        ['/bin/bash', '-c', script],  # noqa: S607
-        env={'PATH': f'{empty_bin}:/usr/bin:/bin'},
-        capture_output=True,
-        text=True,
-        cwd=tmp_path,
-        check=False,
-    )
-
-    assert result.returncode != 0
-    results = tmp_path / 'results.txt'
-    assert not results.exists() or 'already-absent' not in results.read_text()
-
-
-def test_delete_command_fails_before_rm_when_checksum_output_is_empty(tmp_path):
-    # `--format='value(...)'` prints nothing (exit 0) for an unknown field; an
-    # empty-vs-empty comparison must not certify the destructive rm.
-    fake = _fake_gcloud("""
-        *) exit 0 ;;
-""")
-
-    result = _run_delete(tmp_path, fake)
-
-    assert result.returncode != 0
-    assert 'storage rm' not in _gcloud_calls(tmp_path)
-
-
-def test_delete_command_records_hostile_path_without_executing_it(tmp_path):
-    # A `$(...)` in a path must be recorded inertly, never expanded by bash.
-    source = 'gs://up/output/cram/$(touch pwned).cram'
-    destination = 'gs://main/ica/v/output/cram/SG1.cram'
-    fake = _fake_gcloud("""
-        *) echo 'abc123' ;;
-""")
-    script = f'RESULTS={tmp_path}/results.txt\n{backfill.delete_command([(source, destination)])}'
-
-    result = _run_script(tmp_path, script, fake)
-
-    assert result.returncode == 0, result.stderr
-    assert not (tmp_path / 'pwned').exists()
-    assert (tmp_path / 'results.txt').read_text() == f'deleted {source}\n'
-
-
-def test_delete_command_fails_on_transient_describe_error(tmp_path):
-    # A 503/auth failure is NOT absence: the job must fail so the stage re-runs,
+def test_delete_files_fails_on_transient_describe_error(tmp_path, monkeypatch):
+    # A 503 failure is NOT absence: the job must fail so the stage re-runs,
     # instead of silently orphaning the -upload file forever.
     source, destination = _PAIR
-    fake = _fake_gcloud(f"""
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
         '{source}') echo 'ERROR: 503 backend error' >&2; exit 1 ;;
         '{destination}') echo 'abc123' ;;
 """)
 
-    result = _run_delete(tmp_path, fake)
+    with pytest.raises(subprocess.CalledProcessError):
+        backfill_transfer.delete_files([_PAIR], results_file=tmp_path / 'results.txt')
 
-    assert result.returncode != 0
-    assert '503' in result.stderr
     assert 'storage rm' not in _gcloud_calls(tmp_path)
 
 
-def test_delete_command_fails_when_destination_is_missing(tmp_path):
+def test_delete_files_fails_when_gcloud_is_missing(tmp_path, monkeypatch):
+    # A missing gcloud binary must fail loudly, never classify as object absence.
+    empty_bin = tmp_path / 'bin'
+    empty_bin.mkdir()
+    monkeypatch.setenv('PATH', f'{empty_bin}:/usr/bin:/bin')
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(FileNotFoundError):
+        backfill_transfer.delete_files([_PAIR], results_file=tmp_path / 'results.txt')
+
+
+def test_delete_files_fails_before_rm_when_checksum_output_is_empty(tmp_path, monkeypatch):
+    _install_fake_gcloud(tmp_path, monkeypatch, """
+        *) exit 0 ;;
+""")
+
+    with pytest.raises(ValueError, match=r'[Ee]mpty'):
+        backfill_transfer.delete_files([_PAIR], results_file=tmp_path / 'results.txt')
+
+    assert 'storage rm' not in _gcloud_calls(tmp_path)
+
+
+def test_delete_files_fails_when_destination_is_missing(tmp_path, monkeypatch):
     source, destination = _PAIR
-    fake = _fake_gcloud(f"""
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
         '{source}') echo 'abc123' ;;
         '{destination}') echo 'ERROR: {destination} not found: 404.' >&2; exit 1 ;;
 """)
 
-    result = _run_delete(tmp_path, fake)
+    with pytest.raises(subprocess.CalledProcessError):
+        backfill_transfer.delete_files([_PAIR], results_file=tmp_path / 'results.txt')
 
-    assert result.returncode != 0
     assert 'storage rm' not in _gcloud_calls(tmp_path)
+
+
+def test_transfer_cli_parses_pairs_json(tmp_path, monkeypatch):
+    source, destination = _PAIR
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
+        '{source}') echo 'abc123' ;;
+        '{destination}') echo 'abc123' ;;
+""")
+    monkeypatch.setattr(
+        'sys.argv',
+        ['backfill_transfer', 'copy', '--pairs-json', json.dumps([list(_PAIR)])],
+    )
+
+    backfill_transfer.main()
+
+    assert f'storage cp --no-clobber {source} {destination}' in _gcloud_calls(tmp_path)
 
 
 # --- Registration ----------------------------------------------------------------------
