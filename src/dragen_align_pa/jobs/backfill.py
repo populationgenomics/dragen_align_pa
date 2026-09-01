@@ -93,7 +93,8 @@ def register_backfill_job(
         f'--sg-id {shlex.quote(sequencing_group.id)} '
         f'--project-name {shlex.quote(project_name)} '
         f'--meta-json {shlex.quote(json.dumps(meta))} '
-        f'--marker-file {job.ofile}'
+        f'--marker-file {job.ofile} '
+        f'--marker-gcs-path {shlex.quote(str(marker_path))}'
     )
     b.write_output(job.ofile, str(marker_path))
     return job

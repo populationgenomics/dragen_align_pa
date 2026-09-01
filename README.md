@@ -76,6 +76,10 @@ Valid entries for config settings such as `dragen_align_pa.manage_dragen_pipelin
 
 ### Sections that must be edited
 
+This list applies to the standard ICA realignment flow. A backfill run needs none of
+the ICA keys below — see "Backfilling Externally Produced Outputs" for its (much
+shorter) required config.
+
 Your TOML configuration file must specify the following key options:
 
   * `[workflow]`:
@@ -219,6 +223,8 @@ downloads at a batch that does not exist for it.
 
 Backfill mode ingests results that were produced outside this pipeline (e.g. downloaded
 from ICA manually, reheadered and re-checksummed) without running any ICA stage. The
+ICA-flow keys in "Sections that must be edited" (sequencing_type, reads_type,
+`[ica.*]`) are not required — the config below is the complete set. The
 staged files are copied server-side into their final `-main` locations, registered in
 metamist (cram, then base gVCF, then recal gVCF — strictly last, so
 `sequencing_group.gvcf` resolves to the recal file), and Somalier fingerprints are
@@ -253,7 +259,10 @@ The backfill graph is fixed, so the submit-time validator rejects any non-empty
 `first_stages`/`last_stages`/`only_stages` (the defaults TOML sets
 `last_stages = ['DownloadDataFromIca']` for the ICA flow, hence the required override)
 and any `skip_stages` entry naming a backfill stage. Completed stages are skipped by
-cpg-flow's normal output reuse, so re-runs are cheap without stage selection.
+cpg-flow's normal output reuse, so re-runs are cheap without stage selection. The
+validator also requires an empty `analysis-runner --output-dir ''` — a non-empty
+output prefix would relocate every destination and marker away from the canonical
+`-main` paths.
 
 **3. Optionally delete the staged sources.** Set
 `[dragen_align_pa.backfill] delete_upload = true` (on the first run or a re-run) and

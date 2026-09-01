@@ -27,6 +27,7 @@ from dragen_align_pa.constants.constants_registry import (
     resolve_mlr_config_file_id,
 )
 from dragen_align_pa.stages import (
+    BACKFILL_MODE,
     BackfillCramFromUpload,
     BackfillGvcfsFromUpload,
     DeleteBackfillUpload,
@@ -63,8 +64,9 @@ def validate_configuration() -> None:
     # A backfill run never touches ICA (data was produced externally and staged in
     # -upload), so the ICA-facing guards below don't apply and must not require a
     # backfill config to carry ICA project/BED settings.
-    if config_retrieve(['dragen_align_pa', 'backfill', 'enabled'], False):
+    if BACKFILL_MODE:
         assert_backfill_stage_selection()
+        assert_backfill_output_prefix_empty()
         return
     assert_management_flags_exclusive()
     assert_ica_project_root_resolves()
@@ -151,6 +153,26 @@ def assert_backfill_stage_selection() -> None:
             f'requested backfill stage aborts the workflow at graph build. To keep the '
             f'-upload sources, set [dragen_align_pa.backfill].delete_upload = false '
             f'(the default) instead.',
+        )
+
+
+def assert_backfill_output_prefix_empty() -> None:
+    """Fail loud at submit when a backfill run carries a non-empty output prefix.
+
+    `get_output_path` includes `workflow.output_prefix` (the analysis-runner
+    `--output-dir` value). A non-empty prefix relocates every backfill destination,
+    the registration marker and the delete record — defeating output reuse, the
+    duplicate-registration protection, and the canonical -main layout the staged
+    data mirrors.
+
+    Raises:
+        ValueError: If `[workflow].output_prefix` is non-empty.
+    """
+    if prefix := config_retrieve(['workflow', 'output_prefix'], default=''):
+        raise ValueError(
+            f'[workflow].output_prefix = {prefix!r}: backfill destinations must land at '
+            f'the canonical -main paths, so submit backfill runs with an empty output '
+            f"dir (analysis-runner --output-dir '').",
         )
 
 

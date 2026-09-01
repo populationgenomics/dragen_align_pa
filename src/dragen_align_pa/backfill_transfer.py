@@ -10,6 +10,7 @@ from the backfill stages' BashJobs; every gcloud call goes through
 import json
 import re
 import subprocess
+import urllib.parse
 from argparse import ArgumentParser
 from pathlib import Path
 
@@ -27,6 +28,8 @@ Pairs = list[tuple[str, str]]
 
 
 def _describe_crc32c(url: str, log_failure: bool = True) -> str:
+    # `crc32c_hash` verified as the storage object resource's field name in
+    # google-cloud-sdk 577.0.0 (command_lib/storage/resources/resource_reference.py).
     process = run_subprocess_with_log(
         ['gcloud', 'storage', 'objects', 'describe', url, "--format=value(crc32c_hash)"],
         step_name=f'describe {url}',
@@ -41,7 +44,10 @@ def _assert_checksums_match(source: str, destination: str) -> None:
     src_hash = _describe_crc32c(source)
     dst_hash = _describe_crc32c(destination)
     if not src_hash or not dst_hash:
-        raise ValueError(f'Empty crc32c for {source} or {destination}; cannot certify the copy')
+        raise ValueError(
+            f'Empty crc32c for {source} or {destination}; cannot certify the copy '
+            f'(if both objects exist, check whether the gcloud crc32c_hash field was renamed)'
+        )
     if src_hash != dst_hash:
         raise ValueError(f'Checksum mismatch for {destination}: source {src_hash} vs destination {dst_hash}')
 
@@ -73,9 +79,22 @@ def verify_files(pairs: Pairs) -> None:
         _assert_checksums_match(source, destination)
 
 
+def _encoded_gs_url(url: str) -> str:
+    """The URL as gcloud's not-found error renders it: object name percent-encoded.
+
+    GcsNotFoundError builds `gs://{instance_name} not found: {status_code}.` from
+    the request URL's resource path, where apitools has percent-encoded the object
+    name (every `/` becomes `%2F`) — verified in google-cloud-sdk 577.0.0
+    api_lib/storage/errors.py.
+    """
+    bucket, _, object_name = url.removeprefix('gs://').partition('/')
+    return f'gs://{bucket}/{urllib.parse.quote(object_name, safe="")}'
+
+
 def _source_is_absent(source: str, error: subprocess.CalledProcessError) -> bool:
     stderr = error.stderr or ''
-    return source in stderr and bool(_GCLOUD_NOT_FOUND_PATTERN.search(stderr))
+    names_source = source in stderr or _encoded_gs_url(source) in stderr
+    return names_source and bool(_GCLOUD_NOT_FOUND_PATTERN.search(stderr))
 
 
 def delete_files(pairs: Pairs, results_file: Path | str) -> None:
@@ -103,7 +122,10 @@ def delete_files(pairs: Pairs, results_file: Path | str) -> None:
 
         dst_hash = _describe_crc32c(destination)
         if not src_hash or not dst_hash:
-            raise ValueError(f'Empty crc32c for {source} or {destination}; refusing to delete')
+            raise ValueError(
+                f'Empty crc32c for {source} or {destination}; refusing to delete '
+                f'(if both objects exist, check whether the gcloud crc32c_hash field was renamed)'
+            )
         if src_hash != dst_hash:
             raise ValueError(f'Checksum mismatch for {source}: source {src_hash} vs destination {dst_hash}')
 

@@ -194,6 +194,24 @@ def test_delete_files_aborts_before_rm_on_checksum_mismatch(tmp_path, monkeypatc
 
 
 def test_delete_files_skips_source_that_is_genuinely_absent(tmp_path, monkeypatch):
+    # gcloud's GcsNotFoundError builds the message from the request URL's
+    # percent-encoded resource path, so the object name arrives with %2F for
+    # every slash (verified in SDK 577.0.0 api_lib/storage/errors.py).
+    source, destination = _PAIR
+    encoded_source = 'gs://up/output%2Fcram%2FSG1.cram'
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
+        '{source}') echo 'ERROR: (gcloud.storage.objects.describe) {encoded_source} not found: 404.' >&2; exit 1 ;;
+        '{destination}') echo 'abc123' ;;
+""")
+
+    backfill_transfer.delete_files([_PAIR], results_file=tmp_path / 'results.txt')
+
+    assert 'storage rm' not in _gcloud_calls(tmp_path)
+    assert (tmp_path / 'results.txt').read_text() == f'already-absent {source}\n'
+
+
+def test_delete_files_also_accepts_an_unencoded_not_found_message(tmp_path, monkeypatch):
+    # Guard against gcloud switching to (or some paths already using) the raw URL.
     source, destination = _PAIR
     _install_fake_gcloud(tmp_path, monkeypatch, f"""
         '{source}') echo 'ERROR: {source} not found: 404.' >&2; exit 1 ;;
@@ -202,7 +220,6 @@ def test_delete_files_skips_source_that_is_genuinely_absent(tmp_path, monkeypatc
 
     backfill_transfer.delete_files([_PAIR], results_file=tmp_path / 'results.txt')
 
-    assert 'storage rm' not in _gcloud_calls(tmp_path)
     assert (tmp_path / 'results.txt').read_text() == f'already-absent {source}\n'
 
 
@@ -290,6 +307,15 @@ def test_transfer_cli_parses_pairs_json(tmp_path, monkeypatch):
 # --- Registration ----------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _no_preexisting_analyses(monkeypatch):
+    """Default the metamist dedup lookup to 'nothing registered yet' for this module.
+
+    Tests that exercise the dedup itself override the lookup explicitly.
+    """
+    monkeypatch.setattr(backfill_registration, '_existing_completed_outputs', lambda sg_id: set())  # noqa: ARG005
+
+
 def test_registration_orders_cram_then_base_gvcf_then_recal(monkeypatch):
     registered: list[tuple[str, str]] = []
 
@@ -357,6 +383,72 @@ def test_registration_passes_analysis_arguments_and_returns_marker(monkeypatch):
     }
 
 
+def test_registration_skips_outputs_already_registered_in_metamist(monkeypatch):
+    # A Hail Batch retry or a mid-trio failure replays the CLI; outputs that
+    # already have a completed analysis must not be registered twice.
+    registered: list[tuple[str, str]] = []
+
+    def fake_complete_analysis_job(output: str, analysis_type: str, *args: object) -> None:  # noqa: ARG001
+        registered.append((output, analysis_type))
+
+    monkeypatch.setattr(backfill_registration, 'complete_analysis_job', fake_complete_analysis_job)
+    monkeypatch.setattr(
+        backfill_registration,
+        '_existing_completed_outputs',
+        lambda sg_id: {('cram', 'gs://main/SG1.cram'), ('gvcf', 'gs://main/base.g.vcf.gz')},  # noqa: ARG005
+    )
+
+    marker = backfill_registration.run(
+        cram='gs://main/SG1.cram',
+        base_gvcf='gs://main/base.g.vcf.gz',
+        recal_gvcf='gs://main/recal.g.vcf.gz',
+        sg_id='CPG_000001',
+        project_name='test-dataset',
+        meta={'stage': 'BackfillGvcfsFromUpload'},
+    )
+
+    assert registered == [('gs://main/recal.g.vcf.gz', 'gvcf')]
+    # The marker still records the full registered state of the SG.
+    assert marker['registered'] == ['gs://main/SG1.cram', 'gs://main/base.g.vcf.gz', 'gs://main/recal.g.vcf.gz']
+
+
+def test_registration_passes_an_isolated_meta_dict_per_call(monkeypatch):
+    # cpg-flow's complete_analysis_job mutates the meta dict it receives (pops
+    # keys, adds size); one shared dict would leak mutations between calls.
+    captured: list[dict] = []
+
+    def fake_complete_analysis_job(output, analysis_type, cohort_ids, sg_ids, project_name, meta):  # noqa: ARG001
+        captured.append(dict(meta))
+        meta['size'] = 12345  # simulate the in-place mutation
+
+    monkeypatch.setattr(backfill_registration, 'complete_analysis_job', fake_complete_analysis_job)
+
+    backfill_registration.run(
+        cram='gs://main/SG1.cram',
+        base_gvcf='gs://main/base.g.vcf.gz',
+        recal_gvcf='gs://main/recal.g.vcf.gz',
+        sg_id='CPG_000001',
+        project_name='test-dataset',
+        meta={'stage': 'BackfillGvcfsFromUpload'},
+    )
+
+    assert all(meta == {'stage': 'BackfillGvcfsFromUpload'} for meta in captured)
+
+
+def _registration_cli_argv(marker_file: Path) -> list[str]:
+    return [
+        'backfill_registration',
+        '--cram', 'gs://main/SG1.cram',
+        '--base-gvcf', 'gs://main/base.g.vcf.gz',
+        '--recal-gvcf', 'gs://main/recal.g.vcf.gz',
+        '--sg-id', 'CPG_000001',
+        '--project-name', 'test-dataset',
+        '--meta-json', '{"stage": "BackfillGvcfsFromUpload"}',
+        '--marker-file', str(marker_file),
+        '--marker-gcs-path', 'gs://main/ica/v/output/backfill_registration/CPG_000001.json',
+    ]
+
+
 def test_registration_cli_writes_marker_file_as_pure_json(monkeypatch, tmp_path, capsys):
     # complete_analysis_job logs to stdout, so the marker must be written to an
     # explicit file, not captured from stdout redirection.
@@ -364,25 +456,32 @@ def test_registration_cli_writes_marker_file_as_pure_json(monkeypatch, tmp_path,
         print('Created Analysis(id=1, type=gvcf) log noise')
 
     monkeypatch.setattr(backfill_registration, 'complete_analysis_job', fake_complete_analysis_job)
+    monkeypatch.setattr(backfill_registration, '_read_existing_marker', lambda path: None)  # noqa: ARG005
     marker_file = tmp_path / 'marker.json'
-    monkeypatch.setattr(
-        'sys.argv',
-        [
-            'backfill_registration',
-            '--cram', 'gs://main/SG1.cram',
-            '--base-gvcf', 'gs://main/base.g.vcf.gz',
-            '--recal-gvcf', 'gs://main/recal.g.vcf.gz',
-            '--sg-id', 'CPG_000001',
-            '--project-name', 'test-dataset',
-            '--meta-json', '{"stage": "BackfillGvcfsFromUpload"}',
-            '--marker-file', str(marker_file),
-        ],
-    )
+    monkeypatch.setattr('sys.argv', _registration_cli_argv(marker_file))
 
     backfill_registration.main()
 
     capsys.readouterr()  # log noise goes to stdout, not the marker
     assert json.loads(marker_file.read_text())['sg_id'] == 'CPG_000001'
+
+
+def test_registration_cli_exits_early_when_gcs_marker_exists(monkeypatch, tmp_path):
+    # A stage re-queue with the marker present (e.g. a copied file went missing)
+    # must not re-register anything; the existing marker content is preserved.
+    existing_marker = '{"sg_id": "CPG_000001", "registered": ["gs://prior"]}'
+
+    def fail_complete_analysis_job(*args: object) -> None:  # noqa: ARG001
+        raise AssertionError('must not register when the marker already exists')
+
+    monkeypatch.setattr(backfill_registration, 'complete_analysis_job', fail_complete_analysis_job)
+    monkeypatch.setattr(backfill_registration, '_read_existing_marker', lambda path: existing_marker)  # noqa: ARG005
+    marker_file = tmp_path / 'marker.json'
+    monkeypatch.setattr('sys.argv', _registration_cli_argv(marker_file))
+
+    backfill_registration.main()
+
+    assert marker_file.read_text() == existing_marker
 
 
 # --- Wiring and config guards -----------------------------------------------------------
@@ -446,3 +545,27 @@ def test_backfill_stage_selection_accepts_empty_selection_and_ica_skip_names(mon
     _selection_config(monkeypatch, 'skip_stages', ['DeleteDataInIca'])
 
     validator.assert_backfill_stage_selection()
+
+
+def test_backfill_rejects_a_nonempty_output_prefix(monkeypatch):
+    # A non-empty analysis-runner --output-dir relocates every destination, the
+    # registration marker and the delete record, defeating output reuse and the
+    # duplicate-registration protection.
+    def fake_config_retrieve(config_key, default=None):
+        if tuple(config_key) == ('workflow', 'output_prefix'):
+            return 'run2'
+        return default
+
+    monkeypatch.setattr(validator, 'config_retrieve', fake_config_retrieve)
+
+    with pytest.raises(ValueError, match='output_prefix'):
+        validator.assert_backfill_output_prefix_empty()
+
+
+def test_backfill_accepts_an_empty_output_prefix(monkeypatch):
+    def fake_config_retrieve(config_key, default=None):  # noqa: ARG001
+        return default
+
+    monkeypatch.setattr(validator, 'config_retrieve', fake_config_retrieve)
+
+    validator.assert_backfill_output_prefix_empty()
