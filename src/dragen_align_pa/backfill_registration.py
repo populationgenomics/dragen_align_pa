@@ -14,8 +14,13 @@ own; it lives here so the single marker covers every backfill registration.
 Registration is idempotent across every replay path (Hail Batch job retry, a
 mid-trio failure, a stage re-queue with the marker present): the CLI exits early
 when the GCS marker already exists, and otherwise skips any output that already has
-a completed analysis of the same type in metamist. Replays preserve the ordering
-guarantee — a skipped output was registered before the outputs that follow it.
+an active completed analysis of the same type in metamist. The dedup alone cannot
+preserve ordering against pre-existing ICA-flow rows (recal registered, base not:
+skipping the recal would leave the freshly registered base as the latest gvcf), so
+the recal is re-registered whenever the base was newly registered in this
+invocation, and after registering, the run fails loudly unless the recal is the
+latest completed gvcf analysis for the SG — which also surfaces interleavings from
+concurrent runs covering the same sequencing group.
 """
 
 import json
@@ -28,13 +33,19 @@ from loguru import logger
 from metamist.graphql import gql, query
 
 
-def _existing_completed_outputs(sg_id: str) -> set[tuple[str, str]]:
-    """(type, output) pairs of this SG's completed analyses in metamist."""
+def _completed_analyses(sg_id: str) -> list[dict]:
+    """This SG's active completed analyses, in metamist row order (id ascending).
+
+    Filters `active: {eq: true}` like cpg-flow's GET_ANALYSES_QUERY: an archived
+    analysis must not suppress re-registration, because sequencing-group output
+    resolution only considers active rows.
+    """
     analyses_query = gql(
         request_string="""
         query BackfillRegisteredAnalyses($sgId: String!) {
           sequencingGroups(id: {eq: $sgId}) {
-            analyses {
+            analyses(active: {eq: true}) {
+              id
               type
               status
               output
@@ -47,11 +58,35 @@ def _existing_completed_outputs(sg_id: str) -> set[tuple[str, str]]:
     sequencing_groups = result.get('sequencingGroups', [])
     if not sequencing_groups:
         raise ValueError(f'No sequencing group found in metamist with ID {sg_id}')
-    return {
-        (analysis['type'], analysis['output'])
+    completed = [
+        analysis
         for analysis in sequencing_groups[0].get('analyses', [])
         if str(analysis.get('status', '')).upper() == 'COMPLETED' and analysis.get('output')
-    }
+    ]
+    return sorted(completed, key=lambda analysis: analysis['id'])
+
+
+def _existing_completed_outputs(sg_id: str) -> set[tuple[str, str]]:
+    """(type, output) pairs of this SG's active completed analyses in metamist."""
+    return {(analysis['type'], analysis['output']) for analysis in _completed_analyses(sg_id)}
+
+
+def _assert_recal_is_latest(sg_id: str, recal_gvcf: str) -> None:
+    """Fail loudly unless the recal gVCF is the newest completed gvcf analysis.
+
+    cpg-flow's sequencing-group gvcf resolution is last-row-wins, so anything
+    else (a concurrent run's interleaving, or a pre-existing ordering the dedup
+    skipped over) would silently hand downstream consumers the non-MLR base gVCF.
+    """
+    gvcf_rows = [analysis for analysis in _completed_analyses(sg_id) if analysis['type'] == 'gvcf']
+    if not gvcf_rows or gvcf_rows[-1]['output'] != recal_gvcf:
+        latest = gvcf_rows[-1]['output'] if gvcf_rows else None
+        raise RuntimeError(
+            f'After backfill registration for {sg_id}, the latest completed gvcf analysis '
+            f'is {latest!r}, not the recal gVCF {recal_gvcf!r}. sequencing_group.gvcf would '
+            f'resolve to the wrong file — investigate before re-running (was a concurrent '
+            f'run covering this SG in flight?).',
+        )
 
 
 def _read_existing_marker(marker_gcs_path: str) -> str | None:
@@ -72,12 +107,18 @@ def run(
 ) -> dict[str, Any]:
     """Register the cram, base gVCF, then recal gVCF, and return the marker payload.
 
-    Outputs that already have a completed analysis of the same type are skipped, so
-    a replayed run never duplicates metamist rows.
+    Outputs that already have an active completed analysis of the same type are
+    skipped, so a replayed run never duplicates metamist rows — except the recal
+    gVCF, which is re-registered whenever the base gVCF was newly registered in
+    this invocation: a skipped recal predating a fresh base row would make the
+    base the latest gvcf analysis. Ends by asserting the recal is the latest
+    completed gvcf for the SG.
     """
     already_registered = _existing_completed_outputs(sg_id)
+    base_newly_registered = False
     for output, analysis_type in ((cram, 'cram'), (base_gvcf, 'gvcf'), (recal_gvcf, 'gvcf')):
-        if (analysis_type, output) in already_registered:
+        recal_must_follow_new_base = output == recal_gvcf and base_newly_registered
+        if (analysis_type, output) in already_registered and not recal_must_follow_new_base:
             logger.info(f'{analysis_type} analysis for {output} already registered; skipping')
             continue
         complete_analysis_job(
@@ -90,6 +131,9 @@ def run(
             # size), so each call gets its own copy.
             dict(meta),
         )
+        if output == base_gvcf:
+            base_newly_registered = True
+    _assert_recal_is_latest(sg_id, recal_gvcf)
     return {'sg_id': sg_id, 'registered': [cram, base_gvcf, recal_gvcf]}
 
 

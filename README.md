@@ -76,9 +76,10 @@ Valid entries for config settings such as `dragen_align_pa.manage_dragen_pipelin
 
 ### Sections that must be edited
 
-This list applies to the standard ICA realignment flow. A backfill run needs none of
-the ICA keys below — see "Backfilling Externally Produced Outputs" for its (much
-shorter) required config.
+This list applies to the standard ICA realignment flow. A backfill run needs almost
+none of the ICA keys below (only `reads_type` and `[ica.pipelines].dragen_version`
+are read) — see "Backfilling Externally Produced Outputs" for its (much shorter)
+required config.
 
 Your TOML configuration file must specify the following key options:
 
@@ -222,9 +223,13 @@ downloads at a batch that does not exist for it.
 ## Backfilling Externally Produced Outputs
 
 Backfill mode ingests results that were produced outside this pipeline (e.g. downloaded
-from ICA manually, reheadered and re-checksummed) without running any ICA stage. The
-ICA-flow keys in "Sections that must be edited" (sequencing_type, reads_type,
-`[ica.*]`) are not required — the config below is the complete set. The
+from ICA manually, reheadered and re-checksummed) without running any ICA stage. Most
+ICA-flow keys in "Sections that must be edited" are not used, but two are read at
+import time and must be present (they are in the defaults TOML your config is based
+on): `[workflow].reads_type` (either value; unused by backfill) and
+`[ica.pipelines].dragen_version` — the latter is load-bearing, since every
+destination path embeds it, so it must match the DRAGEN version that produced the
+staged data. The
 staged files are copied server-side into their final `-main` locations, registered in
 metamist (cram, then base gVCF, then recal gVCF — strictly last, so
 `sequencing_group.gvcf` resolves to the recal file), and Somalier fingerprints are
@@ -248,7 +253,11 @@ missing URL).
 ```toml
 [workflow]
 input_cohorts = ['COH...']
-last_stages = []   # override the ICA-flow default; required
+last_stages = []      # override the ICA-flow default; required
+reads_type = 'cram'   # read at import; value is irrelevant for backfill
+
+[ica.pipelines]
+dragen_version = 'dragen_3_7_8'   # must match the version that produced the data
 
 [dragen_align_pa.backfill]
 enabled = true

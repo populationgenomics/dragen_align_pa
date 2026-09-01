@@ -309,11 +309,13 @@ def test_transfer_cli_parses_pairs_json(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_preexisting_analyses(monkeypatch):
-    """Default the metamist dedup lookup to 'nothing registered yet' for this module.
+    """Default the metamist lookups to 'nothing registered yet, ordering fine'.
 
-    Tests that exercise the dedup itself override the lookup explicitly.
+    Tests that exercise the dedup or the post-registration ordering check
+    override these explicitly.
     """
     monkeypatch.setattr(backfill_registration, '_existing_completed_outputs', lambda sg_id: set())  # noqa: ARG005
+    monkeypatch.setattr(backfill_registration, '_assert_recal_is_latest', lambda sg_id, recal_gvcf: None)  # noqa: ARG005
 
 
 def test_registration_orders_cram_then_base_gvcf_then_recal(monkeypatch):
@@ -410,6 +412,128 @@ def test_registration_skips_outputs_already_registered_in_metamist(monkeypatch):
     assert registered == [('gs://main/recal.g.vcf.gz', 'gvcf')]
     # The marker still records the full registered state of the SG.
     assert marker['registered'] == ['gs://main/SG1.cram', 'gs://main/base.g.vcf.gz', 'gs://main/recal.g.vcf.gz']
+
+
+def test_registration_reregisters_recal_when_the_base_gvcf_was_newly_registered(monkeypatch):
+    # A prior partial ICA run can leave the recal registered but not the base.
+    # Registering the base and skipping the recal would make the base the
+    # latest gvcf analysis — sg.gvcf would resolve to the non-MLR file — so the
+    # recal must be re-registered whenever the base was registered after it.
+    registered: list[tuple[str, str]] = []
+
+    def fake_complete_analysis_job(output: str, analysis_type: str, *args: object) -> None:  # noqa: ARG001
+        registered.append((output, analysis_type))
+
+    monkeypatch.setattr(backfill_registration, 'complete_analysis_job', fake_complete_analysis_job)
+    monkeypatch.setattr(
+        backfill_registration,
+        '_existing_completed_outputs',
+        lambda sg_id: {('gvcf', 'gs://main/recal.g.vcf.gz')},  # noqa: ARG005
+    )
+
+    backfill_registration.run(
+        cram='gs://main/SG1.cram',
+        base_gvcf='gs://main/base.g.vcf.gz',
+        recal_gvcf='gs://main/recal.g.vcf.gz',
+        sg_id='CPG_000001',
+        project_name='test-dataset',
+        meta={'stage': 'BackfillGvcfsFromUpload'},
+    )
+
+    assert registered == [
+        ('gs://main/SG1.cram', 'cram'),
+        ('gs://main/base.g.vcf.gz', 'gvcf'),
+        ('gs://main/recal.g.vcf.gz', 'gvcf'),
+    ]
+
+
+def test_registration_does_not_reregister_recal_when_only_the_cram_was_new(monkeypatch):
+    # The cram is a different analysis type with no ordering interplay with the
+    # gvcf rows; a new cram must not force a duplicate recal registration.
+    registered: list[tuple[str, str]] = []
+
+    def fake_complete_analysis_job(output: str, analysis_type: str, *args: object) -> None:  # noqa: ARG001
+        registered.append((output, analysis_type))
+
+    monkeypatch.setattr(backfill_registration, 'complete_analysis_job', fake_complete_analysis_job)
+    monkeypatch.setattr(
+        backfill_registration,
+        '_existing_completed_outputs',
+        lambda sg_id: {('gvcf', 'gs://main/base.g.vcf.gz'), ('gvcf', 'gs://main/recal.g.vcf.gz')},  # noqa: ARG005
+    )
+
+    backfill_registration.run(
+        cram='gs://main/SG1.cram',
+        base_gvcf='gs://main/base.g.vcf.gz',
+        recal_gvcf='gs://main/recal.g.vcf.gz',
+        sg_id='CPG_000001',
+        project_name='test-dataset',
+        meta={'stage': 'BackfillGvcfsFromUpload'},
+    )
+
+    assert registered == [('gs://main/SG1.cram', 'cram')]
+
+
+def test_run_checks_recal_is_the_latest_gvcf_after_registering(monkeypatch):
+    checked: list[tuple[str, str]] = []
+
+    def fake_complete_analysis_job(*args: object) -> None:  # noqa: ARG001
+        pass
+
+    monkeypatch.setattr(backfill_registration, 'complete_analysis_job', fake_complete_analysis_job)
+    monkeypatch.setattr(
+        backfill_registration,
+        '_assert_recal_is_latest',
+        lambda sg_id, recal_gvcf: checked.append((sg_id, recal_gvcf)),
+    )
+
+    backfill_registration.run(
+        cram='gs://main/SG1.cram',
+        base_gvcf='gs://main/base.g.vcf.gz',
+        recal_gvcf='gs://main/recal.g.vcf.gz',
+        sg_id='CPG_000001',
+        project_name='test-dataset',
+        meta={'stage': 'BackfillGvcfsFromUpload'},
+    )
+
+    assert checked == [('CPG_000001', 'gs://main/recal.g.vcf.gz')]
+
+
+# Bound at import, before the autouse fixture replaces the module attribute with
+# a no-op, so the ordering-check tests exercise the real implementation.
+_REAL_ASSERT_RECAL_IS_LATEST = backfill_registration._assert_recal_is_latest
+
+
+def _stub_completed_analyses(monkeypatch, rows: list[dict]) -> None:
+    monkeypatch.setattr(backfill_registration, '_completed_analyses', lambda sg_id: rows)  # noqa: ARG005
+
+
+def test_assert_recal_is_latest_passes_when_recal_has_the_highest_id(monkeypatch):
+    _stub_completed_analyses(
+        monkeypatch,
+        [
+            {'id': 1, 'type': 'gvcf', 'output': 'gs://main/base.g.vcf.gz'},
+            {'id': 2, 'type': 'cram', 'output': 'gs://main/SG1.cram'},
+            {'id': 3, 'type': 'gvcf', 'output': 'gs://main/recal.g.vcf.gz'},
+        ],
+    )
+
+    _REAL_ASSERT_RECAL_IS_LATEST('CPG_000001', 'gs://main/recal.g.vcf.gz')
+
+
+def test_assert_recal_is_latest_fails_when_the_base_gvcf_postdates_it(monkeypatch):
+    # A concurrent run (or a pre-existing bad ordering the dedup skipped over)
+    # must surface loudly rather than leave sg.gvcf resolving to the base file.
+    _stub_completed_analyses(
+        monkeypatch,
+        [
+            {'id': 1, 'type': 'gvcf', 'output': 'gs://main/recal.g.vcf.gz'},
+            {'id': 2, 'type': 'gvcf', 'output': 'gs://main/base.g.vcf.gz'},
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match='latest'):
+        _REAL_ASSERT_RECAL_IS_LATEST('CPG_000001', 'gs://main/recal.g.vcf.gz')
 
 
 def test_registration_passes_an_isolated_meta_dict_per_call(monkeypatch):
