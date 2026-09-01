@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from dragen_align_pa import backfill_registration, backfill_transfer, stages, utils, validator
+from dragen_align_pa import backfill_registration, backfill_transfer, run_workflow, stages, utils, validator
 
 
 def test_backfill_source_path_uses_upload_bucket(monkeypatch):
@@ -637,6 +637,46 @@ def test_normal_mode_wiring_keeps_somalier_on_the_ica_download():
     # In backfill mode SomalierExtract additionally depends on BackfillGvcfsFromUpload
     # (whose copy job certifies the cram); normal mode keeps the single ICA dependency.
     assert [stages.DownloadCramFromIca] == stages._SOMALIER_REQUIRED_STAGES
+
+
+def test_wiring_selectors_cover_both_modes():
+    # The import-time constants only ever exercise one branch per test session
+    # (conftest pins backfill off), so the selector functions are tested directly.
+    assert stages.somalier_cram_source(backfill_mode=True) is stages.BackfillCramFromUpload
+    assert stages.somalier_cram_source(backfill_mode=False) is stages.DownloadCramFromIca
+    assert stages.somalier_required_stages(backfill_mode=True) == [
+        stages.BackfillCramFromUpload,
+        stages.BackfillGvcfsFromUpload,
+    ]
+    assert stages.somalier_required_stages(backfill_mode=False) == [stages.DownloadCramFromIca]
+
+
+def test_terminal_stages_cover_both_modes():
+    assert run_workflow.terminal_stages(backfill_mode=True) == [
+        stages.BackfillGvcfsFromUpload,
+        stages.SomalierExtract,
+        stages.DeleteBackfillUpload,
+    ]
+    assert run_workflow.terminal_stages(backfill_mode=False) == [stages.DeleteDataInIca]
+
+
+def test_registration_project_name_matches_metamists_endswith_rule(monkeypatch):
+    # metamist's get_metamist_proj bumps to -test when the name does not already
+    # END with -test; a substring rule ('test' in name) would leave a dataset like
+    # 'testdata' unbumped here while metamist writes to 'testdata-test', making
+    # the dedup and latest-recal queries read a different project than rows land in.
+    monkeypatch.setattr(backfill_registration, 'get_access_level', lambda: 'test')
+
+    assert backfill_registration.registration_project_name('testdata') == 'testdata-test'
+    assert backfill_registration.registration_project_name('dataset') == 'dataset-test'
+    assert backfill_registration.registration_project_name('dataset-test') == 'dataset-test'
+
+
+def test_registration_project_name_is_unchanged_at_full_access(monkeypatch):
+    monkeypatch.setattr(backfill_registration, 'get_access_level', lambda: 'full')
+
+    assert backfill_registration.registration_project_name('testdata') == 'testdata'
+    assert backfill_registration.registration_project_name('dataset') == 'dataset'
 
 
 def _selection_config(monkeypatch, key: str, names: list[str]) -> None:

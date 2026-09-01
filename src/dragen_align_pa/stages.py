@@ -52,6 +52,7 @@ from dragen_align_pa.utils import (
 )
 
 if TYPE_CHECKING:
+    from cpg_flow.stage import StageDecorator
     from hailtop.batch.job import BashJob, PythonJob
 
 
@@ -720,10 +721,20 @@ class BackfillGvcfsFromUpload(SequencingGroupStage):
 # stage was REUSEd (pre-existing -main cram) — without that edge, Somalier would
 # fingerprint an unverified cram in parallel with the failing check, and the stale
 # fingerprint would be reused forever on the remediation re-run.
-_SOMALIER_CRAM_SOURCE = BackfillCramFromUpload if BACKFILL_MODE else DownloadCramFromIca
-_SOMALIER_REQUIRED_STAGES = (
-    [BackfillCramFromUpload, BackfillGvcfsFromUpload] if BACKFILL_MODE else [DownloadCramFromIca]
-)
+# Selector functions rather than bare conditionals so tests can exercise both
+# branches — the import-time constants only ever reflect one config per session.
+
+
+def somalier_cram_source(backfill_mode: bool) -> 'StageDecorator':
+    return BackfillCramFromUpload if backfill_mode else DownloadCramFromIca
+
+
+def somalier_required_stages(backfill_mode: bool) -> list['StageDecorator']:
+    return [BackfillCramFromUpload, BackfillGvcfsFromUpload] if backfill_mode else [DownloadCramFromIca]
+
+
+_SOMALIER_CRAM_SOURCE = somalier_cram_source(BACKFILL_MODE)
+_SOMALIER_REQUIRED_STAGES = somalier_required_stages(BACKFILL_MODE)
 
 
 @stage(required_stages=_SOMALIER_REQUIRED_STAGES)

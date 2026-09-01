@@ -13,9 +13,10 @@ import shlex
 from typing import TYPE_CHECKING
 
 from cpg_flow.targets import SequencingGroup
-from cpg_utils.config import get_access_level, get_driver_image
+from cpg_utils.config import get_driver_image
 from cpg_utils.hail_batch import authenticate_cloud_credentials_in_job, copy_common_env, get_batch
 
+from dragen_align_pa import backfill_registration
 from dragen_align_pa.utils import get_backfill_source_path, get_output_path
 
 if TYPE_CHECKING:
@@ -77,11 +78,10 @@ def register_backfill_job(
     b = get_batch()
     job = _new_backfill_job('Register backfill analyses', sequencing_group, tool='metamist')
 
-    # Mirror cpg-flow's project naming for decorator-registered analyses
-    # (cpg_flow.stage bumps the project to `-test` at test access level).
-    project_name = sequencing_group.dataset.name
-    if get_access_level() == 'test' and 'test' not in project_name:
-        project_name = f'{project_name}-test'
+    # Pre-bump with metamist's own get_metamist_proj rule so the CLI's write path,
+    # its dedup/latest-recal read-back, and cpg-flow's sg.gvcf resolution all
+    # target the same project (see registration_project_name's docstring).
+    project_name = backfill_registration.registration_project_name(sequencing_group.dataset.name)
 
     meta = (sequencing_group.get_job_attrs() or {}) | {'stage': stage_name}
     job.command(

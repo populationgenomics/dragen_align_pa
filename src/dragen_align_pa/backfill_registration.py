@@ -30,8 +30,24 @@ from typing import Any
 
 import cpg_utils
 from cpg_flow.status import complete_analysis_job
+from cpg_utils.config import get_access_level
 from loguru import logger
 from metamist.graphql import gql, query
+
+
+def registration_project_name(dataset_name: str) -> str:
+    """The metamist project that `complete_analysis_job` writes this SG's rows to.
+
+    Mirrors metamist's `get_metamist_proj` exactly: at test access level, bump to
+    `-test` unless the name already ENDS with `-test`. (cpg-flow's decorator
+    registration in stage.py uses a `'test' in name` substring rule instead, which
+    under-bumps a dataset like `testdata` — nothing upstream reads back so it never
+    trips over that; this module does read back, so the write rule is the one that
+    matters here.)
+    """
+    if get_access_level() == 'test' and not dataset_name.endswith('-test'):
+        return f'{dataset_name}-test'
+    return dataset_name
 
 
 def _completed_analyses(sg_id: str, project_name: str) -> list[dict]:
@@ -45,6 +61,8 @@ def _completed_analyses(sg_id: str, project_name: str) -> list[dict]:
 
     Rows are deliberately NOT sorted: cpg-flow's resolution takes the last row of
     the server response with no sort, and this module must agree with the consumer.
+    (cpg-flow queries via `project(name).analyses` rather than this resolver;
+    author-confirmed both endpoints return rows in the same insertion order.)
     """
     analyses_query = gql(
         request_string="""
