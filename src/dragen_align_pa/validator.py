@@ -7,6 +7,9 @@ under a misconfiguration. Keep per-job / executor-side logic out; this module is
 preconditions that must fail fast at submit time.
 """
 
+from collections.abc import Callable, Sequence
+
+import cpg_utils
 from cpg_flow.inputs import get_multicohort
 from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import config_retrieve
@@ -26,7 +29,33 @@ from dragen_align_pa.constants.constants_registry import (
     resolve_ica_project_name,
     resolve_mlr_config_file_id,
 )
-from dragen_align_pa.utils import get_bed_names_for_seqtype
+from dragen_align_pa.stages import (
+    BACKFILL_MODE,
+    BackfillCramFromUpload,
+    BackfillGvcfsFromUpload,
+    DeleteBackfillUpload,
+    SomalierExtract,
+)
+from dragen_align_pa.utils import (
+    base_gvcf_output_filenames,
+    cram_output_filenames,
+    get_backfill_source_path,
+    get_bed_names_for_seqtype,
+    get_output_path,
+    recal_gvcf_output_filenames,
+)
+
+# functools.wraps in cpg-flow's @stage preserves the class name, which is also the
+# name cpg-flow matches against first/last/skip_stages config values.
+_BACKFILL_STAGE_NAMES: frozenset[str] = frozenset(
+    stage_decorator.__name__
+    for stage_decorator in (
+        BackfillCramFromUpload,
+        BackfillGvcfsFromUpload,
+        SomalierExtract,
+        DeleteBackfillUpload,
+    )
+)
 
 
 def validate_configuration() -> None:
@@ -38,10 +67,20 @@ def validate_configuration() -> None:
     Raises:
         KeyError / ValueError: If `[ica.projects].project_root` isn't a registered family whose
             projects cover every required role, or if more than one `[ica.management]` flag is set.
-        RuntimeError: If `[workflow].input_cohorts` doesn't name exactly one cohort, or if any
-            cohort's exome design doesn't match the configured BEDs.
+        RuntimeError: If `[workflow].input_cohorts` doesn't name exactly one cohort, if any
+            cohort's exome design doesn't match the configured BEDs, or if a backfill run
+            is missing staged -upload sources its copy jobs will read.
     """
     assert_single_input_cohort()
+    # A backfill run never touches ICA (data was produced externally and staged in
+    # -upload), so the ICA-facing guards below don't apply and must not require a
+    # backfill config to carry ICA project/BED settings.
+    if BACKFILL_MODE:
+        assert_backfill_stage_selection()
+        assert_backfill_output_prefix_empty()
+        for cohort in get_multicohort().get_cohorts():
+            assert_backfill_sources_staged(cohort)
+        return
     assert_management_flags_exclusive()
     assert_ica_project_root_resolves()
     for cohort in get_multicohort().get_cohorts():
@@ -93,6 +132,149 @@ def assert_single_input_cohort() -> None:
             f'launch a separate run per cohort.',
         )
     logger.info(f'Single-cohort check passed: {input_cohorts[0]}.')
+
+
+def assert_backfill_stage_selection() -> None:
+    """Fail loud at submit when a backfill run carries any stage selection.
+
+    The backfill graph is fixed (copy cram, copy+register gVCFs, Somalier, delete):
+    stage names outside it crash cpg-flow's graph build with a backfill-unaware
+    message (the defaults TOML ships `last_stages = ['DownloadDataFromIca']` for the
+    ICA flow), and names inside it silently prune stages — `last_stages =
+    ['SomalierExtract']` would drop the gVCF copy and every metamist registration
+    while the run reports green. Skipping a requested backfill stage likewise aborts
+    graph build on its missing expected outputs; the delete opt-in is the
+    `[dragen_align_pa.backfill].delete_upload` flag, not stage selection.
+
+    Raises:
+        ValueError: If `[workflow].first_stages`, `last_stages` or `only_stages` is
+            non-empty, or `[workflow].skip_stages` names a backfill stage.
+    """
+    for key in ('first_stages', 'last_stages', 'only_stages'):
+        if names := config_retrieve(['workflow', key], default=[]):
+            raise ValueError(
+                f'[workflow].{key} = {names}: stage selection is not supported in backfill '
+                f'mode — the graph is fixed to {sorted(_BACKFILL_STAGE_NAMES)}, completed '
+                f'stages are skipped by output reuse, and deletion of the -upload sources '
+                f'is controlled by [dragen_align_pa.backfill].delete_upload. Override the '
+                f'defaults TOML value with {key} = [] in the run config.',
+            )
+    skip_names: list[str] = config_retrieve(['workflow', 'skip_stages'], default=[])
+    if backfill_skips := [name for name in skip_names if name in _BACKFILL_STAGE_NAMES]:
+        raise ValueError(
+            f'[workflow].skip_stages names backfill stages {backfill_skips}; skipping a '
+            f'requested backfill stage aborts the workflow at graph build. To keep the '
+            f'-upload sources, set [dragen_align_pa.backfill].delete_upload = false '
+            f'(the default) instead.',
+        )
+
+
+def assert_backfill_output_prefix_empty() -> None:
+    """Fail loud at submit when a backfill run carries a non-empty output prefix.
+
+    `get_output_path` includes `workflow.output_prefix` (the analysis-runner
+    `--output-dir` value). A non-empty prefix relocates every backfill destination,
+    the registration marker and the delete record — defeating output reuse, the
+    duplicate-registration protection, and the canonical -main layout the staged
+    data mirrors. An empty `--output-dir ''` is accepted by analysis-runner and is
+    how this pipeline is normally submitted (author-confirmed, standard practice
+    for the ICA flow too).
+
+    Raises:
+        ValueError: If `[workflow].output_prefix` is non-empty.
+    """
+    if prefix := config_retrieve(['workflow', 'output_prefix'], default=''):
+        raise ValueError(
+            f'[workflow].output_prefix = {prefix!r}: backfill destinations must land at '
+            f'the canonical -main paths, so submit backfill runs with an empty output '
+            f"dir (analysis-runner --output-dir '').",
+        )
+
+
+_BACKFILL_DATA_PREFIXES: tuple[str, ...] = ('cram', 'base_gvcf', 'recal_gvcf')
+
+
+def _rel_names_under(dir_for: Callable[[str], cpg_utils.Path], prefixes: tuple[str, ...]) -> set[str]:
+    """List each prefix directory once, returning object names relative to its parent."""
+    return {f'{prefix}/{path.name}' for prefix in prefixes for path in dir_for(prefix).iterdir()}
+
+
+# Mirrors cpg-flow's output-reuse rule per stage so a fully ingested sequencing group
+# (every destination and its registration marker present) doesn't demand sources that
+# DeleteBackfillUpload already removed: only copy stages that will actually run need
+# their -upload sources. Pure set logic over pre-listed names, so tests can cover the
+# reuse branches without GCS.
+def missing_backfill_sources(
+    sequencing_groups: Sequence[SequencingGroup],
+    staged: set[str],
+    ingested: set[str],
+) -> tuple[list[str], list[str]]:
+    """Diff the staged -upload objects against what this run's copy jobs will read.
+
+    Args:
+        sequencing_groups: The cohort's sequencing groups.
+        staged: Names present under the -upload `output/` data prefixes, relative to
+            `output/` (e.g. `cram/{SG}.cram`).
+        ingested: Names present under the -main destination prefixes, in the same
+            relative form, including the `backfill_registration/` markers.
+
+    Returns:
+        Two sorted lists: the required source names missing from `staged`, and the
+        staged names no sequencing group in the cohort expects (misnamed files land
+        here, as does data staged for another cohort).
+    """
+    missing: set[str] = set()
+    expected: set[str] = set()
+    for sg in sequencing_groups:
+        cram_rel = set(cram_output_filenames(sg.name).values())
+        gvcf_rel = {
+            *base_gvcf_output_filenames(sg.name).values(),
+            *recal_gvcf_output_filenames(sg.name).values(),
+        }
+        expected |= cram_rel | gvcf_rel
+        cram_stage_runs = not cram_rel <= ingested
+        gvcf_stage_runs = not (gvcf_rel | {f'backfill_registration/{sg.id}.json'}) <= ingested
+        required: set[str] = set()
+        # The gVCF stage's copy job re-certifies the cram against its -upload source
+        # (the verify-only pairs), so a run of either stage needs the cram sources.
+        if cram_stage_runs or gvcf_stage_runs:
+            required |= cram_rel
+        if gvcf_stage_runs:
+            required |= gvcf_rel
+        missing |= required - staged
+    return sorted(missing), sorted(staged - expected)
+
+
+def assert_backfill_sources_staged(cohort: Cohort) -> None:
+    """Fail loud at submit if any -upload source a queued copy job will read is missing.
+
+    Without this, each missing or misnamed staged file surfaces as one failed copy
+    job at a time, at job runtime. This lists the -upload and destination prefixes
+    once (seven list calls) and raises a single error naming every missing source,
+    plus any staged objects no sequencing group expects — which is how a misnamed
+    file shows up.
+
+    Raises:
+        RuntimeError: If any required -upload source is not staged.
+    """
+    staged = _rel_names_under(get_backfill_source_path, _BACKFILL_DATA_PREFIXES)
+    ingested = _rel_names_under(get_output_path, (*_BACKFILL_DATA_PREFIXES, 'backfill_registration'))
+    missing, unexpected = missing_backfill_sources(cohort.get_sequencing_groups(), staged, ingested)
+    if missing:
+        listing = '\n  '.join(str(get_backfill_source_path(rel)) for rel in missing)
+        note = ''
+        if unexpected:
+            note = (
+                '\nStaged objects not expected by any sequencing group in this cohort '
+                '(misnamed, or staged for another cohort):\n  ' + '\n  '.join(unexpected)
+            )
+        raise RuntimeError(
+            f'{len(missing)} -upload source(s) required by this run are not staged:\n  {listing}{note}',
+        )
+    logger.info(
+        f'Backfill staging check passed: cohort {cohort.id}, '
+        f'{len(staged)} staged objects cover every copy job this run will queue.',
+    )
 
 
 def assert_ica_project_root_resolves() -> None:

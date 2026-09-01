@@ -76,6 +76,11 @@ Valid entries for config settings such as `dragen_align_pa.manage_dragen_pipelin
 
 ### Sections that must be edited
 
+This list applies to the standard ICA realignment flow. A backfill run needs almost
+none of the ICA keys below (only `reads_type` and `[ica.pipelines].dragen_version`
+are read) — see "Backfilling Externally Produced Outputs" for its (much shorter)
+required config.
+
 Your TOML configuration file must specify the following key options:
 
   * `[workflow]`:
@@ -214,6 +219,83 @@ group can belong to more than one cohort — a panel-of-normals cohort is drawn 
 production cohorts that realign the same samples. Without it, both cohorts share one
 `{SG}_pipeline_id_and_arguid.json`, and the later run repoints the earlier cohort's
 downloads at a batch that does not exist for it.
+
+## Backfilling Externally Produced Outputs
+
+Backfill mode ingests results that were produced outside this pipeline (e.g. downloaded
+from ICA manually, reheadered and re-checksummed) without running any ICA stage. Most
+ICA-flow keys in "Sections that must be edited" are not used, but two are read at
+import time and must be present (they are in the defaults TOML your config is based
+on): `[workflow].reads_type` (either value; unused by backfill) and
+`[ica.pipelines].dragen_version` — the latter is load-bearing, since every
+destination path embeds it, so it must match the DRAGEN version that produced the
+staged data. The
+staged files are copied server-side into their final `-main` locations, registered in
+metamist (cram, then base gVCF, then recal gVCF — strictly last, so
+`sequencing_group.gvcf` resolves to the recal file), and Somalier fingerprints are
+extracted from the copied CRAMs. The `analysis-runner` invocation is unchanged; only
+config differs.
+
+**1. Stage the data** in the dataset's `-upload` bucket under a literal `output/`
+prefix (no `ica/{DRAGEN_VERSION}` prefix), named exactly by sequencing-group *name*:
+
+  * `gs://{DATASET}-upload/output/cram/{SG}.cram` and `{SG}.cram.crai`
+  * `gs://{DATASET}-upload/output/base_gvcf/{SG}.hard-filtered.gvcf.gz` and `.tbi`
+  * `gs://{DATASET}-upload/output/recal_gvcf/{SG}.hard-filtered.recal.gvcf.gz`, `.tbi`,
+    `.md5sum` and `.tbi.md5sum`
+
+Every file must be present for every sequencing group whose copy stages will run.
+The submit-time validator lists the staged prefixes and fails the submission with a
+single error naming every missing source (plus any staged objects no sequencing group
+expects, which is how a misnamed file shows up) before any job is queued. Sequencing
+groups that are already fully ingested (all destinations and the registration marker
+present) are skipped by output reuse, so their sources may already have been deleted.
+
+**2. Configure the run.** In the run's config TOML:
+
+```toml
+[workflow]
+input_cohorts = ['COH...']
+last_stages = []      # override the ICA-flow default; required
+reads_type = 'cram'   # read at import; value is irrelevant for backfill
+
+[ica.pipelines]
+dragen_version = 'dragen_3_7_8'   # must match the version that produced the data
+
+[dragen_align_pa.backfill]
+enabled = true
+delete_upload = false   # true to remove the -upload sources after verification
+```
+
+The backfill graph is fixed, so the submit-time validator rejects any non-empty
+`first_stages`/`last_stages`/`only_stages` (the defaults TOML sets
+`last_stages = ['DownloadDataFromIca']` for the ICA flow, hence the required override)
+and any `skip_stages` entry naming a backfill stage. Completed stages are skipped by
+cpg-flow's normal output reuse, so re-runs are cheap without stage selection. The
+validator also requires an empty `analysis-runner --output-dir ''` — a non-empty
+output prefix would relocate every destination and marker away from the canonical
+`-main` paths.
+
+**3. Optionally delete the staged sources.** Set
+`[dragen_align_pa.backfill] delete_upload = true` (on the first run or a re-run) and
+each `-upload` source is deleted only after its `-main` copy matches its crc32c
+checksum. Outcomes are recorded per file (`deleted` / `already-absent`) in
+`gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/backfill_delete/{SG_ID}.txt`; sources
+already absent from a previous run are skipped, and any other failure (e.g. a
+transient gcloud error) fails the job so nothing is silently left behind.
+
+Copies verify crc32c checksums end-to-end: a pre-existing `-main` object that doesn't
+match the staged source fails the run rather than being silently kept (the CRAM pair
+is re-verified in the registration stage even when its copy stage was reused).
+Registration is gated by a marker at
+`gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/backfill_registration/{SG_ID}.json`, so a
+run that copied files but failed to register re-runs registration; like the outputs it
+gates, the marker is cohort-independent, so re-backfilling the same sequencing group
+under another cohort doesn't create duplicate analyses.
+
+Note the two different keys: staged filenames use the sequencing-group *name* (`{SG}`
+above), while the marker and delete-record paths use the sequencing group's CPG ID
+(`{SG_ID}`), which survives a sequencing-group rename.
 
 ## Panel of Normals (Exome CNV)
 **Generation**

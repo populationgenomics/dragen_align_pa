@@ -106,6 +106,25 @@ md5_pipeline_id = "e767f290-bc60-4281-b11d-6a65c9791253"
 # cohort's total bytes (see manage_md5_pipeline._plan_md5_chunks); there is no
 # config override.
 
+# Backfill entry point: the run's outputs were produced outside this pipeline (already
+# aligned, reheadered, checksummed) and staged in the dataset's -upload bucket under a
+# literal `output/` prefix, mirroring the final structure (output/cram, output/base_gvcf,
+# output/recal_gvcf) with files named by sequencing-group name (see the README section
+# "Backfilling Externally Produced Outputs" for the exact filenames). When enabled, the
+# ICA chain is replaced by the Backfill* stages: copy to -main, register cram + base
+# gVCF + recal gVCF in metamist (recal strictly last, so sequencing_group.gvcf resolves
+# to it), then SomalierExtract.
+#
+# The backfill graph is fixed: a backfill run config MUST override the ICA-flow
+# default above with last_stages = [] (the validator rejects any non-empty
+# first/last/only_stages in backfill mode, and any skip_stages entry naming a
+# backfill stage). Completed stages are skipped by output reuse.
+[dragen_align_pa.backfill]
+enabled = false
+# Delete each -upload source after its -main copy is checksum-verified. Off by
+# default; the delete stage still appears in the graph but queues no jobs.
+delete_upload = false
+
 # Allow upload of Dragen crams, as they are not referenced directly by sequencing_group.cram
 [dragen_align_pa.upload_data_to_ica]
 use_dragen_crams = false

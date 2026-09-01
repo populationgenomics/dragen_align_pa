@@ -24,6 +24,9 @@ classifiers=[
 dependencies=[
     'cpg-flow>=v1.0.1',
     'loguru',
+    # Direct dependency of backfill_registration (metamist.graphql gql/query), not just
+    # transitive via cpg-flow; the floor matches cpg-flow's own metamist requirement.
+    'metamist>=7.13.0',
     'pandas',
     # # Direct dependencies of http_utils, not just transitive ones: we build a urllib3 Retry
     # # and mount it on a requests Session ourselves. Floors carry the relevant security fixes

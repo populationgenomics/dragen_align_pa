@@ -10,7 +10,7 @@ from cloudpathlib.exceptions import NoStatError
 from cpg_flow.inputs import get_multicohort
 from cpg_flow.stage import Stage, StageInput
 from cpg_flow.targets import Cohort, SequencingGroup
-from cpg_utils.config import config_retrieve, get_access_level, get_driver_image, output_path
+from cpg_utils.config import config_retrieve, dataset_path, get_access_level, get_driver_image, output_path
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
@@ -219,6 +219,41 @@ def get_pipeline_path(filename: str) -> cpg_utils.Path:
 def get_output_path(filename: str, category: str | None = None) -> cpg_utils.Path:
     """Gets a path in the final 'output' directory."""
     return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/output/{filename}', category=category))
+
+
+def get_backfill_source_path(filename: str) -> cpg_utils.Path:
+    """Gets a source object for backfill in the -upload bucket.
+
+    Backfilled data sits at the literal `output/` prefix in the bucket root —
+    no `ica/{DRAGEN_VERSION}` prefix and no workflow output_prefix.
+    """
+    return cpg_utils.to_path(dataset_path(f'output/{filename}', 'upload'))
+
+
+def cram_output_filenames(sg_name: str) -> dict[str, str]:
+    """Per-SG CRAM filenames relative to the pipeline `output/` directory."""
+    return {
+        'cram': f'cram/{sg_name}.cram',
+        'crai': f'cram/{sg_name}.cram.crai',
+    }
+
+
+def base_gvcf_output_filenames(sg_name: str) -> dict[str, str]:
+    """Per-SG base gVCF filenames relative to the pipeline `output/` directory."""
+    return {
+        'gvcf': f'base_gvcf/{sg_name}.hard-filtered.gvcf.gz',
+        'gvcf_tbi': f'base_gvcf/{sg_name}.hard-filtered.gvcf.gz.tbi',
+    }
+
+
+def recal_gvcf_output_filenames(sg_name: str) -> dict[str, str]:
+    """Per-SG recalibrated (MLR, reheadered) gVCF filenames relative to the pipeline `output/` directory."""
+    return {
+        'gvcf': f'recal_gvcf/{sg_name}.hard-filtered.recal.gvcf.gz',
+        'gvcf_tbi': f'recal_gvcf/{sg_name}.hard-filtered.recal.gvcf.gz.tbi',
+        'gvcf_md5': f'recal_gvcf/{sg_name}.hard-filtered.recal.gvcf.gz.md5sum',
+        'gvcf_tbi_md5': f'recal_gvcf/{sg_name}.hard-filtered.recal.gvcf.gz.tbi.md5sum',
+    }
 
 
 def get_batch_artefacts_root() -> cpg_utils.Path:
