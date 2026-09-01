@@ -163,7 +163,9 @@ def assert_backfill_output_prefix_empty() -> None:
     `--output-dir` value). A non-empty prefix relocates every backfill destination,
     the registration marker and the delete record — defeating output reuse, the
     duplicate-registration protection, and the canonical -main layout the staged
-    data mirrors.
+    data mirrors. An empty `--output-dir ''` is accepted by analysis-runner and is
+    how this pipeline is normally submitted (author-confirmed, standard practice
+    for the ICA flow too).
 
     Raises:
         ValueError: If `[workflow].output_prefix` is non-empty.

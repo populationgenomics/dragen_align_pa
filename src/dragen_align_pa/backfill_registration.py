@@ -1,7 +1,8 @@
 """Register a backfilled SG's cram, base gVCF and recal gVCF in metamist, in that order.
 
-`sequencing_group.gvcf` resolves to the *latest* gvcf analysis by timestamp, so the
-recal gVCF must be registered after the base gVCF. cpg-flow's decorator mechanism
+`sequencing_group.gvcf` resolves last-row-wins over the project's completed gvcf
+analyses (cpg-flow takes the final row of the metamist response, effectively the
+newest), so the recal gVCF must be registered after the base gVCF. cpg-flow's decorator mechanism
 (`analysis_type=` on `@stage`) cannot guarantee that, nor survive a copy-succeeded /
 registration-failed re-run: its registration job depends on the stage's payload jobs
 but is never appended to the stage's job list, so downstream dependency edges don't
@@ -33,19 +34,23 @@ from loguru import logger
 from metamist.graphql import gql, query
 
 
-def _completed_analyses(sg_id: str) -> list[dict]:
-    """This SG's active completed analyses, in metamist row order (id ascending).
+def _completed_analyses(sg_id: str, project_name: str) -> list[dict]:
+    """This SG's active completed analyses in the registration project, in response order.
 
-    Filters `active: {eq: true}` like cpg-flow's GET_ANALYSES_QUERY: an archived
-    analysis must not suppress re-registration, because sequencing-group output
-    resolution only considers active rows.
+    Filters `active: {eq: true}` like cpg-flow's GET_ANALYSES_QUERY (an archived
+    analysis must not suppress re-registration), and `project` because the SG may
+    carry analyses in other metamist projects that registration and sg.gvcf
+    resolution never see. `project_name` is the same string `complete_analysis_job`
+    registers into — the caller already applied the `-test` bump.
+
+    Rows are deliberately NOT sorted: cpg-flow's resolution takes the last row of
+    the server response with no sort, and this module must agree with the consumer.
     """
     analyses_query = gql(
         request_string="""
-        query BackfillRegisteredAnalyses($sgId: String!) {
+        query BackfillRegisteredAnalyses($sgId: String!, $project: String!) {
           sequencingGroups(id: {eq: $sgId}) {
-            analyses(active: {eq: true}) {
-              id
+            analyses(active: {eq: true}, project: {eq: $project}) {
               type
               status
               output
@@ -54,31 +59,31 @@ def _completed_analyses(sg_id: str) -> list[dict]:
         }
     """
     )
-    result = query(analyses_query, variables={'sgId': sg_id})
+    result = query(analyses_query, variables={'sgId': sg_id, 'project': project_name})
     sequencing_groups = result.get('sequencingGroups', [])
     if not sequencing_groups:
         raise ValueError(f'No sequencing group found in metamist with ID {sg_id}')
-    completed = [
+    return [
         analysis
         for analysis in sequencing_groups[0].get('analyses', [])
         if str(analysis.get('status', '')).upper() == 'COMPLETED' and analysis.get('output')
     ]
-    return sorted(completed, key=lambda analysis: analysis['id'])
 
 
-def _existing_completed_outputs(sg_id: str) -> set[tuple[str, str]]:
-    """(type, output) pairs of this SG's active completed analyses in metamist."""
-    return {(analysis['type'], analysis['output']) for analysis in _completed_analyses(sg_id)}
+def _existing_completed_outputs(sg_id: str, project_name: str) -> set[tuple[str, str]]:
+    """(type, output) pairs of this SG's active completed analyses in the project."""
+    return {(analysis['type'], analysis['output']) for analysis in _completed_analyses(sg_id, project_name)}
 
 
-def _assert_recal_is_latest(sg_id: str, recal_gvcf: str) -> None:
+def _assert_recal_is_latest(sg_id: str, recal_gvcf: str, project_name: str) -> None:
     """Fail loudly unless the recal gVCF is the newest completed gvcf analysis.
 
-    cpg-flow's sequencing-group gvcf resolution is last-row-wins, so anything
-    else (a concurrent run's interleaving, or a pre-existing ordering the dedup
-    skipped over) would silently hand downstream consumers the non-MLR base gVCF.
+    cpg-flow's sequencing-group gvcf resolution is last-row-wins over the
+    project-scoped response, so anything else (a concurrent run's interleaving,
+    or a pre-existing ordering the dedup skipped over) would silently hand
+    downstream consumers the non-MLR base gVCF.
     """
-    gvcf_rows = [analysis for analysis in _completed_analyses(sg_id) if analysis['type'] == 'gvcf']
+    gvcf_rows = [analysis for analysis in _completed_analyses(sg_id, project_name) if analysis['type'] == 'gvcf']
     if not gvcf_rows or gvcf_rows[-1]['output'] != recal_gvcf:
         latest = gvcf_rows[-1]['output'] if gvcf_rows else None
         raise RuntimeError(
@@ -114,7 +119,7 @@ def run(
     base the latest gvcf analysis. Ends by asserting the recal is the latest
     completed gvcf for the SG.
     """
-    already_registered = _existing_completed_outputs(sg_id)
+    already_registered = _existing_completed_outputs(sg_id, project_name)
     base_newly_registered = False
     for output, analysis_type in ((cram, 'cram'), (base_gvcf, 'gvcf'), (recal_gvcf, 'gvcf')):
         recal_must_follow_new_base = output == recal_gvcf and base_newly_registered
@@ -133,7 +138,7 @@ def run(
         )
         if output == base_gvcf:
             base_newly_registered = True
-    _assert_recal_is_latest(sg_id, recal_gvcf)
+    _assert_recal_is_latest(sg_id, recal_gvcf, project_name)
     return {'sg_id': sg_id, 'registered': [cram, base_gvcf, recal_gvcf]}
 
 
@@ -148,7 +153,11 @@ def main() -> None:
     parser.add_argument('--sg-id', required=True)
     parser.add_argument('--project-name', required=True)
     parser.add_argument('--meta-json', required=True)
-    parser.add_argument('--marker-file', required=True, help='Local path Hail Batch uploads to the marker')
+    parser.add_argument(
+        '--marker-file',
+        required=True,
+        help='Local path this script writes; Hail Batch uploads it to --marker-gcs-path',
+    )
     parser.add_argument('--marker-gcs-path', required=True, help='Final GCS marker path, checked for early exit')
     args = parser.parse_args()
 

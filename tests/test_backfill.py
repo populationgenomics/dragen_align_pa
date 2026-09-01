@@ -314,8 +314,8 @@ def _no_preexisting_analyses(monkeypatch):
     Tests that exercise the dedup or the post-registration ordering check
     override these explicitly.
     """
-    monkeypatch.setattr(backfill_registration, '_existing_completed_outputs', lambda sg_id: set())  # noqa: ARG005
-    monkeypatch.setattr(backfill_registration, '_assert_recal_is_latest', lambda sg_id, recal_gvcf: None)  # noqa: ARG005
+    monkeypatch.setattr(backfill_registration, '_existing_completed_outputs', lambda *_args: set())
+    monkeypatch.setattr(backfill_registration, '_assert_recal_is_latest', lambda *_args: None)
 
 
 def test_registration_orders_cram_then_base_gvcf_then_recal(monkeypatch):
@@ -397,7 +397,7 @@ def test_registration_skips_outputs_already_registered_in_metamist(monkeypatch):
     monkeypatch.setattr(
         backfill_registration,
         '_existing_completed_outputs',
-        lambda sg_id: {('cram', 'gs://main/SG1.cram'), ('gvcf', 'gs://main/base.g.vcf.gz')},  # noqa: ARG005
+        lambda *_args: {('cram', 'gs://main/SG1.cram'), ('gvcf', 'gs://main/base.g.vcf.gz')},
     )
 
     marker = backfill_registration.run(
@@ -428,7 +428,7 @@ def test_registration_reregisters_recal_when_the_base_gvcf_was_newly_registered(
     monkeypatch.setattr(
         backfill_registration,
         '_existing_completed_outputs',
-        lambda sg_id: {('gvcf', 'gs://main/recal.g.vcf.gz')},  # noqa: ARG005
+        lambda *_args: {('gvcf', 'gs://main/recal.g.vcf.gz')},
     )
 
     backfill_registration.run(
@@ -459,7 +459,7 @@ def test_registration_does_not_reregister_recal_when_only_the_cram_was_new(monke
     monkeypatch.setattr(
         backfill_registration,
         '_existing_completed_outputs',
-        lambda sg_id: {('gvcf', 'gs://main/base.g.vcf.gz'), ('gvcf', 'gs://main/recal.g.vcf.gz')},  # noqa: ARG005
+        lambda *_args: {('gvcf', 'gs://main/base.g.vcf.gz'), ('gvcf', 'gs://main/recal.g.vcf.gz')},
     )
 
     backfill_registration.run(
@@ -475,7 +475,7 @@ def test_registration_does_not_reregister_recal_when_only_the_cram_was_new(monke
 
 
 def test_run_checks_recal_is_the_latest_gvcf_after_registering(monkeypatch):
-    checked: list[tuple[str, str]] = []
+    checked: list[tuple[str, str, str]] = []
 
     def fake_complete_analysis_job(*args: object) -> None:  # noqa: ARG001
         pass
@@ -484,7 +484,7 @@ def test_run_checks_recal_is_the_latest_gvcf_after_registering(monkeypatch):
     monkeypatch.setattr(
         backfill_registration,
         '_assert_recal_is_latest',
-        lambda sg_id, recal_gvcf: checked.append((sg_id, recal_gvcf)),
+        lambda sg_id, recal_gvcf, project_name: checked.append((sg_id, recal_gvcf, project_name)),
     )
 
     backfill_registration.run(
@@ -496,7 +496,24 @@ def test_run_checks_recal_is_the_latest_gvcf_after_registering(monkeypatch):
         meta={'stage': 'BackfillGvcfsFromUpload'},
     )
 
-    assert checked == [('CPG_000001', 'gs://main/recal.g.vcf.gz')]
+    assert checked == [('CPG_000001', 'gs://main/recal.g.vcf.gz', 'test-dataset')]
+
+
+def test_completed_analyses_queries_the_registration_project(monkeypatch):
+    # Without a project filter, metamist returns analyses from every project the
+    # SG appears in, while registration and sg.gvcf resolution are project-scoped.
+    captured: list[dict] = []
+
+    def fake_query(document, variables):  # noqa: ARG001
+        captured.append(variables)
+        return {'sequencingGroups': [{'analyses': []}]}
+
+    monkeypatch.setattr(backfill_registration, 'query', fake_query)
+
+    rows = backfill_registration._completed_analyses('CPG_000001', 'test-dataset')
+
+    assert rows == []
+    assert captured == [{'sgId': 'CPG_000001', 'project': 'test-dataset'}]
 
 
 # Bound at import, before the autouse fixture replaces the module attribute with
@@ -505,20 +522,20 @@ _REAL_ASSERT_RECAL_IS_LATEST = backfill_registration._assert_recal_is_latest
 
 
 def _stub_completed_analyses(monkeypatch, rows: list[dict]) -> None:
-    monkeypatch.setattr(backfill_registration, '_completed_analyses', lambda sg_id: rows)  # noqa: ARG005
+    monkeypatch.setattr(backfill_registration, '_completed_analyses', lambda *_args: rows)
 
 
-def test_assert_recal_is_latest_passes_when_recal_has_the_highest_id(monkeypatch):
+def test_assert_recal_is_latest_passes_when_recal_is_the_last_response_row(monkeypatch):
     _stub_completed_analyses(
         monkeypatch,
         [
-            {'id': 1, 'type': 'gvcf', 'output': 'gs://main/base.g.vcf.gz'},
-            {'id': 2, 'type': 'cram', 'output': 'gs://main/SG1.cram'},
-            {'id': 3, 'type': 'gvcf', 'output': 'gs://main/recal.g.vcf.gz'},
+            {'type': 'gvcf', 'output': 'gs://main/base.g.vcf.gz'},
+            {'type': 'cram', 'output': 'gs://main/SG1.cram'},
+            {'type': 'gvcf', 'output': 'gs://main/recal.g.vcf.gz'},
         ],
     )
 
-    _REAL_ASSERT_RECAL_IS_LATEST('CPG_000001', 'gs://main/recal.g.vcf.gz')
+    _REAL_ASSERT_RECAL_IS_LATEST('CPG_000001', 'gs://main/recal.g.vcf.gz', 'test-dataset')
 
 
 def test_assert_recal_is_latest_fails_when_the_base_gvcf_postdates_it(monkeypatch):
@@ -527,13 +544,13 @@ def test_assert_recal_is_latest_fails_when_the_base_gvcf_postdates_it(monkeypatc
     _stub_completed_analyses(
         monkeypatch,
         [
-            {'id': 1, 'type': 'gvcf', 'output': 'gs://main/recal.g.vcf.gz'},
-            {'id': 2, 'type': 'gvcf', 'output': 'gs://main/base.g.vcf.gz'},
+            {'type': 'gvcf', 'output': 'gs://main/recal.g.vcf.gz'},
+            {'type': 'gvcf', 'output': 'gs://main/base.g.vcf.gz'},
         ],
     )
 
     with pytest.raises(RuntimeError, match='latest'):
-        _REAL_ASSERT_RECAL_IS_LATEST('CPG_000001', 'gs://main/recal.g.vcf.gz')
+        _REAL_ASSERT_RECAL_IS_LATEST('CPG_000001', 'gs://main/recal.g.vcf.gz', 'test-dataset')
 
 
 def test_registration_passes_an_isolated_meta_dict_per_call(monkeypatch):
@@ -617,6 +634,9 @@ def test_normal_mode_wiring_keeps_somalier_on_the_ica_download():
     # of its dependencies.
     assert stages.BACKFILL_MODE is False
     assert stages._SOMALIER_CRAM_SOURCE is stages.DownloadCramFromIca
+    # In backfill mode SomalierExtract additionally depends on BackfillGvcfsFromUpload
+    # (whose copy job certifies the cram); normal mode keeps the single ICA dependency.
+    assert [stages.DownloadCramFromIca] == stages._SOMALIER_REQUIRED_STAGES
 
 
 def _selection_config(monkeypatch, key: str, names: list[str]) -> None:

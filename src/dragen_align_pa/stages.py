@@ -715,11 +715,18 @@ class BackfillGvcfsFromUpload(SequencingGroupStage):
 
 # In backfill mode the CRAM arrives via BackfillCramFromUpload instead of the ICA
 # chain; both stages declare identical output paths, so only the dependency edge
-# and the `inputs` lookup below change.
+# and the `inputs` lookup below change. BackfillGvcfsFromUpload joins the required
+# stages because its copy job is what certifies the cram checksum when the cram
+# stage was REUSEd (pre-existing -main cram) — without that edge, Somalier would
+# fingerprint an unverified cram in parallel with the failing check, and the stale
+# fingerprint would be reused forever on the remediation re-run.
 _SOMALIER_CRAM_SOURCE = BackfillCramFromUpload if BACKFILL_MODE else DownloadCramFromIca
+_SOMALIER_REQUIRED_STAGES = (
+    [BackfillCramFromUpload, BackfillGvcfsFromUpload] if BACKFILL_MODE else [DownloadCramFromIca]
+)
 
 
-@stage(required_stages=[_SOMALIER_CRAM_SOURCE])
+@stage(required_stages=_SOMALIER_REQUIRED_STAGES)
 class SomalierExtract(SequencingGroupStage):
     """Run Somalier extract on CRAM files to generate fingerprints."""
 
