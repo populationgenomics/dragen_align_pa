@@ -255,9 +255,12 @@ def test_delete_files_fails_on_transient_describe_error(tmp_path, monkeypatch):
 
 def test_delete_files_fails_when_gcloud_is_missing(tmp_path, monkeypatch):
     # A missing gcloud binary must fail loudly, never classify as object absence.
+    # PATH is reduced to a single empty directory: subprocess exec's the argv
+    # directly (no shell), so nothing else is needed — and anything broader
+    # picks up the real gcloud on CI runners (/usr/bin/gcloud on ubuntu images).
     empty_bin = tmp_path / 'bin'
     empty_bin.mkdir()
-    monkeypatch.setenv('PATH', f'{empty_bin}:/usr/bin:/bin')
+    monkeypatch.setenv('PATH', str(empty_bin))
     monkeypatch.chdir(tmp_path)
 
     with pytest.raises(FileNotFoundError):
