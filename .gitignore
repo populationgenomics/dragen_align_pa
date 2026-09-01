@@ -177,8 +177,7 @@ cython_debug/
 .ruff_cache
 
 # local
-local_test/
-prod_runs/
+local/
 reference_data/
 
 # Mac
