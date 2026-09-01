@@ -244,9 +244,12 @@ prefix (no `ica/{DRAGEN_VERSION}` prefix), named exactly by sequencing-group *na
   * `gs://{DATASET}-upload/output/recal_gvcf/{SG}.hard-filtered.recal.gvcf.gz`, `.tbi`,
     `.md5sum` and `.tbi.md5sum`
 
-Every file must be present for every sequencing group in the cohort — a missing or
-misnamed source fails that group's copy job (the `gcloud storage cp` error names the
-missing URL).
+Every file must be present for every sequencing group whose copy stages will run.
+The submit-time validator lists the staged prefixes and fails the submission with a
+single error naming every missing source (plus any staged objects no sequencing group
+expects, which is how a misnamed file shows up) before any job is queued. Sequencing
+groups that are already fully ingested (all destinations and the registration marker
+present) are skipped by output reuse, so their sources may already have been deleted.
 
 **2. Configure the run.** In the run's config TOML:
 

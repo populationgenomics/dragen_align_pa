@@ -3,14 +3,15 @@ register them in metamist in a guaranteed order, then delete the -upload sources
 
 Covers the pure units (relative-filename maps shared with the download stages, the
 -upload source path builder, registration ordering, the submit-time stage-selection
-guard) and runs the transfer functions against a fake `gcloud` on PATH, so the
-skip-vs-fail and verify-before-rm branches are proven by behavior.
+and source-staging guards) and runs the transfer functions against a fake `gcloud`
+on PATH, so the skip-vs-fail and verify-before-rm branches are proven by behavior.
 """
 
 import json
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -756,3 +757,116 @@ def test_backfill_accepts_an_empty_output_prefix(monkeypatch):
     monkeypatch.setattr(validator, 'config_retrieve', fake_config_retrieve)
 
     validator.assert_backfill_output_prefix_empty()
+
+
+# --- Submit-time staging check ----------------------------------------------------------
+#
+# missing_backfill_sources is pure set logic over pre-listed object names, so the
+# output-reuse branches are covered without GCS; the assert wrapper is tested with a
+# stubbed prefix listing to pin the single-error message shape.
+
+
+def _all_rel_filenames(sg_name: str) -> set[str]:
+    return {
+        *utils.cram_output_filenames(sg_name).values(),
+        *utils.base_gvcf_output_filenames(sg_name).values(),
+        *utils.recal_gvcf_output_filenames(sg_name).values(),
+    }
+
+
+def _fake_sg(name: str, sg_id: str) -> SimpleNamespace:
+    return SimpleNamespace(name=name, id=sg_id)
+
+
+def test_staging_check_passes_for_a_fresh_run_with_everything_staged():
+    sgs = [_fake_sg('SG1', 'CPG_A'), _fake_sg('SG2', 'CPG_B')]
+    staged = _all_rel_filenames('SG1') | _all_rel_filenames('SG2')
+
+    missing, unexpected = validator.missing_backfill_sources(sgs, staged=staged, ingested=set())  # type: ignore[arg-type]
+
+    assert missing == []
+    assert unexpected == []
+
+
+def test_staging_check_aggregates_missing_sources_across_sequencing_groups():
+    sgs = [_fake_sg('SG1', 'CPG_A'), _fake_sg('SG2', 'CPG_B')]
+    staged = (_all_rel_filenames('SG1') | _all_rel_filenames('SG2')) - {
+        'cram/SG1.cram',
+        'recal_gvcf/SG2.hard-filtered.recal.gvcf.gz.tbi',
+    }
+
+    missing, _ = validator.missing_backfill_sources(sgs, staged=staged, ingested=set())  # type: ignore[arg-type]
+
+    assert missing == ['cram/SG1.cram', 'recal_gvcf/SG2.hard-filtered.recal.gvcf.gz.tbi']
+
+
+def test_staging_check_allows_deleted_sources_for_a_fully_ingested_sg():
+    # All destinations and the registration marker exist, so both copy stages are
+    # REUSEd and the (legitimately already deleted) sources are not required.
+    ingested = _all_rel_filenames('SG1') | {'backfill_registration/CPG_A.json'}
+
+    missing, unexpected = validator.missing_backfill_sources(
+        [_fake_sg('SG1', 'CPG_A')],  # type: ignore[arg-type]
+        staged=set(),
+        ingested=ingested,
+    )
+
+    assert missing == []
+    assert unexpected == []
+
+
+def test_staging_check_requires_every_source_when_only_the_marker_is_missing():
+    # Copied but never registered: the gVCF stage re-runs, and its copy job also
+    # re-certifies the cram against its -upload source, so all eight are required.
+    ingested = _all_rel_filenames('SG1')
+
+    missing, _ = validator.missing_backfill_sources([_fake_sg('SG1', 'CPG_A')], staged=set(), ingested=ingested)  # type: ignore[arg-type]
+
+    assert missing == sorted(_all_rel_filenames('SG1'))
+
+
+def test_staging_check_requires_only_cram_sources_when_only_the_cram_destination_is_missing():
+    cram_rel = set(utils.cram_output_filenames('SG1').values())
+    ingested = (_all_rel_filenames('SG1') - cram_rel) | {'backfill_registration/CPG_A.json'}
+
+    missing, _ = validator.missing_backfill_sources([_fake_sg('SG1', 'CPG_A')], staged=set(), ingested=ingested)  # type: ignore[arg-type]
+
+    assert missing == sorted(cram_rel)
+
+
+def test_staging_check_reports_misnamed_staged_objects_as_unexpected():
+    staged = (_all_rel_filenames('SG1') - {'cram/SG1.cram'}) | {'cram/SG1.crm'}
+
+    missing, unexpected = validator.missing_backfill_sources([_fake_sg('SG1', 'CPG_A')], staged=staged, ingested=set())  # type: ignore[arg-type]
+
+    assert missing == ['cram/SG1.cram']
+    assert unexpected == ['cram/SG1.crm']
+
+
+def _stub_prefix_listings(monkeypatch, staged: set[str], ingested: set[str]) -> None:
+    def fake_rel_names(dir_for, prefixes):  # noqa: ARG001
+        return staged if dir_for is validator.get_backfill_source_path else ingested
+
+    monkeypatch.setattr(validator, '_rel_names_under', fake_rel_names)
+
+
+def test_assert_staging_raises_one_error_naming_missing_urls_and_unexpected_objects(monkeypatch):
+    _stub_prefix_listings(
+        monkeypatch,
+        staged=(_all_rel_filenames('SG1') - {'cram/SG1.cram'}) | {'cram/SG1.crm'},
+        ingested=set(),
+    )
+    monkeypatch.setattr(utils, 'dataset_path', lambda suffix, category=None: f'gs://up/{suffix}')  # noqa: ARG005
+    cohort = SimpleNamespace(id='COH1', get_sequencing_groups=lambda: [_fake_sg('SG1', 'CPG_A')])
+
+    with pytest.raises(RuntimeError, match=r'gs://up/output/cram/SG1\.cram') as exc_info:
+        validator.assert_backfill_sources_staged(cohort)  # type: ignore[arg-type]
+
+    assert 'cram/SG1.crm' in str(exc_info.value)
+
+
+def test_assert_staging_passes_and_tolerates_objects_staged_for_another_cohort(monkeypatch):
+    _stub_prefix_listings(monkeypatch, staged=_all_rel_filenames('SG1') | {'cram/OtherSG.cram'}, ingested=set())
+    cohort = SimpleNamespace(id='COH1', get_sequencing_groups=lambda: [_fake_sg('SG1', 'CPG_A')])
+
+    validator.assert_backfill_sources_staged(cohort)  # type: ignore[arg-type]

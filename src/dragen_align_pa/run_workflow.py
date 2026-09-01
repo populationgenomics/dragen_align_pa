@@ -2,6 +2,7 @@
 
 
 from argparse import ArgumentParser
+from typing import TYPE_CHECKING
 
 from cpg_flow.workflow import run_workflow  # type: ignore[ReportUnknownVariableType]
 
@@ -14,8 +15,11 @@ from dragen_align_pa.stages import (  # type: ignore[ReportUnknownVariableType]
 )
 from dragen_align_pa.validator import validate_configuration
 
+if TYPE_CHECKING:
+    from cpg_flow.stage import StageDecorator
 
-def terminal_stages(backfill_mode: bool) -> list:
+
+def terminal_stages(backfill_mode: bool) -> list['StageDecorator']:
     """The requested sink stages for each mode.
 
     The backfill graph is fixed: all three sinks are requested, and the delete
