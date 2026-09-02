@@ -9,6 +9,7 @@ on PATH, so the skip-vs-fail and verify-before-rm branches are proven by behavio
 
 import json
 import os
+import shlex
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from dragen_align_pa import backfill_registration, backfill_transfer, run_workflow, stages, utils, validator
+from dragen_align_pa.jobs import backfill as backfill_jobs
 
 
 def test_backfill_source_path_uses_upload_bucket(monkeypatch):
@@ -357,8 +359,9 @@ def _install_fake_storage(
 
     source_bucket.copy_blob = MagicMock(side_effect=copy_blob)
 
-    def list_blobs(bucket_name, prefix):  # noqa: ARG001
-        return list(source_blobs.values()) if bucket_name == 'up' else list(dest_blobs.values())
+    def list_blobs(bucket_name, prefix):
+        blobs = source_blobs if bucket_name == 'up' else dest_blobs
+        return [blob for blob in blobs.values() if blob.name.startswith(prefix)]
 
     client = MagicMock()
     client.list_blobs = MagicMock(side_effect=list_blobs)
@@ -378,6 +381,23 @@ def test_copy_tree_copies_every_file_and_places_the_sentinel_last(monkeypatch):
 
     assert set(copies) == {'a.csv', 'sub/b.html', '_SUCCESS'}
     assert copies[-1] == '_SUCCESS'
+
+
+def test_copy_tree_ignores_a_sibling_folder_sharing_the_name_prefix(monkeypatch):
+    # `dragen_metrics/SG1` must list as `SG1/`, not as a bare prefix that also
+    # matches `SG10/` — otherwise a neighbouring SG's files would be swept along.
+    copies, source_blobs = _install_fake_storage(
+        monkeypatch,
+        source_files={'a.csv': 'c1', '_SUCCESS': 'c0'},
+        dest_files={},
+    )
+    source_bucket = source_blobs['a.csv'].bucket
+    for rel in ('a.csv', '_SUCCESS'):
+        source_blobs[f'SG10/{rel}'] = _tree_blob(f'output/dragen_metrics/SG10/{rel}', 'c9', source_bucket)
+
+    backfill_transfer.copy_tree(_SRC_TREE, _DST_TREE)
+
+    assert copies == ['a.csv', '_SUCCESS']
 
 
 def test_copy_tree_skips_a_destination_file_with_a_matching_checksum(monkeypatch):
@@ -525,6 +545,41 @@ def test_transfer_cli_delete_handles_pairs_and_trees_in_one_results_file(tmp_pat
     lines = results.read_text().splitlines()
     assert f'deleted {source}' in lines
     assert f'deleted gs://up/{_SRC_PREFIX}/a.csv' in lines
+
+
+def test_copy_metrics_job_emits_copy_tree_command(monkeypatch):
+    # The job's only coupling to the transfer module is the argv it emits, so the
+    # assertion re-tokenises the command exactly as the job's shell would.
+    job = MagicMock()
+    batch = MagicMock()
+    batch.new_bash_job.return_value = job
+    monkeypatch.setattr(backfill_jobs, 'get_batch', lambda: batch)
+    monkeypatch.setattr(backfill_jobs, 'get_driver_image', lambda: 'driver:latest')
+    monkeypatch.setattr(backfill_jobs, 'authenticate_cloud_credentials_in_job', lambda _job: None)
+    monkeypatch.setattr(backfill_jobs, 'copy_common_env', lambda _job: None)
+    monkeypatch.setattr(backfill_jobs, 'get_backfill_source_path', lambda rel: f'gs://up/output/{rel}')
+    monkeypatch.setattr(backfill_jobs, 'get_output_path', lambda rel: f'gs://main/ica/v/output/{rel}')
+    sequencing_group = SimpleNamespace(id='CPG_A', name='SG1', get_job_attrs=lambda: {'sequencing_group': 'CPG_A'})
+
+    backfill_jobs.copy_metrics_job(sequencing_group)  # type: ignore[arg-type]
+
+    batch.new_bash_job.assert_called_once_with(
+        name='BackfillMetricsFromUpload CPG_A',
+        attributes={'sequencing_group': 'CPG_A', 'tool': 'gcs-storage'},
+    )
+    (command,), _ = job.command.call_args
+    prelude, invocation = command.split('\n')
+    assert prelude == 'set -euo pipefail'
+    assert shlex.split(invocation) == [
+        'python3',
+        '-m',
+        'dragen_align_pa.backfill_transfer',
+        'copy-tree',
+        '--source-prefix',
+        _SRC_TREE,
+        '--dest-prefix',
+        _DST_TREE,
+    ]
 
 
 # --- Registration ----------------------------------------------------------------------
@@ -1102,11 +1157,16 @@ def _stub_prefix_listings(monkeypatch, staged: set[str], ingested: set[str]) -> 
     monkeypatch.setattr(validator, '_metrics_sentinel_rel_names', lambda dir_for: set())  # noqa: ARG005
 
 
-def test_metrics_sentinel_rel_names_lists_folders_with_a_sentinel(monkeypatch):  # noqa: ARG001
-    sentinel = SimpleNamespace(name='_SUCCESS', parent=SimpleNamespace(name='SG1'))
-    metrics_dir = SimpleNamespace(rglob=lambda pattern: [sentinel] if pattern == '_SUCCESS' else [])
+def test_metrics_sentinel_rel_names_lists_only_folder_level_sentinels(tmp_path):
+    # A real directory tree so the glob depth is what's under test: SG1 carries a
+    # folder sentinel, SG2 only a nested one (an ordinary file to the copy, not a
+    # completeness signal) and SG3 none.
+    for rel in ('SG1/_SUCCESS', 'SG1/a.csv', 'SG2/sub/_SUCCESS', 'SG3/a.csv'):
+        path = tmp_path / 'dragen_metrics' / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
 
-    names = validator._metrics_sentinel_rel_names(lambda prefix: metrics_dir)  # noqa: ARG005
+    names = validator._metrics_sentinel_rel_names(lambda prefix: tmp_path / prefix)
 
     assert names == {'dragen_metrics/SG1/_SUCCESS'}
 

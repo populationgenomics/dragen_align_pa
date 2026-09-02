@@ -24,14 +24,9 @@ if TYPE_CHECKING:
     from hailtop.batch.job import BashJob
 
 
-def _pairs_json(rel_filenames: list[str]) -> str:
-    pairs = [[str(get_backfill_source_path(rel)), str(get_output_path(rel))] for rel in rel_filenames]
-    return json.dumps(pairs)
-
-
-def _trees_json(rel_dirnames: list[str]) -> str:
-    trees = [[str(get_backfill_source_path(rel)), str(get_output_path(rel))] for rel in rel_dirnames]
-    return json.dumps(trees)
+def _source_dest_json(rel_names: list[str]) -> str:
+    """JSON list of [source, destination] gs:// URL pairs for names relative to output/."""
+    return json.dumps([[str(get_backfill_source_path(rel)), str(get_output_path(rel))] for rel in rel_names])
 
 
 def _new_backfill_job(job_name: str, sequencing_group: SequencingGroup, tool: str) -> 'BashJob':
@@ -61,12 +56,12 @@ def copy_from_upload_job(
     job.command(
         'set -euo pipefail\n'
         f'python3 -m dragen_align_pa.backfill_transfer copy '
-        f'--pairs-json {shlex.quote(_pairs_json(rel_filenames))}'
+        f'--pairs-json {shlex.quote(_source_dest_json(rel_filenames))}'
     )
     if verify_only_rel_filenames:
         job.command(
             f'python3 -m dragen_align_pa.backfill_transfer verify '
-            f'--pairs-json {shlex.quote(_pairs_json(verify_only_rel_filenames))}'
+            f'--pairs-json {shlex.quote(_source_dest_json(verify_only_rel_filenames))}'
         )
     return job
 
@@ -140,8 +135,8 @@ def delete_upload_job(
     job.command(
         'set -euo pipefail\n'
         f'python3 -m dragen_align_pa.backfill_transfer delete '
-        f'--pairs-json {shlex.quote(_pairs_json(rel_filenames))} '
-        f'--trees-json {shlex.quote(_trees_json(tree_rel_dirnames))} '
+        f'--pairs-json {shlex.quote(_source_dest_json(rel_filenames))} '
+        f'--trees-json {shlex.quote(_source_dest_json(tree_rel_dirnames))} '
         f'--results-file {job.ofile}'
     )
     b.write_output(job.ofile, str(marker_path))

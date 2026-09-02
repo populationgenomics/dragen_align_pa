@@ -207,12 +207,15 @@ def _rel_names_under(dir_for: Callable[[str], cpg_utils.Path], prefixes: tuple[s
 # `_SUCCESS` sentinel alone: staged folders carry one written on NCI after the
 # ICA -> NCI -> GCP transfer, and the copy places one at the destination only after
 # every file verified. Listing only sentinels also keeps the arbitrary metrics
-# filenames out of the misnamed-object diff.
+# filenames out of the misnamed-object diff. The one-level `*/` pattern (one
+# recursive listing under cloudpathlib, same as rglob) rejects any deeper `_SUCCESS`,
+# which would otherwise be reported under its parent's name as if it were a folder
+# sentinel and could alias a sequencing group.
 def _metrics_sentinel_rel_names(dir_for: Callable[[str], cpg_utils.Path]) -> set[str]:
     """`dragen_metrics/{folder}/_SUCCESS` names for every folder carrying a sentinel."""
     return {
         f'dragen_metrics/{sentinel.parent.name}/{SUCCESS_OBJECT_NAME}'
-        for sentinel in dir_for('dragen_metrics').rglob(SUCCESS_OBJECT_NAME)
+        for sentinel in dir_for('dragen_metrics').glob(f'*/{SUCCESS_OBJECT_NAME}')
     }
 
 
