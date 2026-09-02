@@ -19,6 +19,8 @@ from unittest.mock import MagicMock
 import pytest
 from cloudpathlib import GSClient, GSPath
 from google.cloud.storage.retry import DEFAULT_RETRY
+from gql.transport.exceptions import TransportServerError
+from tenacity import Retrying, retry_if_exception, stop_after_attempt
 
 from dragen_align_pa import backfill_registration, backfill_transfer, run_workflow, stages, utils, validator
 from dragen_align_pa.jobs import backfill as backfill_jobs
@@ -871,6 +873,158 @@ def test_completed_analyses_queries_the_registration_project(monkeypatch):
 
     assert rows == []
     assert captured == [{'sgId': 'CPG_000001', 'project': 'test-dataset'}]
+
+
+# --- Metamist retry behaviour -----------------------------------------------------------
+#
+# cpg-flow's complete_analysis_job funnels every metamist failure — including 429s,
+# which its own retry layer never retries — into a ConnectionError, so the retry
+# policy is exercised through that signal. Tests swap the module's `_metamist_retrying`
+# controller for a waitless one, keeping the module's real retryable-error
+# predicate; the production waits would otherwise sleep for minutes.
+
+
+def _waitless_retrying(monkeypatch, attempts: int) -> None:
+    def fake_metamist_retrying(description: str) -> Retrying:  # noqa: ARG001
+        return Retrying(
+            retry=retry_if_exception(backfill_registration._is_transient_metamist_error),
+            stop=stop_after_attempt(attempts),
+            reraise=True,
+        )
+
+    monkeypatch.setattr(backfill_registration, '_metamist_retrying', fake_metamist_retrying)
+
+
+def test_metamist_retrying_reads_its_own_config_knob(monkeypatch):
+    # metamist and ICA are throttled independently, so the registration controller
+    # must read `metamist.retry.max_retries`, not ICA's key.
+    keys_read: list[tuple[str, ...]] = []
+
+    def fake_config_retrieve(key, default=None):  # noqa: ARG001
+        keys_read.append(tuple(key))
+        return 2
+
+    monkeypatch.setattr(backfill_registration, 'config_retrieve', fake_config_retrieve)
+
+    controller = backfill_registration._metamist_retrying('register cram gs://main/SG1.cram')
+
+    assert keys_read == [('metamist', 'retry', 'max_retries')]
+    # max_retries counts retries after the first attempt.
+    assert controller.stop.max_attempt_number == 3  # type: ignore[attr-defined]
+
+
+def test_registration_retries_a_metamist_429_and_completes(monkeypatch):
+    _waitless_retrying(monkeypatch, attempts=3)
+    outcomes = iter([ConnectionError('429 swallowed'), ConnectionError('429 swallowed'), None, None, None])
+    calls: list[tuple[str, str]] = []
+
+    def fake_complete_analysis_job(output: str, analysis_type: str, *args: object) -> None:  # noqa: ARG001
+        calls.append((output, analysis_type))
+        outcome = next(outcomes)
+        if outcome is not None:
+            raise outcome
+
+    monkeypatch.setattr(backfill_registration, 'complete_analysis_job', fake_complete_analysis_job)
+
+    marker = backfill_registration.run(
+        cram='gs://main/SG1.cram',
+        base_gvcf='gs://main/base.g.vcf.gz',
+        recal_gvcf='gs://main/recal.g.vcf.gz',
+        sg_id='CPG_000001',
+        project_name='test-dataset',
+        meta={'stage': 'BackfillGvcfsFromUpload'},
+    )
+
+    # Two failed cram attempts, then each analysis lands exactly once, in order.
+    assert calls == [
+        ('gs://main/SG1.cram', 'cram'),
+        ('gs://main/SG1.cram', 'cram'),
+        ('gs://main/SG1.cram', 'cram'),
+        ('gs://main/base.g.vcf.gz', 'gvcf'),
+        ('gs://main/recal.g.vcf.gz', 'gvcf'),
+    ]
+    assert marker['sg_id'] == 'CPG_000001'
+
+
+def test_registration_raises_after_exhausting_metamist_retries(monkeypatch):
+    _waitless_retrying(monkeypatch, attempts=3)
+    calls: list[str] = []
+
+    def fake_complete_analysis_job(output: str, *args: object) -> None:  # noqa: ARG001
+        calls.append(output)
+        raise ConnectionError('429 swallowed')
+
+    monkeypatch.setattr(backfill_registration, 'complete_analysis_job', fake_complete_analysis_job)
+
+    with pytest.raises(ConnectionError, match='429'):
+        backfill_registration.run(
+            cram='gs://main/SG1.cram',
+            base_gvcf='gs://main/base.g.vcf.gz',
+            recal_gvcf='gs://main/recal.g.vcf.gz',
+            sg_id='CPG_000001',
+            project_name='test-dataset',
+            meta={'stage': 'BackfillGvcfsFromUpload'},
+        )
+
+    assert calls == ['gs://main/SG1.cram'] * 3
+
+
+def test_registration_retry_detects_a_half_committed_row_and_still_reorders_the_recal(monkeypatch):
+    # A create can commit server-side yet surface as a failure (cpg-flow retries
+    # 5xx past the commit). The retry must not duplicate the row, but the row still
+    # counts as newly registered — here the base, so the pre-existing recal must be
+    # re-registered after it to stay the latest gvcf analysis.
+    _waitless_retrying(monkeypatch, attempts=3)
+    committed: set[tuple[str, str]] = {('gvcf', 'gs://main/recal.g.vcf.gz')}
+    base_attempts: list[str] = []
+    calls: list[tuple[str, str]] = []
+
+    def fake_complete_analysis_job(output: str, analysis_type: str, *args: object) -> None:  # noqa: ARG001
+        calls.append((output, analysis_type))
+        committed.add((analysis_type, output))
+        if output == 'gs://main/base.g.vcf.gz' and not base_attempts:
+            base_attempts.append(output)
+            raise ConnectionError('committed, then 5xx swallowed')
+
+    monkeypatch.setattr(backfill_registration, 'complete_analysis_job', fake_complete_analysis_job)
+    monkeypatch.setattr(backfill_registration, '_existing_completed_outputs', lambda *_args: set(committed))
+
+    backfill_registration.run(
+        cram='gs://main/SG1.cram',
+        base_gvcf='gs://main/base.g.vcf.gz',
+        recal_gvcf='gs://main/recal.g.vcf.gz',
+        sg_id='CPG_000001',
+        project_name='test-dataset',
+        meta={'stage': 'BackfillGvcfsFromUpload'},
+    )
+
+    # The base create ran once (the retry found the committed row instead of
+    # re-creating it), and the recal was re-registered after the new base.
+    assert calls == [
+        ('gs://main/SG1.cram', 'cram'),
+        ('gs://main/base.g.vcf.gz', 'gvcf'),
+        ('gs://main/recal.g.vcf.gz', 'gvcf'),
+    ]
+
+
+def test_completed_analyses_retries_a_transport_server_error(monkeypatch):
+    _waitless_retrying(monkeypatch, attempts=3)
+    outcomes = iter([TransportServerError('429, backoff exhausted'), None])
+    captured: list[dict] = []
+
+    def fake_query(document, variables):  # noqa: ARG001
+        captured.append(variables)
+        outcome = next(outcomes)
+        if outcome is not None:
+            raise outcome
+        return {'sequencingGroups': [{'analyses': []}]}
+
+    monkeypatch.setattr(backfill_registration, 'query', fake_query)
+
+    rows = backfill_registration._completed_analyses('CPG_000001', 'test-dataset')
+
+    assert rows == []
+    assert len(captured) == 2
 
 
 # Bound at import, before the autouse fixture replaces the module attribute with

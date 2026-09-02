@@ -24,15 +24,64 @@ latest completed gvcf analysis for the SG — which also surfaces interleavings 
 concurrent runs covering the same sequencing group.
 """
 
+import functools
 import json
 from argparse import ArgumentParser
-from typing import Any
+from typing import Any, Final
 
 import cpg_utils
 from cpg_flow.status import complete_analysis_job
-from cpg_utils.config import get_access_level
+from cpg_utils.config import config_retrieve, get_access_level
+from gql.transport.exceptions import TransportServerError
 from loguru import logger
 from metamist.graphql import gql, query
+from tenacity import RetryCallState, Retrying
+
+from dragen_align_pa.ica_api_utils import transient_retrying
+
+_DEFAULT_METAMIST_MAX_RETRIES: Final = 10
+
+
+# cpg-flow's make_retry_aapi_call retries only ServiceException (5xx); a 429 raises
+# the base ApiException, which make_aapi_call swallows to None and
+# complete_analysis_job converts into a ConnectionError — so without a retry layer a
+# single 429 kills the registration job, and with one registration job per
+# sequencing group starting together, 429s are routine at cohort scale.
+# TransportServerError is the GraphQL-read equivalent: metamist's query() has its
+# own unjittered backoff (5 tries, <=60s), and the outer layer adds the jitter that
+# desynchronises the per-SG jobs plus a longer horizon. Both paths share ICA's
+# backoff shape via `transient_retrying` but read their own `metamist.retry` knob,
+# so tuning ICA's retries for the MLR polling window never changes registration.
+def _is_transient_metamist_error(exc: BaseException) -> bool:
+    """Tenacity predicate: True for a metamist failure worth retrying.
+
+    ConnectionError is how cpg-flow's complete_analysis_job surfaces every swallowed
+    write failure; TransportServerError is what metamist's GraphQL query() re-raises
+    once its own backoff is exhausted.
+    """
+    return isinstance(exc, (ConnectionError, TransportServerError))
+
+
+def _log_metamist_retry(description: str, retry_state: RetryCallState) -> None:
+    """tenacity `before_sleep` hook: log every scheduled metamist retry."""
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    sleep = retry_state.next_action.sleep if retry_state.next_action else 0.0
+    logger.warning(
+        f'{description}: metamist attempt {retry_state.attempt_number} failed ({exc}); retrying in {sleep:.1f}s',
+    )
+
+
+def _metamist_retrying(description: str) -> Retrying:
+    """Build the retry controller for one metamist call, logged under `description`."""
+    # Read at call time, like `ica_retrying`, so the knob is tunable without a rebuild.
+    max_retries = int(
+        config_retrieve(['metamist', 'retry', 'max_retries'], default=_DEFAULT_METAMIST_MAX_RETRIES),
+    )
+    return transient_retrying(
+        is_retryable=_is_transient_metamist_error,
+        before_sleep=functools.partial(_log_metamist_retry, description),
+        max_retries=max_retries,
+    )
 
 
 def registration_project_name(dataset_name: str) -> str:
@@ -77,7 +126,9 @@ def _completed_analyses(sg_id: str, project_name: str) -> list[dict]:
         }
     """
     )
-    result = query(analyses_query, variables={'sgId': sg_id, 'project': project_name})
+    result = _metamist_retrying(f'analyses query for {sg_id}')(
+        query, analyses_query, variables={'sgId': sg_id, 'project': project_name}
+    )
     sequencing_groups = result.get('sequencingGroups', [])
     if not sequencing_groups:
         raise ValueError(f'No sequencing group found in metamist with ID {sg_id}')
@@ -120,6 +171,61 @@ def _read_existing_marker(marker_gcs_path: str) -> str | None:
         return fh.read()
 
 
+def _register_analysis(
+    output: str,
+    analysis_type: str,
+    sg_id: str,
+    project_name: str,
+    meta: dict[str, Any],
+    known_registered: set[tuple[str, str]] | None,
+) -> bool:
+    """Register one analysis with retries; True when the row exists newly this invocation.
+
+    Args:
+        output: The GCS path being registered.
+        analysis_type: The metamist analysis type (`cram` / `gvcf`).
+        sg_id: The sequencing group's CPG ID.
+        project_name: The metamist project the row is written to.
+        meta: Analysis metadata; each attempt passes its own copy.
+        known_registered: The run-start (type, output) dedup set, or None to force
+            registration (the recal-after-new-base path).
+
+    Returns:
+        False when the output was already registered before this run started;
+        True when this invocation created the row — or found it created by one of
+        its own failed attempts.
+    """
+    is_retry = False
+
+    def attempt() -> bool:
+        nonlocal is_retry
+        if known_registered is not None:
+            if (analysis_type, output) in known_registered:
+                logger.info(f'{analysis_type} analysis for {output} already registered; skipping')
+                return False
+            # A prior attempt can fail after the server committed the row (e.g. a
+            # 5xx cpg-flow retried past the commit); re-creating it would duplicate
+            # the analysis, but it still counts as newly registered this invocation
+            # so a following recal re-registration is not suppressed.
+            if is_retry and (analysis_type, output) in _existing_completed_outputs(sg_id, project_name):
+                logger.info(f'{analysis_type} analysis for {output} was committed by a failed attempt; not recreating')
+                return True
+        is_retry = True
+        complete_analysis_job(
+            output,
+            analysis_type,
+            [],
+            [sg_id],
+            project_name,
+            # complete_analysis_job mutates the meta it receives (pops keys, adds
+            # size), so each call gets its own copy.
+            dict(meta),
+        )
+        return True
+
+    return _metamist_retrying(f'register {analysis_type} {output}')(attempt)
+
+
 def run(
     cram: str,
     base_gvcf: str,
@@ -141,20 +247,15 @@ def run(
     base_newly_registered = False
     for output, analysis_type in ((cram, 'cram'), (base_gvcf, 'gvcf'), (recal_gvcf, 'gvcf')):
         recal_must_follow_new_base = output == recal_gvcf and base_newly_registered
-        if (analysis_type, output) in already_registered and not recal_must_follow_new_base:
-            logger.info(f'{analysis_type} analysis for {output} already registered; skipping')
-            continue
-        complete_analysis_job(
-            output,
-            analysis_type,
-            [],
-            [sg_id],
-            project_name,
-            # complete_analysis_job mutates the meta it receives (pops keys, adds
-            # size), so each call gets its own copy.
-            dict(meta),
+        created = _register_analysis(
+            output=output,
+            analysis_type=analysis_type,
+            sg_id=sg_id,
+            project_name=project_name,
+            meta=meta,
+            known_registered=None if recal_must_follow_new_base else already_registered,
         )
-        if output == base_gvcf:
+        if output == base_gvcf and created:
             base_newly_registered = True
     _assert_recal_is_latest(sg_id, recal_gvcf, project_name)
     return {'sg_id': sg_id, 'registered': [cram, base_gvcf, recal_gvcf]}

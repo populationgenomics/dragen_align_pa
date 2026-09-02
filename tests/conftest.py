@@ -45,6 +45,9 @@ _TEST_CONFIG: dict[tuple, object] = {
     ('ica', 'tags', 'technical_tags'): ['test_technical_tag'],
     ('ica', 'tags', 'user_tags'): ['test_user_tags'],
     ('ica', 'tags', 'reference_tags'): ['test_reference_tags'],
+    # Retry knobs, one per throttled service (config/dragen_align_pa_defaults.toml).
+    ('ica', 'retry', 'max_retries'): 10,
+    ('metamist', 'retry', 'max_retries'): 10,
     # Mirrors the production TOML defaults: tests exercise the normal (ICA) wiring;
     # backfill-specific units are tested directly in tests/test_backfill.py.
     ('dragen_align_pa', 'backfill', 'enabled'): False,

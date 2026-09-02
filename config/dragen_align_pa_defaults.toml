@@ -47,8 +47,14 @@ force_resubmit = false
 # exclusive with the other three flags. See README "Recovering a Desynced Run".
 force_retry = false
 
-# How many times to try ICA API requests before giving up.
+# How many times to retry ICA API requests before giving up (retries after the first
+# attempt). Worst-case backoff grows with this, so tune it with the MLR polling window.
 [ica.retry]
+max_retries = 10
+
+# Retries for the backfill's metamist registration writes and reads. Same backoff shape as
+# ICA, but its own knob: registration has no polling window, so it need not track [ica.retry].
+[metamist.retry]
 max_retries = 10
 
 # The base folders in ICA where data are uploaded, and Dragen results are written.

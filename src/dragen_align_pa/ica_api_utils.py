@@ -251,6 +251,34 @@ def _log_ica_retry(retry_state: RetryCallState) -> None:
     )
 
 
+def transient_retrying(
+    is_retryable: Callable[[BaseException], bool],
+    before_sleep: Callable[[RetryCallState], None],
+    max_retries: int,
+) -> Retrying:
+    """Build a tenacity controller with the shared jittered backoff for a throttled service.
+
+    Args:
+        is_retryable: Predicate selecting which exceptions are transient.
+        before_sleep: Hook run before each backoff sleep.
+        max_retries: Retries *after* the initial attempt (total attempts = max_retries + 1).
+    """
+    return Retrying(
+        retry=retry_if_exception(is_retryable),
+        stop=stop_after_attempt(max_retries + 1),
+        # Fully-randomised exponential backoff desynchronises concurrent retries against a
+        # shared rate limit (non-negotiable at 16-wide fan-out, where lockstep backoff is a
+        # self-inflicted second wave). The additive wait_fixed(2) is a hard 2s floor:
+        # wait_random_exponential can otherwise pick a near-zero first wait, letting a worker
+        # hammer ICA instantly after a 429. NB worst-case backoff scales with max_retries
+        # (~32s/retry at the cap), so a large max_retries can exceed a tight polling cycle
+        # (e.g. MLR's 330s) — tune both together.
+        wait=wait_random_exponential(multiplier=1, min=2, max=30) + wait_fixed(2),
+        before_sleep=before_sleep,
+        reraise=True,
+    )
+
+
 def ica_retrying(
     is_retryable: Callable[[BaseException], bool],
     before_sleep: Callable[[RetryCallState], None] = _log_ica_retry,
@@ -270,25 +298,12 @@ def ica_retrying(
             retry boundary.
     """
     # `max_retries` is read at call time (not import) so it can be tuned via config without a
-    # rebuild, and to avoid an import-time config_retrieve. It counts retries *after* the
-    # initial attempt (total attempts = max_retries + 1), defaulting to 10.
+    # rebuild, and to avoid an import-time config_retrieve. It is ICA's own knob: other
+    # throttled services (metamist) read their own so the two can be tuned independently.
     max_retries = int(
         config_retrieve(['ica', 'retry', 'max_retries'], default=_DEFAULT_ICA_MAX_RETRIES),
     )
-    return Retrying(
-        retry=retry_if_exception(is_retryable),
-        stop=stop_after_attempt(max_retries + 1),
-        # Fully-randomised exponential backoff desynchronises concurrent retries against a
-        # shared rate limit (non-negotiable at 16-wide fan-out, where lockstep backoff is a
-        # self-inflicted second wave). The additive wait_fixed(2) is a hard 2s floor:
-        # wait_random_exponential can otherwise pick a near-zero first wait, letting a worker
-        # hammer ICA instantly after a 429. NB worst-case backoff scales with max_retries
-        # (~32s/retry at the cap), so a large max_retries can exceed a tight polling cycle
-        # (e.g. MLR's 330s) — tune both together.
-        wait=wait_random_exponential(multiplier=1, min=2, max=30) + wait_fixed(2),
-        before_sleep=before_sleep,
-        reraise=True,
-    )
+    return transient_retrying(is_retryable, before_sleep, max_retries)
 
 
 def ica_retry(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
