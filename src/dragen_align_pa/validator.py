@@ -10,6 +10,7 @@ preconditions that must fail fast at submit time.
 from collections.abc import Callable, Sequence
 
 import cpg_utils
+from cloudpathlib import GSPath
 from cpg_flow.inputs import get_multicohort
 from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import config_retrieve
@@ -29,10 +30,12 @@ from dragen_align_pa.constants.constants_registry import (
     resolve_ica_project_name,
     resolve_mlr_config_file_id,
 )
+from dragen_align_pa.gcs_utils import SUCCESS_OBJECT_NAME
 from dragen_align_pa.stages import (
     BACKFILL_MODE,
     BackfillCramFromUpload,
     BackfillGvcfsFromUpload,
+    BackfillMetricsFromUpload,
     DeleteBackfillUpload,
     SomalierExtract,
 )
@@ -42,6 +45,7 @@ from dragen_align_pa.utils import (
     get_backfill_source_path,
     get_bed_names_for_seqtype,
     get_output_path,
+    metrics_output_dirname,
     recal_gvcf_output_filenames,
 )
 
@@ -52,6 +56,7 @@ _BACKFILL_STAGE_NAMES: frozenset[str] = frozenset(
     for stage_decorator in (
         BackfillCramFromUpload,
         BackfillGvcfsFromUpload,
+        BackfillMetricsFromUpload,
         SomalierExtract,
         DeleteBackfillUpload,
     )
@@ -199,6 +204,40 @@ def _rel_names_under(dir_for: Callable[[str], cpg_utils.Path], prefixes: tuple[s
     return {f'{prefix}/{path.name}' for prefix in prefixes for path in dir_for(prefix).iterdir()}
 
 
+# Metrics folders hold an arbitrary per-SG file set, so completeness is judged by the
+# `_SUCCESS` sentinel alone: staged folders carry one written on NCI by
+# popgen_ica_nci_transfer after the ICA -> NCI -> GCP transfer, and the copy places
+# one at the destination only after every file verified. Both listings are filtered
+# server-side through the storage client cloudpathlib already holds: a `*/_SUCCESS`
+# glob against the full object name (GCS's `*` never crosses `/`, so a deeper
+# `_SUCCESS` cannot alias a folder sentinel) and a `/`-delimited folder listing —
+# one entry per folder, where a cloudpathlib glob with a `/` in the pattern pages
+# through every metrics file ever ingested. A folder without a sentinel is reported
+# as `dragen_metrics/{folder}/`, so a part-way staged folder for a sequencing group
+# outside the cohort still lands in the misnamed-object diff instead of accumulating
+# unseen in -upload.
+def _metrics_folder_rel_names(dir_for: Callable[[str], cpg_utils.Path]) -> set[str]:
+    """`dragen_metrics/{folder}/_SUCCESS` per folder with a sentinel, `dragen_metrics/{folder}/` per folder without."""
+    root = dir_for('dragen_metrics')
+    if not isinstance(root, GSPath):
+        raise TypeError(f'Metrics folder listing needs a gs:// path, got {root!r}')
+    client = root.client.client
+    prefix = f'{root.blob}/'
+    sentinelled = {
+        blob.name.removeprefix(prefix).partition('/')[0]
+        for blob in client.list_blobs(root.bucket, prefix=prefix, match_glob=f'{prefix}*/{SUCCESS_OBJECT_NAME}')
+    }
+    listing = client.list_blobs(root.bucket, prefix=prefix, delimiter='/')
+    stray_objects = {f'dragen_metrics/{blob.name.removeprefix(prefix)}' for blob in listing}
+    # `prefixes` is populated on the iterator as its pages are consumed (above).
+    folders = {folder_prefix.removeprefix(prefix).rstrip('/') for folder_prefix in listing.prefixes}  # pyright: ignore[reportAttributeAccessIssue]
+    return (
+        {f'dragen_metrics/{folder}/{SUCCESS_OBJECT_NAME}' for folder in sentinelled}
+        | {f'dragen_metrics/{folder}/' for folder in folders - sentinelled}
+        | stray_objects
+    )
+
+
 # Mirrors cpg-flow's output-reuse rule per stage so a fully ingested sequencing group
 # (every destination and its registration marker present) doesn't demand sources that
 # DeleteBackfillUpload already removed: only copy stages that will actually run need
@@ -214,14 +253,16 @@ def missing_backfill_sources(
     Args:
         sequencing_groups: The cohort's sequencing groups.
         staged: Names present under the -upload `output/` data prefixes, relative to
-            `output/` (e.g. `cram/{SG}.cram`).
+            `output/` (e.g. `cram/{SG}.cram`); a metrics folder without its sentinel
+            appears as `dragen_metrics/{folder}/`.
         ingested: Names present under the -main destination prefixes, in the same
             relative form, including the `backfill_registration/` markers.
 
     Returns:
         Two sorted lists: the required source names missing from `staged`, and the
         staged names no sequencing group in the cohort expects (misnamed files land
-        here, as does data staged for another cohort).
+        here, as does data staged for another cohort and any metrics folder without
+        a sentinel for a sequencing group outside the cohort).
     """
     missing: set[str] = set()
     expected: set[str] = set()
@@ -231,7 +272,11 @@ def missing_backfill_sources(
             *base_gvcf_output_filenames(sg.name).values(),
             *recal_gvcf_output_filenames(sg.name).values(),
         }
-        expected |= cram_rel | gvcf_rel
+        metrics_dir = metrics_output_dirname(sg.name)
+        metrics_rel = f'{metrics_dir}/{SUCCESS_OBJECT_NAME}'
+        # A cohort SG's sentinel-less folder is already reported under `missing`
+        # (its sentinel), so its folder marker is expected rather than unexpected.
+        expected |= cram_rel | gvcf_rel | {metrics_rel, f'{metrics_dir}/'}
         cram_stage_runs = not cram_rel <= ingested
         gvcf_stage_runs = not (gvcf_rel | {f'backfill_registration/{sg.id}.json'}) <= ingested
         required: set[str] = set()
@@ -241,6 +286,11 @@ def missing_backfill_sources(
             required |= cram_rel
         if gvcf_stage_runs:
             required |= gvcf_rel
+        # The metrics stage is independent of the file stages; it runs whenever the
+        # destination sentinel is absent, and then needs the staged sentinel (which
+        # stands in for the whole staged folder — NCI writes it last).
+        if metrics_rel not in ingested:
+            required.add(metrics_rel)
         missing |= required - staged
     return sorted(missing), sorted(staged - expected)
 
@@ -250,15 +300,20 @@ def assert_backfill_sources_staged(cohort: Cohort) -> None:
 
     Without this, each missing or misnamed staged file surfaces as one failed copy
     job at a time, at job runtime. This lists the -upload and destination prefixes
-    once (seven list calls) and raises a single error naming every missing source,
-    plus any staged objects no sequencing group expects — which is how a misnamed
-    file shows up.
+    once (seven flat list calls plus two server-filtered metrics listings per side)
+    and raises a single error naming every missing source, plus any staged objects
+    no sequencing group expects — which is how a misnamed file shows up.
 
     Raises:
         RuntimeError: If any required -upload source is not staged.
     """
-    staged = _rel_names_under(get_backfill_source_path, _BACKFILL_DATA_PREFIXES)
-    ingested = _rel_names_under(get_output_path, (*_BACKFILL_DATA_PREFIXES, 'backfill_registration'))
+    staged = _rel_names_under(get_backfill_source_path, _BACKFILL_DATA_PREFIXES) | _metrics_folder_rel_names(
+        get_backfill_source_path,
+    )
+    ingested = _rel_names_under(
+        get_output_path,
+        (*_BACKFILL_DATA_PREFIXES, 'backfill_registration'),
+    ) | _metrics_folder_rel_names(get_output_path)
     missing, unexpected = missing_backfill_sources(cohort.get_sequencing_groups(), staged, ingested)
     if missing:
         listing = '\n  '.join(str(get_backfill_source_path(rel)) for rel in missing)
@@ -266,7 +321,8 @@ def assert_backfill_sources_staged(cohort: Cohort) -> None:
         if unexpected:
             note = (
                 '\nStaged objects not expected by any sequencing group in this cohort '
-                '(misnamed, or staged for another cohort):\n  ' + '\n  '.join(unexpected)
+                '(misnamed, staged for another cohort, or a metrics folder with no '
+                '_SUCCESS sentinel):\n  ' + '\n  '.join(unexpected)
             )
         raise RuntimeError(
             f'{len(missing)} -upload source(s) required by this run are not staged:\n  {listing}{note}',
