@@ -20,6 +20,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 from google.cloud import storage
+from google.cloud.storage.retry import DEFAULT_RETRY
 from loguru import logger
 
 from dragen_align_pa.gcs_utils import SUCCESS_OBJECT_NAME
@@ -136,23 +137,35 @@ def _assert_tree_crc32c_matches(source: 'storage.Blob', destination: 'storage.Bl
         )
 
 
+# `copy_blob` defaults to DEFAULT_RETRY_IF_GENERATION_SPECIFIED, which resolves to no
+# retry unless the caller pins a generation, so a single 429/503 among ~100 copies
+# per folder would fail the job (`list_blobs` and `delete` retry by default). An
+# unconditional copy is safe to repeat — the destination just receives the same
+# bytes again — so the plain retry is correct. Not `if_generation_match=0`: that
+# also enables retries but means "only if the destination doesn't exist yet", and
+# the sentinel is re-copied on every forced re-run.
+def _copy_blob(source: 'storage.Blob', dest_bucket: 'storage.Bucket', dest_name: str) -> 'storage.Blob':
+    return source.bucket.copy_blob(source, dest_bucket, dest_name, retry=DEFAULT_RETRY)
+
+
 def copy_tree(source_prefix: str, dest_prefix: str) -> None:
     """Server-side copy of a staged folder, certifying by crc32c, sentinel strictly last.
 
-    The staged folder must already carry the `_SUCCESS` sentinel (written on NCI
-    after the ICA -> NCI -> GCP transfer); its absence means the staging itself may
-    be incomplete, so the copy refuses to start. Every other file is copied (or, if
-    already at the destination, checksum-certified) first, and the sentinel is
-    placed only after all of them verified — the sentinel is the consuming stage's
-    expected output, so an early copy would let a part-way failure present as a
-    completed folder.
+    The staged folder must already carry the `_SUCCESS` sentinel (written on NCI by
+    popgen_ica_nci_transfer after the ICA -> NCI -> GCP transfer); its absence means
+    the staging itself may be incomplete, so the copy refuses to start. Every other
+    file is copied (or, if already at the destination, checksum-certified) first,
+    and the sentinel is placed only after all of them verified — the sentinel is the
+    consuming stage's expected output, so an early copy would let a part-way failure
+    present as a completed folder.
     """
     client = _storage_client()
     sources = _tree_blobs(client, source_prefix)
     if SUCCESS_OBJECT_NAME not in sources:
         raise ValueError(
             f'{source_prefix} has no {SUCCESS_OBJECT_NAME} sentinel; the staged metrics '
-            f'folder is missing or was not fully transferred — re-stage it before re-running',
+            f'folder is missing or was not fully transferred (popgen_ica_nci_transfer '
+            f'writes the sentinel last) — re-stage it before re-running',
         )
     destinations = _tree_blobs(client, dest_prefix)
     dest_bucket_name, dest_key = _split_gs_url(dest_prefix)
@@ -165,10 +178,10 @@ def copy_tree(source_prefix: str, dest_prefix: str) -> None:
         if existing is not None:
             _assert_tree_crc32c_matches(source_blob, existing)
             continue
-        new_blob = source_blob.bucket.copy_blob(source_blob, dest_bucket, f'{dest_key}/{rel}')
+        new_blob = _copy_blob(source_blob, dest_bucket, f'{dest_key}/{rel}')
         _assert_tree_crc32c_matches(source_blob, new_blob)
         copied += 1
-    sentinel.bucket.copy_blob(sentinel, dest_bucket, f'{dest_key}/{SUCCESS_OBJECT_NAME}')
+    _copy_blob(sentinel, dest_bucket, f'{dest_key}/{SUCCESS_OBJECT_NAME}')
     logger.info(
         f'copy-tree {source_prefix}: {copied} of {len(sources)} files copied '
         f'({len(sources) - copied} already present), sentinel placed',
@@ -180,16 +193,15 @@ def delete_tree(source_prefix: str, dest_prefix: str, outcomes: list[str]) -> No
 
     Verify-all-before-delete-any: one bad file leaves the whole staged folder
     untouched. The `_SUCCESS` sentinel only needs to exist at the destination — the
-    ICA flow writes its own empty sentinel, so its content is not comparable. An
-    empty staged folder is recorded as `already-absent` (a re-run after a prior
-    delete must not fail).
+    ICA flow writes its own empty sentinel, so its content is not comparable — and
+    is deleted last, so a part-way failure leaves the staged folder still carrying
+    the sentinel `copy_tree` requires. Every destination file with no staged
+    counterpart is recorded as `already-absent`: the copy placed the whole folder,
+    so those are the files a previous run deleted, which keeps the per-file record
+    complete across a re-run and lets a re-run after a full delete pass.
     """
     client = _storage_client()
     sources = _tree_blobs(client, source_prefix)
-    if not sources:
-        logger.info(f'Staged folder already absent, skipping: {source_prefix}')
-        outcomes.append(f'already-absent {source_prefix}/')
-        return
     destinations = _tree_blobs(client, dest_prefix)
     for rel, source_blob in sorted(sources.items()):
         destination = destinations.get(rel)
@@ -197,8 +209,18 @@ def delete_tree(source_prefix: str, dest_prefix: str, outcomes: list[str]) -> No
             raise ValueError(f'{dest_prefix}/{rel} is missing; refusing to delete the staged {rel}')
         if rel != SUCCESS_OBJECT_NAME:
             _assert_tree_crc32c_matches(source_blob, destination)
+    for rel in sorted(destinations.keys() - sources.keys()):
+        outcomes.append(f'already-absent {source_prefix}/{rel}')
+    if not sources:
+        logger.info(f'Staged folder already absent, skipping: {source_prefix}')
+        return
+
+    sentinel = sources.pop(SUCCESS_OBJECT_NAME, None)
+    ordered = [sources[rel] for rel in sorted(sources)]
+    if sentinel is not None:
+        ordered.append(sentinel)
     source_bucket_name, _ = _split_gs_url(source_prefix)
-    for _rel, source_blob in sorted(sources.items()):
+    for source_blob in ordered:
         source_blob.delete()
         outcomes.append(f'deleted gs://{source_bucket_name}/{source_blob.name}')
 
@@ -213,7 +235,7 @@ def delete_files(pairs: Pairs, trees: list[tuple[str, str]], results_file: Path 
     stage re-runs instead of silently orphaning the -upload file. A present
     source whose destination is missing, differs, or yields an empty checksum
     raises before any rm. `trees` are (source, destination) folder prefixes
-    handled by `delete_tree` after the per-file pairs.
+    handled by `delete_tree` after the per-file pairs, recorded per file too.
     """
     outcomes: list[str] = []
     for source, destination in pairs:

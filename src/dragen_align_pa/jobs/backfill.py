@@ -131,7 +131,7 @@ def delete_upload_job(
     ahead of execution.
     """
     b = get_batch()
-    job = _new_backfill_job('DeleteBackfillUpload', sequencing_group, tool='gcloud')
+    job = _new_backfill_job('DeleteBackfillUpload', sequencing_group, tool='gcloud+gcs-storage')
     job.command(
         'set -euo pipefail\n'
         f'python3 -m dragen_align_pa.backfill_transfer delete '

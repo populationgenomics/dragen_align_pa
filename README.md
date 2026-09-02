@@ -244,19 +244,23 @@ prefix (no `ica/{DRAGEN_VERSION}` prefix), named exactly by sequencing-group *na
   * `gs://{DATASET}-upload/output/recal_gvcf/{SG}.hard-filtered.recal.gvcf.gz`, `.tbi`,
     `.md5sum` and `.tbi.md5sum`
   * `gs://{DATASET}-upload/output/dragen_metrics/{SG}/…` — the whole DRAGEN metrics
-    folder, including the `_SUCCESS` sentinel NCI writes once its transfer finished.
-    The copy re-places the sentinel at the destination strictly last, so a part-way
-    copy never presents as a completed folder.
+    folder, including the `_SUCCESS` sentinel `popgen_ica_nci_transfer` writes on NCI
+    once its transfer finished. The copy re-places the sentinel at the destination
+    strictly last, so a part-way copy never presents as a completed folder.
 
 Every file must be present for every sequencing group whose copy stages will run
 (for metrics folders, the staged `_SUCCESS` sentinel stands in for the folder).
 The submit-time validator lists the staged prefixes and fails the submission with a
 single error naming every missing source (plus any staged objects no sequencing group
-expects, which is how a misnamed file shows up) before any job is queued. Sequencing
-groups that are already fully ingested (all destinations and the registration marker
-present) are skipped by output reuse, so their sources may already have been deleted;
-the metrics stage is gated independently by its destination sentinel, so metrics can
-be backfilled later for sequencing groups whose cram/gVCFs were ingested earlier.
+expects, which is how a misnamed file or a sentinel-less metrics folder shows up)
+before any job is queued. Sequencing groups that are already fully ingested (all
+destinations and the registration marker present) are skipped by output reuse, so
+their sources may already have been deleted; the metrics stage is gated independently
+by its destination sentinel, so metrics can be backfilled later for sequencing groups
+whose cram/gVCFs were ingested earlier. That later run still needs a staged metrics
+folder for every sequencing group in its cohort whose destination sentinel is absent,
+so metrics cannot be staged incrementally within one cohort: one un-staged folder
+blocks the whole submission.
 
 **2. Configure the run.** In the run's config TOML:
 
@@ -291,8 +295,11 @@ verified in full before any of its files is deleted; its `_SUCCESS` sentinel onl
 needs to exist at the destination, since the ICA flow writes its own). Outcomes are
 recorded per file (`deleted` / `already-absent`) in
 `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/backfill_delete/{SG_ID}.txt`; sources
-already absent from a previous run are skipped, and any other failure (e.g. a
-transient gcloud error) fails the job so nothing is silently left behind.
+already absent from a previous run are skipped (for a metrics folder, every
+destination file with no staged counterpart is recorded `already-absent`, and the
+sentinel is deleted last so a part-way run leaves the staged folder self-describing),
+and any other failure (e.g. a transient GCS error) fails the job so nothing is
+silently left behind.
 
 Copies verify crc32c checksums end-to-end: a pre-existing `-main` object that doesn't
 match the staged source fails the run rather than being silently kept (the CRAM pair

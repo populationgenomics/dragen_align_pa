@@ -543,7 +543,7 @@ class DownloadDataFromIca(SequencingGroupStage):
         self,
         sequencing_group: SequencingGroup,
     ) -> cpg_utils.Path:
-        return get_output_path(filename=f'dragen_metrics/{sequencing_group.name}/{SUCCESS_OBJECT_NAME}')
+        return get_output_path(filename=f'{metrics_output_dirname(sequencing_group.name)}/{SUCCESS_OBJECT_NAME}')
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
         outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
@@ -721,9 +721,10 @@ class BackfillMetricsFromUpload(SequencingGroupStage):
 
     The expected output is the same `_SUCCESS` sentinel `DownloadDataFromIca`
     declares, so output reuse gates re-runs identically in both modes. The staged
-    folder already carries a sentinel (written on NCI after the ICA -> NCI -> GCP
-    transfer); the copy places it at the destination strictly last, so a part-way
-    failure never presents as a completed folder. Metrics are not registered in
+    folder already carries a sentinel (written on NCI by popgen_ica_nci_transfer
+    after the ICA -> NCI -> GCP transfer); the copy places it at the destination
+    strictly last, so a part-way failure never presents as a completed folder.
+    Metrics are not registered in
     metamist, and the stage is independent of the file stages — an SG whose
     cram/gVCFs were ingested by an earlier run still gets its metrics copied.
     """

@@ -9,6 +9,7 @@ on PATH, so the skip-vs-fail and verify-before-rm branches are proven by behavio
 
 import json
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -16,6 +17,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from cloudpathlib import GSClient, GSPath
+from google.cloud.storage.retry import DEFAULT_RETRY
 
 from dragen_align_pa import backfill_registration, backfill_transfer, run_workflow, stages, utils, validator
 from dragen_align_pa.jobs import backfill as backfill_jobs
@@ -340,8 +343,13 @@ def _install_fake_storage(
     monkeypatch,
     source_files: dict[str, str | None],
     dest_files: dict[str, str | None],
+    copy_crc32c: dict[str, str] | None = None,
 ):
-    """Fake storage client over two buckets; returns (copies, source_blobs)."""
+    """Fake storage client over two buckets; returns (copies, source_blobs).
+
+    `copy_crc32c` overrides the crc32c the copied object reports, per rel name,
+    to simulate a copy that did not land intact.
+    """
     source_bucket = MagicMock()
     source_bucket.name = 'up'
     dest_bucket = MagicMock()
@@ -350,10 +358,10 @@ def _install_fake_storage(
     dest_blobs = {rel: _tree_blob(f'{_DST_PREFIX}/{rel}', crc, dest_bucket) for rel, crc in dest_files.items()}
     copies: list[str] = []
 
-    def copy_blob(blob, destination_bucket, new_name):  # noqa: ARG001
+    def copy_blob(blob, destination_bucket, new_name, retry=None):  # noqa: ARG001
         rel = new_name.removeprefix(f'{_DST_PREFIX}/')
         copies.append(rel)
-        copied = _tree_blob(new_name, blob.crc32c, dest_bucket)
+        copied = _tree_blob(new_name, (copy_crc32c or {}).get(rel, blob.crc32c), dest_bucket)
         dest_blobs[rel] = copied
         return copied
 
@@ -443,6 +451,38 @@ def test_copy_tree_fails_on_an_empty_source_checksum(monkeypatch):
         backfill_transfer.copy_tree(_SRC_TREE, _DST_TREE)
 
 
+def test_copy_tree_fails_when_the_copied_object_does_not_match_without_placing_the_sentinel(monkeypatch):
+    # The post-copy check reads the crc32c GCS recorded for the new object; a copy
+    # that did not land intact must fail the folder before the sentinel is placed.
+    copies, _ = _install_fake_storage(
+        monkeypatch,
+        source_files={'a.csv': 'c1', '_SUCCESS': 'c0'},
+        dest_files={},
+        copy_crc32c={'a.csv': 'corrupt'},
+    )
+
+    with pytest.raises(ValueError, match='mismatch'):
+        backfill_transfer.copy_tree(_SRC_TREE, _DST_TREE)
+
+    assert copies == ['a.csv']
+
+
+def test_copy_tree_copies_with_the_unconditional_retry(monkeypatch):
+    # copy_blob's default retry policy only retries when a generation is pinned, so
+    # without an explicit policy every copy is a single attempt against 429/503.
+    _, source_blobs = _install_fake_storage(
+        monkeypatch,
+        source_files={'a.csv': 'c1', '_SUCCESS': 'c0'},
+        dest_files={},
+    )
+
+    backfill_transfer.copy_tree(_SRC_TREE, _DST_TREE)
+
+    calls = source_blobs['a.csv'].bucket.copy_blob.call_args_list
+    assert len(calls) == 2  # noqa: PLR2004
+    assert all(call.kwargs['retry'] is DEFAULT_RETRY for call in calls)
+
+
 def test_delete_tree_verifies_every_file_then_deletes_ignoring_sentinel_content(monkeypatch):
     # The ICA flow writes its own empty _SUCCESS, so a dest sentinel may not match
     # the staged one byte-for-byte; only its presence is required.
@@ -462,13 +502,52 @@ def test_delete_tree_verifies_every_file_then_deletes_ignoring_sentinel_content(
     )
 
 
-def test_delete_tree_records_already_absent_for_an_empty_staged_folder(monkeypatch):
-    _install_fake_storage(monkeypatch, source_files={}, dest_files={'a.csv': 'c1'})
+def test_delete_tree_records_already_absent_per_file_for_an_empty_staged_folder(monkeypatch):
+    _install_fake_storage(monkeypatch, source_files={}, dest_files={'a.csv': 'c1', '_SUCCESS': 'c0'})
     outcomes: list[str] = []
 
     backfill_transfer.delete_tree(_SRC_TREE, _DST_TREE, outcomes)
 
-    assert outcomes == [f'already-absent gs://up/{_SRC_PREFIX}/']
+    assert outcomes == [f'already-absent {_SRC_TREE}/_SUCCESS', f'already-absent {_SRC_TREE}/a.csv']
+
+
+def test_delete_tree_re_run_records_the_files_a_previous_run_deleted(monkeypatch):
+    # Run 1 deleted a.csv and b.csv and died on c.csv, writing no results file. Run 2
+    # must still account for every file, not only the one it deletes itself.
+    _, source_blobs = _install_fake_storage(
+        monkeypatch,
+        source_files={'c.csv': 'c3', '_SUCCESS': 'c0'},
+        dest_files={'a.csv': 'c1', 'b.csv': 'c2', 'c.csv': 'c3', '_SUCCESS': 'c0'},
+    )
+    outcomes: list[str] = []
+
+    backfill_transfer.delete_tree(_SRC_TREE, _DST_TREE, outcomes)
+
+    assert outcomes == [
+        f'already-absent {_SRC_TREE}/a.csv',
+        f'already-absent {_SRC_TREE}/b.csv',
+        f'deleted gs://up/{_SRC_PREFIX}/c.csv',
+        f'deleted gs://up/{_SRC_PREFIX}/_SUCCESS',
+    ]
+    for blob in source_blobs.values():
+        blob.delete.assert_called_once()
+
+
+def test_delete_tree_deletes_the_sentinel_last(monkeypatch):
+    # `sorted()` would put `_SUCCESS` before lowercase names; a part-way delete must
+    # leave the staged folder still carrying the sentinel copy_tree requires.
+    _, source_blobs = _install_fake_storage(
+        monkeypatch,
+        source_files={'_SUCCESS': 'c0', 'a.csv': 'c1', 'sub/b.html': 'c2'},
+        dest_files={'_SUCCESS': 'c0', 'a.csv': 'c1', 'sub/b.html': 'c2'},
+    )
+    order: list[str] = []
+    for rel, blob in source_blobs.items():
+        blob.delete.side_effect = lambda rel=rel: order.append(rel)
+
+    backfill_transfer.delete_tree(_SRC_TREE, _DST_TREE, [])
+
+    assert order == ['a.csv', 'sub/b.html', '_SUCCESS']
 
 
 def test_delete_tree_deletes_nothing_on_any_checksum_mismatch(monkeypatch):
@@ -1148,28 +1227,105 @@ def test_staging_check_reports_misnamed_staged_objects_as_unexpected():
     assert unexpected == ['cram/SG1.crm']
 
 
+def test_staging_check_reports_a_sentinel_less_metrics_folder_outside_the_cohort_as_unexpected():
+    # A transfer that died before writing _SUCCESS for an SG not in this cohort:
+    # nothing in the cohort will ever delete it, so the diff must surface it.
+    staged = _all_rel_filenames('SG1') | {'dragen_metrics/OtherSG/'}
+
+    missing, unexpected = validator.missing_backfill_sources([_fake_sg('SG1', 'CPG_A')], staged=staged, ingested=set())  # type: ignore[arg-type]
+
+    assert missing == []
+    assert unexpected == ['dragen_metrics/OtherSG/']
+
+
+def test_staging_check_reports_a_cohort_sgs_sentinel_less_metrics_folder_only_as_missing():
+    staged = _file_rel_filenames('SG1') | {'dragen_metrics/SG1/'}
+
+    missing, unexpected = validator.missing_backfill_sources([_fake_sg('SG1', 'CPG_A')], staged=staged, ingested=set())  # type: ignore[arg-type]
+
+    assert missing == [_metrics_sentinel('SG1')]
+    assert unexpected == []
+
+
 def _stub_prefix_listings(monkeypatch, staged: set[str], ingested: set[str]) -> None:
+    # Each listing helper returns only the names it would list for real: the flat
+    # listing the fixed-name files, the metrics listing the dragen_metrics/ entries,
+    # so dropping either union term in the validator fails these tests.
     def fake_rel_names(dir_for, prefixes):  # noqa: ARG001
-        return staged if dir_for is validator.get_backfill_source_path else ingested
+        names = staged if dir_for is validator.get_backfill_source_path else ingested
+        return {name for name in names if not name.startswith('dragen_metrics/')}
+
+    def fake_metrics_names(dir_for):
+        names = staged if dir_for is validator.get_backfill_source_path else ingested
+        return {name for name in names if name.startswith('dragen_metrics/')}
 
     monkeypatch.setattr(validator, '_rel_names_under', fake_rel_names)
-    # The tests above pass sentinel entries through the flat listing stub, so the
-    # metrics-specific listing contributes nothing extra.
-    monkeypatch.setattr(validator, '_metrics_sentinel_rel_names', lambda dir_for: set())  # noqa: ARG005
+    monkeypatch.setattr(validator, '_metrics_folder_rel_names', fake_metrics_names)
 
 
-def test_metrics_sentinel_rel_names_lists_only_folder_level_sentinels(tmp_path):
-    # A real directory tree so the glob depth is what's under test: SG1 carries a
-    # folder sentinel, SG2 only a nested one (an ordinary file to the copy, not a
-    # completeness signal) and SG3 none.
-    for rel in ('SG1/_SUCCESS', 'SG1/a.csv', 'SG2/sub/_SUCCESS', 'SG3/a.csv'):
-        path = tmp_path / 'dragen_metrics' / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch()
+def _fake_listing_client(object_names: set[str]) -> MagicMock:
+    """Fake storage client whose list_blobs honours prefix, delimiter='/' and match_glob.
 
-    names = validator._metrics_sentinel_rel_names(lambda prefix: tmp_path / prefix)
+    match_glob follows GCS semantics: matched against the full object name, `*`
+    never crosses `/`. delimiter='/' returns direct objects and collects the
+    one-level folder prefixes on the iterator's `prefixes`, as the real client does.
+    """
 
-    assert names == {'dragen_metrics/SG1/_SUCCESS'}
+    def list_blobs(bucket_name, prefix, delimiter=None, match_glob=None):  # noqa: ARG001
+        names = sorted(name for name in object_names if name.startswith(prefix))
+        if match_glob is not None:
+            pattern = re.escape(match_glob).replace(r'\*', '[^/]*')
+            names = [name for name in names if re.fullmatch(pattern, name)]
+        prefixes: set[str] = set()
+        if delimiter is not None:
+            direct = []
+            for name in names:
+                head, sep, _ = name.removeprefix(prefix).partition(delimiter)
+                if sep:
+                    prefixes.add(f'{prefix}{head}/')
+                else:
+                    direct.append(name)
+            names = direct
+        listing = MagicMock()
+        listing.__iter__.return_value = iter([_tree_blob(name, 'c', MagicMock()) for name in names])
+        listing.prefixes = prefixes
+        return listing
+
+    client = MagicMock()
+    client.list_blobs = MagicMock(side_effect=list_blobs)
+    return client
+
+
+def test_metrics_folder_rel_names_lists_sentinels_and_sentinel_less_folders_via_server_filters():
+    # SG1 carries a folder sentinel; SG2 only a nested one (an ordinary file to the
+    # copy, not a completeness signal) and SG3 none, so both are reported as folders
+    # without a sentinel; a stray direct object and a sibling prefix sharing the
+    # name stem are the boundary cases.
+    client = _fake_listing_client({
+        'output/dragen_metrics/SG1/_SUCCESS',
+        'output/dragen_metrics/SG1/a.csv',
+        'output/dragen_metrics/SG2/sub/_SUCCESS',
+        'output/dragen_metrics/SG3/a.csv',
+        'output/dragen_metrics/stray.txt',
+        'output/dragen_metrics_old/SG9/_SUCCESS',
+    })
+    root = GSPath('gs://up/output/dragen_metrics', client=GSClient(storage_client=client))
+
+    names = validator._metrics_folder_rel_names(lambda prefix: root)  # noqa: ARG005
+
+    assert names == {
+        'dragen_metrics/SG1/_SUCCESS',
+        'dragen_metrics/SG2/',
+        'dragen_metrics/SG3/',
+        'dragen_metrics/stray.txt',
+    }
+    globs = [call.kwargs.get('match_glob') for call in client.list_blobs.call_args_list]
+    assert 'output/dragen_metrics/*/_SUCCESS' in globs
+
+
+def test_metrics_folder_rel_names_rejects_a_local_path(tmp_path):
+    with pytest.raises(TypeError, match=r'gs://'):
+        validator._metrics_folder_rel_names(lambda prefix: tmp_path / prefix)
 
 
 def test_assert_staging_raises_one_error_naming_missing_urls_and_unexpected_objects(monkeypatch):
