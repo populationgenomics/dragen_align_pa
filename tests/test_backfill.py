@@ -932,6 +932,7 @@ def test_wiring_selectors_cover_both_modes():
 def test_terminal_stages_cover_both_modes():
     assert run_workflow.terminal_stages(backfill_mode=True) == [
         stages.BackfillGvcfsFromUpload,
+        stages.BackfillMetricsFromUpload,
         stages.SomalierExtract,
         stages.DeleteBackfillUpload,
     ]
