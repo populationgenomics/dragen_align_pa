@@ -27,17 +27,19 @@ concurrent runs covering the same sequencing group.
 import functools
 import json
 from argparse import ArgumentParser
-from typing import Any
+from typing import Any, Final
 
 import cpg_utils
 from cpg_flow.status import complete_analysis_job
-from cpg_utils.config import get_access_level
+from cpg_utils.config import config_retrieve, get_access_level
 from gql.transport.exceptions import TransportServerError
 from loguru import logger
 from metamist.graphql import gql, query
-from tenacity import RetryCallState
+from tenacity import RetryCallState, Retrying
 
-from dragen_align_pa.ica_api_utils import ica_retrying
+from dragen_align_pa.ica_api_utils import transient_retrying
+
+_DEFAULT_METAMIST_MAX_RETRIES: Final = 10
 
 
 # cpg-flow's make_retry_aapi_call retries only ServiceException (5xx); a 429 raises
@@ -47,9 +49,9 @@ from dragen_align_pa.ica_api_utils import ica_retrying
 # sequencing group starting together, 429s are routine at cohort scale.
 # TransportServerError is the GraphQL-read equivalent: metamist's query() has its
 # own unjittered backoff (5 tries, <=60s), and the outer layer adds the jitter that
-# desynchronises the per-SG jobs plus a longer horizon. Both paths reuse
-# `ica_retrying` — ICA-named, but generic over the caller's predicate and log hook,
-# and metamist throttles the same way ICA does.
+# desynchronises the per-SG jobs plus a longer horizon. Both paths share ICA's
+# backoff shape via `transient_retrying` but read their own `metamist.retry` knob,
+# so tuning ICA's retries for the MLR polling window never changes registration.
 def _is_transient_metamist_error(exc: BaseException) -> bool:
     """Tenacity predicate: True for a metamist failure worth retrying.
 
@@ -66,6 +68,19 @@ def _log_metamist_retry(description: str, retry_state: RetryCallState) -> None:
     sleep = retry_state.next_action.sleep if retry_state.next_action else 0.0
     logger.warning(
         f'{description}: metamist attempt {retry_state.attempt_number} failed ({exc}); retrying in {sleep:.1f}s',
+    )
+
+
+def _metamist_retrying(description: str) -> Retrying:
+    """Build the retry controller for one metamist call, logged under `description`."""
+    # Read at call time, like `ica_retrying`, so the knob is tunable without a rebuild.
+    max_retries = int(
+        config_retrieve(['metamist', 'retry', 'max_retries'], default=_DEFAULT_METAMIST_MAX_RETRIES),
+    )
+    return transient_retrying(
+        is_retryable=_is_transient_metamist_error,
+        before_sleep=functools.partial(_log_metamist_retry, description),
+        max_retries=max_retries,
     )
 
 
@@ -111,10 +126,9 @@ def _completed_analyses(sg_id: str, project_name: str) -> list[dict]:
         }
     """
     )
-    result = ica_retrying(
-        is_retryable=_is_transient_metamist_error,
-        before_sleep=functools.partial(_log_metamist_retry, f'analyses query for {sg_id}'),
-    )(query, analyses_query, variables={'sgId': sg_id, 'project': project_name})
+    result = _metamist_retrying(f'analyses query for {sg_id}')(
+        query, analyses_query, variables={'sgId': sg_id, 'project': project_name}
+    )
     sequencing_groups = result.get('sequencingGroups', [])
     if not sequencing_groups:
         raise ValueError(f'No sequencing group found in metamist with ID {sg_id}')
@@ -209,10 +223,7 @@ def _register_analysis(
         )
         return True
 
-    return ica_retrying(
-        is_retryable=_is_transient_metamist_error,
-        before_sleep=functools.partial(_log_metamist_retry, f'register {analysis_type} {output}'),
-    )(attempt)
+    return _metamist_retrying(f'register {analysis_type} {output}')(attempt)
 
 
 def run(

@@ -526,16 +526,38 @@ def test_completed_analyses_queries_the_registration_project(monkeypatch):
 #
 # cpg-flow's complete_analysis_job funnels every metamist failure — including 429s,
 # which its own retry layer never retries — into a ConnectionError, so the retry
-# policy is exercised through that signal. Tests swap the shared `ica_retrying`
+# policy is exercised through that signal. Tests swap the module's `_metamist_retrying`
 # controller for a waitless one, keeping the module's real retryable-error
 # predicate; the production waits would otherwise sleep for minutes.
 
 
 def _waitless_retrying(monkeypatch, attempts: int) -> None:
-    def fake_ica_retrying(is_retryable, before_sleep=None):  # noqa: ARG001
-        return Retrying(retry=retry_if_exception(is_retryable), stop=stop_after_attempt(attempts), reraise=True)
+    def fake_metamist_retrying(description: str) -> Retrying:  # noqa: ARG001
+        return Retrying(
+            retry=retry_if_exception(backfill_registration._is_transient_metamist_error),
+            stop=stop_after_attempt(attempts),
+            reraise=True,
+        )
 
-    monkeypatch.setattr(backfill_registration, 'ica_retrying', fake_ica_retrying)
+    monkeypatch.setattr(backfill_registration, '_metamist_retrying', fake_metamist_retrying)
+
+
+def test_metamist_retrying_reads_its_own_config_knob(monkeypatch):
+    # metamist and ICA are throttled independently, so the registration controller
+    # must read `metamist.retry.max_retries`, not ICA's key.
+    keys_read: list[tuple[str, ...]] = []
+
+    def fake_config_retrieve(key, default=None):  # noqa: ARG001
+        keys_read.append(tuple(key))
+        return 2
+
+    monkeypatch.setattr(backfill_registration, 'config_retrieve', fake_config_retrieve)
+
+    controller = backfill_registration._metamist_retrying('register cram gs://main/SG1.cram')
+
+    assert keys_read == [('metamist', 'retry', 'max_retries')]
+    # max_retries counts retries after the first attempt.
+    assert controller.stop.max_attempt_number == 3  # type: ignore[attr-defined]
 
 
 def test_registration_retries_a_metamist_429_and_completes(monkeypatch):
