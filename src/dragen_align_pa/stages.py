@@ -48,6 +48,7 @@ from dragen_align_pa.utils import (
     get_pipeline_path,
     get_prep_path,
     initialise_python_job,
+    metrics_output_dirname,
     recal_gvcf_output_filenames,
 )
 
@@ -542,7 +543,7 @@ class DownloadDataFromIca(SequencingGroupStage):
         self,
         sequencing_group: SequencingGroup,
     ) -> cpg_utils.Path:
-        return get_output_path(filename=f'dragen_metrics/{sequencing_group.name}/{SUCCESS_OBJECT_NAME}')
+        return get_output_path(filename=f'{metrics_output_dirname(sequencing_group.name)}/{SUCCESS_OBJECT_NAME}')
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:
         outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
@@ -712,6 +713,32 @@ class BackfillGvcfsFromUpload(SequencingGroupStage):
         register_job.depends_on(copy_job)
 
         return self.make_outputs(target=sequencing_group, data=outputs, jobs=[copy_job, register_job])  # pyright: ignore[reportArgumentType]
+
+
+@stage()
+class BackfillMetricsFromUpload(SequencingGroupStage):
+    """Copy an externally produced DRAGEN metrics folder from -upload to -main.
+
+    The expected output is the same `_SUCCESS` sentinel `DownloadDataFromIca`
+    declares, so output reuse gates re-runs identically in both modes. The staged
+    folder already carries a sentinel (written on NCI by popgen_ica_nci_transfer
+    after the ICA -> NCI -> GCP transfer); the copy places it at the destination
+    strictly last, so a part-way failure never presents as a completed folder.
+    Metrics are not registered in
+    metamist, and the stage is independent of the file stages — an SG whose
+    cram/gVCFs were ingested by an earlier run still gets its metrics copied.
+    """
+
+    def expected_outputs(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        sequencing_group: SequencingGroup,
+    ) -> cpg_utils.Path:
+        return get_output_path(filename=f'{metrics_output_dirname(sequencing_group.name)}/{SUCCESS_OBJECT_NAME}')
+
+    def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:  # noqa: ARG002
+        outputs: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)
+        job: BashJob = backfill.copy_metrics_job(sequencing_group=sequencing_group)
+        return self.make_outputs(target=sequencing_group, data=outputs, jobs=job)
 
 
 # In backfill mode the CRAM arrives via BackfillCramFromUpload instead of the ICA
@@ -901,8 +928,10 @@ class DeleteDataInIca(CohortStage):
 # requested-but-skipped stage's expected outputs are missing — so the opt-in lives
 # in queue_jobs, gated by [dragen_align_pa.backfill].delete_upload. Depending on
 # SomalierExtract as well as BackfillGvcfsFromUpload transitively covers every
-# consumer of the copied files before any -upload source is removed.
-@stage(required_stages=[BackfillGvcfsFromUpload, SomalierExtract])
+# consumer of the copied files before any -upload source is removed;
+# BackfillMetricsFromUpload joins so the staged metrics folder — which this stage
+# also deletes — is copied first.
+@stage(required_stages=[BackfillGvcfsFromUpload, BackfillMetricsFromUpload, SomalierExtract])
 class DeleteBackfillUpload(SequencingGroupStage):
     """Delete this SG's -upload sources once every -main destination is verified.
 
@@ -927,6 +956,7 @@ class DeleteBackfillUpload(SequencingGroupStage):
         job: BashJob = backfill.delete_upload_job(
             sequencing_group=sequencing_group,
             rel_filenames=rel_filenames,
+            tree_rel_dirnames=[metrics_output_dirname(sequencing_group.name)],
             marker_path=marker_path,
         )
         return self.make_outputs(target=sequencing_group, data=marker_path, jobs=job)

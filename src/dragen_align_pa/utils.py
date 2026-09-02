@@ -256,6 +256,11 @@ def recal_gvcf_output_filenames(sg_name: str) -> dict[str, str]:
     }
 
 
+def metrics_output_dirname(sg_name: str) -> str:
+    """Per-SG DRAGEN metrics directory relative to the pipeline `output/` directory."""
+    return f'dragen_metrics/{sg_name}'
+
+
 def get_batch_artefacts_root() -> cpg_utils.Path:
     """Per-cohort artefacts root under GCS (siblings: passfail/summary/reports per batch).
 

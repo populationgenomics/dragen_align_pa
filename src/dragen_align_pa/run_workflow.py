@@ -9,6 +9,7 @@ from cpg_flow.workflow import run_workflow  # type: ignore[ReportUnknownVariable
 from dragen_align_pa.stages import (  # type: ignore[ReportUnknownVariableType]
     BACKFILL_MODE,
     BackfillGvcfsFromUpload,
+    BackfillMetricsFromUpload,
     DeleteBackfillUpload,
     DeleteDataInIca,
     SomalierExtract,
@@ -19,14 +20,16 @@ from dragen_align_pa.validator import validate_configuration
 def terminal_stages(backfill_mode: bool) -> list[StageDecorator]:
     """The requested sink stages for each mode.
 
-    The backfill graph is fixed: all three sinks are requested, and the delete
+    The backfill graph is fixed: all four sinks are requested, and the delete
     opt-in lives inside DeleteBackfillUpload.queue_jobs (the delete_upload flag),
     never in stage selection — a requested stage in skip_stages aborts cpg-flow's
     graph build when its expected outputs are missing, and the validator rejects
-    any backfill-mode stage selection for the same reason.
+    any backfill-mode stage selection for the same reason. BackfillMetricsFromUpload
+    is requested in its own right, not only as DeleteBackfillUpload's dependency, so
+    the metrics copy cannot silently drop out of the graph with a dependency edit.
     """
     if backfill_mode:
-        return [BackfillGvcfsFromUpload, SomalierExtract, DeleteBackfillUpload]
+        return [BackfillGvcfsFromUpload, BackfillMetricsFromUpload, SomalierExtract, DeleteBackfillUpload]
     return [DeleteDataInIca]
 
 
