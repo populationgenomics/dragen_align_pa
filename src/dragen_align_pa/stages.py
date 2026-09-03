@@ -935,13 +935,14 @@ class DeleteDataInIca(CohortStage):
 class DeleteBackfillUpload(SequencingGroupStage):
     """Delete this SG's -upload sources once every -main destination is verified.
 
-    The marker records each source's actual outcome (`deleted` / `already-absent`)
-    as plain text lines, and lives under the cohort-independent output prefix like
-    the files whose deletion it records.
+    The marker records each source's actual outcome (`deleted` / `deleted-earlier` /
+    `already-absent`) as plain text lines, and lives under the cohort-independent
+    output prefix like the files whose deletion it records. The copy stages read it
+    to certify destinations whose source has since been deleted.
     """
 
     def expected_outputs(self, sequencing_group: SequencingGroup) -> cpg_utils.Path:
-        return get_output_path(filename=f'backfill_delete/{sequencing_group.id}.txt')
+        return backfill.delete_record_path(sequencing_group)
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:  # noqa: ARG002
         marker_path: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)

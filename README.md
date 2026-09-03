@@ -248,14 +248,21 @@ prefix (no `ica/{DRAGEN_VERSION}` prefix), named exactly by sequencing-group *na
     once its transfer finished. The copy re-places the sentinel at the destination
     strictly last, so a part-way copy never presents as a completed folder.
 
-Every file must be present for every sequencing group whose copy stages will run
-(for metrics folders, the staged `_SUCCESS` sentinel stands in for the folder).
-The submit-time validator lists the staged prefixes and fails the submission with a
-single error naming every missing source (plus any staged objects no sequencing group
-expects, which is how a misnamed file or a sentinel-less metrics folder shows up)
-before any job is queued. Sequencing groups that are already fully ingested (all
-destinations and the registration marker present) are skipped by output reuse, so
-their sources may already have been deleted; the metrics stage is gated independently
+Every file whose `-main` destination does not exist yet must be staged, for every
+sequencing group whose copy stages will run (for metrics folders, the staged
+`_SUCCESS` sentinel stands in for the folder). The submit-time validator lists the
+staged and destination prefixes and fails the submission with a single error naming
+every missing source (plus any staged objects no sequencing group expects, which is
+how a misnamed file or a sentinel-less metrics folder shows up) before any job is
+queued. A destination that already exists needs no staged source: the copy job
+certifies it against the source if that is still staged, or against the sequencing
+group's `backfill_delete` record if an earlier run deleted the source after verifying
+it. This is what lets the file set grow (as it did when the cram and base gVCF
+md5sums were added) for sequencing groups whose original sources are long gone: only
+the new files need staging. A destination whose source is absent and whose deletion
+the record does not certify fails the copy job. Sequencing groups that are already
+fully ingested (all destinations and the registration marker present) are skipped by
+output reuse entirely; the metrics stage is gated independently
 by its destination sentinel, so metrics can be backfilled later for sequencing groups
 whose cram/gVCFs were ingested earlier. That later run still needs a staged metrics
 folder for every sequencing group in its cohort whose destination sentinel is absent,
@@ -293,13 +300,22 @@ each `-upload` source â€” the per-file sources and the staged metrics folders â€
 deleted only after its `-main` copy matches its crc32c checksum (a metrics folder is
 verified in full before any of its files is deleted; its `_SUCCESS` sentinel only
 needs to exist at the destination, since the ICA flow writes its own). Outcomes are
-recorded per file (`deleted` / `already-absent`) in
+recorded per file (`deleted` / `deleted-earlier` / `already-absent`) in
 `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/backfill_delete/{SG_ID}.txt`; sources
-already absent from a previous run are skipped (for a metrics folder, every
-destination file with no staged counterpart is recorded `already-absent`, and the
-sentinel is deleted last so a part-way run leaves the staged folder self-describing),
-and any other failure (e.g. a transient GCS error) fails the job so nothing is
-silently left behind.
+already absent from a previous run are skipped and recorded `deleted-earlier` when
+the existing record certifies them, else `already-absent` (for a metrics folder,
+every destination file with no staged counterpart is recorded `already-absent`, and
+the sentinel is deleted last so a part-way run leaves the staged folder
+self-describing), and any other failure (e.g. a transient GCS error) fails the job so
+nothing is silently left behind. The `deleted` and `deleted-earlier` lines are load
+bearing: each carries the destination's crc32c at deletion time and is what later
+certifies a destination whose source is gone, so a re-run never rewrites the record
+without carrying them forward, and each per-file certificate is appended to
+`backfill_delete/journal/{SG_ID}.txt` before its `rm` so a job that fails part-way
+cannot lose one (the journal is not a stage output, so a partial one never makes the
+stage look complete). Because the record is the stage's expected output, a later run
+that copies newly added files reuses the stage and leaves their sources in `-upload`;
+set `[workflow].force_stages = ['DeleteBackfillUpload']` to remove them.
 
 Copies verify crc32c checksums end-to-end: a pre-existing `-main` object that doesn't
 match the staged source fails the run rather than being silently kept (the CRAM pair
