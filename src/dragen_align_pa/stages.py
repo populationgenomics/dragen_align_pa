@@ -17,7 +17,7 @@ from loguru import logger
 from dragen_align_pa.constants.ica_constants import (
     READS_TYPE,
 )
-from dragen_align_pa.file_types import FileTypeSpec
+from dragen_align_pa.file_types import BASE_GVCF, CRAM, RECAL_GVCF
 from dragen_align_pa.gcs_utils import SUCCESS_OBJECT_NAME
 from dragen_align_pa.jobs import (
     backfill,
@@ -424,12 +424,7 @@ class DownloadCramFromIca(SequencingGroupStage):
         job = download_specific_files_from_ica.make_download_job(
             job_name='DownloadCramFromIca',
             sequencing_group=sequencing_group,
-            file_spec=FileTypeSpec(
-                gcs_prefix='cram',
-                data_suffix='cram',
-                index_suffix='cram.crai',
-                md5_suffix='md5sum',
-            ),
+            file_spec=CRAM,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
             cohort_name=cohort.name,
             gcs_output_dir=outputs['cram'].parent,
@@ -461,12 +456,7 @@ class DownloadGvcfFromIca(SequencingGroupStage):
         job = download_specific_files_from_ica.make_download_job(
             job_name='DownloadGvcfFromIca',
             sequencing_group=sequencing_group,
-            file_spec=FileTypeSpec(
-                gcs_prefix='base_gvcf',
-                data_suffix='hard-filtered.gvcf.gz',
-                index_suffix='hard-filtered.gvcf.gz.tbi',
-                md5_suffix='md5sum',
-            ),
+            file_spec=BASE_GVCF,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
             cohort_name=cohort.name,
             gcs_output_dir=outputs['gvcf'].parent,
@@ -507,12 +497,7 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
         job = download_specific_files_from_ica.make_download_job(
             job_name='DownloadMlrGvcfFromIca',
             sequencing_group=sequencing_group,
-            file_spec=FileTypeSpec(
-                gcs_prefix='recal_gvcf',
-                data_suffix='hard-filtered.recal.gvcf.gz',
-                index_suffix='hard-filtered.recal.gvcf.gz.tbi',
-                md5_suffix='md5',
-            ),
+            file_spec=RECAL_GVCF,
             pipeline_id_arguid_path=pipeline_id_arguid_path,
             cohort_name=cohort.name,
             gcs_output_dir=outputs['gvcf'].parent,

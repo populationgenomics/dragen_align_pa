@@ -36,7 +36,7 @@ The workflow performs the following main steps:
       1.  Uploads the CRAM file from GCS to ICA.
 3.  **Run DRAGEN:** Submits the main DRAGEN alignment pipeline to ICA and monitors its progress until completion, failure, or cancellation.
 4.  **Run MLR:** Submits and monitors the DRAGEN MLR (Machine Learning Recalibration) pipeline.
-5.  **Download Results:** Downloads the key outputs (CRAMs, gVCFs, all other VCF types, and QC metrics) from ICA back to GCS.
+5.  **Download Results:** Downloads the key outputs (CRAMs, gVCFs, all other VCF types, and QC metrics) from ICA back to GCS. The CRAM and gVCF files land with their md5sum beside them; everything else in the per-sequencing-group ICA folder, subfolders (`logs/`, `supplemental/`, `sv/`) included, lands in the metrics folder.
 6.  **Run Somalier:** Runs `somalier extract` on the newly generated CRAM file to create a genomic fingerprint.
 7.  **Reheader MLR gVCF:** Reheaders the MLR gVCF file to add back the gVCF block info from the original gVCF header, as the MLR tool drops it
 8.  **Cleanup (Optional, after checking all outputs are correct):** Deletes the data from the ICA platform to reduce storage costs.
@@ -191,7 +191,7 @@ When successful, the pipeline downloads all results to your dataset's GCS bucket
   * **gVCFs:**
       * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/base_gvcf/` (from base DRAGEN run)
       * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/recal_gvcf/` (from MLR run)
-  * **Raw QC Metrics and all Other Files:**
+  * **Raw QC Metrics and all Other Files** (the whole per-sequencing-group ICA folder except the CRAM and gVCF files and their md5sums, subfolders included):
       * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/dragen_metrics/`
   * **Somalier Fingerprints:**
       * `gs://{BUCKET}/ica/{DRAGEN_VERSION}/output/somalier/`

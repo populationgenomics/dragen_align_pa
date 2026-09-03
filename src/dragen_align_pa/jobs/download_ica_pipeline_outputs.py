@@ -1,5 +1,6 @@
 """
-Download all non CRAM / GVCF outputs from ICA using the Python SDK.
+Download every ICA output the per-file stages do not own (the DRAGEN metrics folder,
+subfolders included) using the Python SDK.
 """
 
 import cpg_utils.config
@@ -11,6 +12,7 @@ from loguru import logger
 from dragen_align_pa import gcs_utils, ica_api_utils, ica_utils, paths, utils
 from dragen_align_pa.constants.ica_constants import BUCKET_NAME
 from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
+from dragen_align_pa.file_types import PER_FILE_SPECS
 
 
 def run(
@@ -66,15 +68,20 @@ def run(
     )
 
     with ica_api_utils.ica_project_data_api(ROLE_DRAGEN_ALIGN) as (api_instance, path_parameters):
-        # --- List + inline filter for CRAM/gVCF (handled by sibling stages) ---
+        # The ICA folder holds `logs/`, `supplemental/` and `sv/` subfolders as well as the
+        # top-level metrics; the recursive listing returns relative paths, which
+        # `stream_ica_file_to_gcs` preserves under the destination prefix.
         files = ica_utils.list_ica_files(
             api_instance=api_instance,
             path_parameters=path_parameters,
             base_ica_folder_path=ica_folder_path,
+            recursive=True,
         )
-        wanted = [
-            (name, fid) for name, fid in files if not name.endswith(('.cram', '.cram.crai', '.gvcf.gz', '.gvcf.gz.tbi'))
-        ]
+        # The cram and gVCF data, index and md5 companions are the per-file stages' work:
+        # they land beside the data files, never in the metrics folder. Exact names, so
+        # the same-named copies DRAGEN leaves under `supplemental/` are kept.
+        owned_by_per_file_stages = frozenset().union(*(spec.ica_names(sg_name) for spec in PER_FILE_SPECS))
+        wanted = [(name, fid) for name, fid in files if name not in owned_by_per_file_stages]
         files_to_download = [(name, fid) for name, fid in wanted if name not in already_downloaded]
         if skipped := len(wanted) - len(files_to_download):
             logger.info(
