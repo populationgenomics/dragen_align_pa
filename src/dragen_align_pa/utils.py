@@ -235,6 +235,7 @@ def cram_output_filenames(sg_name: str) -> dict[str, str]:
     return {
         'cram': f'cram/{sg_name}.cram',
         'crai': f'cram/{sg_name}.cram.crai',
+        'cram_md5': f'cram/{sg_name}.cram.md5sum',
     }
 
 
@@ -243,6 +244,7 @@ def base_gvcf_output_filenames(sg_name: str) -> dict[str, str]:
     return {
         'gvcf': f'base_gvcf/{sg_name}.hard-filtered.gvcf.gz',
         'gvcf_tbi': f'base_gvcf/{sg_name}.hard-filtered.gvcf.gz.tbi',
+        'gvcf_md5': f'base_gvcf/{sg_name}.hard-filtered.gvcf.gz.md5sum',
     }
 
 

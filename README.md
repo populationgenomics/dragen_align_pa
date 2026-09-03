@@ -239,8 +239,8 @@ The `analysis-runner` invocation is unchanged; only config differs.
 **1. Stage the data** in the dataset's `-upload` bucket under a literal `output/`
 prefix (no `ica/{DRAGEN_VERSION}` prefix), named exactly by sequencing-group *name*:
 
-  * `gs://{DATASET}-upload/output/cram/{SG}.cram` and `{SG}.cram.crai`
-  * `gs://{DATASET}-upload/output/base_gvcf/{SG}.hard-filtered.gvcf.gz` and `.tbi`
+  * `gs://{DATASET}-upload/output/cram/{SG}.cram`, `{SG}.cram.crai` and `{SG}.cram.md5sum`
+  * `gs://{DATASET}-upload/output/base_gvcf/{SG}.hard-filtered.gvcf.gz`, `.tbi` and `.md5sum`
   * `gs://{DATASET}-upload/output/recal_gvcf/{SG}.hard-filtered.recal.gvcf.gz`, `.tbi`,
     `.md5sum` and `.tbi.md5sum`
   * `gs://{DATASET}-upload/output/dragen_metrics/{SG}/…` — the whole DRAGEN metrics

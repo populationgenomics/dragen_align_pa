@@ -45,6 +45,7 @@ def test_cram_output_filenames_shape():
     assert utils.cram_output_filenames('SG1') == {
         'cram': 'cram/SG1.cram',
         'crai': 'cram/SG1.cram.crai',
+        'cram_md5': 'cram/SG1.cram.md5sum',
     }
 
 
@@ -52,6 +53,7 @@ def test_base_gvcf_output_filenames_shape():
     assert utils.base_gvcf_output_filenames('SG1') == {
         'gvcf': 'base_gvcf/SG1.hard-filtered.gvcf.gz',
         'gvcf_tbi': 'base_gvcf/SG1.hard-filtered.gvcf.gz.tbi',
+        'gvcf_md5': 'base_gvcf/SG1.hard-filtered.gvcf.gz.md5sum',
     }
 
 
@@ -1333,7 +1335,7 @@ def test_staging_check_allows_deleted_sources_for_a_fully_ingested_sg():
 
 def test_staging_check_requires_every_source_when_only_the_marker_is_missing():
     # Copied but never registered: the gVCF stage re-runs, and its copy job also
-    # re-certifies the cram against its -upload source, so all eight files are
+    # re-certifies the cram against its -upload source, so all ten files are
     # required — but not the metrics folder, whose destination sentinel is ingested.
     ingested = _all_rel_filenames('SG1')
 
