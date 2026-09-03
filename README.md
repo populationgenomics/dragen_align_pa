@@ -308,11 +308,14 @@ every destination file with no staged counterpart is recorded `already-absent`, 
 the sentinel is deleted last so a part-way run leaves the staged folder
 self-describing), and any other failure (e.g. a transient GCS error) fails the job so
 nothing is silently left behind. The `deleted` and `deleted-earlier` lines are load
-bearing: they are what later certifies a destination whose source is gone, so a
-re-run never rewrites the record without carrying them forward. Because the record is
-the stage's expected output, a later run that copies newly added files reuses the
-stage and leaves their sources in `-upload`; force `DeleteBackfillUpload` to remove
-them.
+bearing: each carries the destination's crc32c at deletion time and is what later
+certifies a destination whose source is gone, so a re-run never rewrites the record
+without carrying them forward, and each per-file certificate is appended to
+`backfill_delete/journal/{SG_ID}.txt` before its `rm` so a job that fails part-way
+cannot lose one (the journal is not a stage output, so a partial one never makes the
+stage look complete). Because the record is the stage's expected output, a later run
+that copies newly added files reuses the stage and leaves their sources in `-upload`;
+force `DeleteBackfillUpload` to remove them.
 
 Copies verify crc32c checksums end-to-end: a pre-existing `-main` object that doesn't
 match the staged source fails the run rather than being silently kept (the CRAM pair

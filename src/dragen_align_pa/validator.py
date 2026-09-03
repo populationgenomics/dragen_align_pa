@@ -31,6 +31,7 @@ from dragen_align_pa.constants.constants_registry import (
     resolve_mlr_config_file_id,
 )
 from dragen_align_pa.gcs_utils import SUCCESS_OBJECT_NAME
+from dragen_align_pa.jobs.backfill import delete_journal_rel_name, delete_record_rel_name
 from dragen_align_pa.stages import (
     BACKFILL_MODE,
     BackfillCramFromUpload,
@@ -240,12 +241,15 @@ def _metrics_folder_rel_names(dir_for: Callable[[str], cpg_utils.Path]) -> set[s
 
 # Mirrors cpg-flow's output-reuse rule per stage, then the copy job's per-file rule
 # within a running stage: a destination already in -main is certified by the job
-# against its source if that is still staged, or against the delete record if an
-# earlier run removed it, so it never needs a staged source at submit. Only files
-# whose destination is absent do. Without the per-file rule, growing the layout (as
-# adding the md5sums did) would demand every long-deleted source of every ingested
-# sequencing group. Pure set logic over pre-listed names, so tests can cover the
-# reuse branches without GCS.
+# against its source if that is still staged, or against the delete record (or its
+# journal) if an earlier run removed it. So a file needs a staged source when its
+# destination is absent, or when its source is absent and the sequencing group has
+# no delete record or journal at all. Without the per-file rule, growing the layout
+# (as adding the md5sums did) would demand every long-deleted source of every
+# ingested sequencing group. Record contents are not read here (one GET per
+# sequencing group): a record that lists the source only as `already-absent` still
+# fails in the copy job. Pure set logic over pre-listed names, so tests can cover
+# the reuse branches without GCS.
 def missing_backfill_sources(
     sequencing_groups: Sequence[SequencingGroup],
     staged: set[str],
@@ -259,7 +263,8 @@ def missing_backfill_sources(
             `output/` (e.g. `cram/{SG}.cram`); a metrics folder without its sentinel
             appears as `dragen_metrics/{folder}/`.
         ingested: Names present under the -main destination prefixes, in the same
-            relative form, including the `backfill_registration/` markers.
+            relative form, including the `backfill_registration/` markers and the
+            `backfill_delete/` records and journals.
 
     Returns:
         Two sorted lists: the required source names missing from `staged`, and the
@@ -282,14 +287,17 @@ def missing_backfill_sources(
         expected |= cram_rel | gvcf_rel | {metrics_rel, f'{metrics_dir}/'}
         cram_stage_runs = not cram_rel <= ingested
         gvcf_stage_runs = not (gvcf_rel | {f'backfill_registration/{sg.id}.json'}) <= ingested
-        required: set[str] = set()
         # The gVCF stage's copy job re-certifies the cram (the verify-only pairs), so
-        # a run of either stage touches the cram files; of those, only the ones not
-        # yet in -main need a staged source.
+        # a run of either stage touches the cram files.
+        touched: set[str] = set()
         if cram_stage_runs or gvcf_stage_runs:
-            required |= cram_rel - ingested
+            touched |= cram_rel
         if gvcf_stage_runs:
-            required |= gvcf_rel - ingested
+            touched |= gvcf_rel
+        required: set[str] = touched - ingested
+        certified = bool({delete_record_rel_name(sg.id), delete_journal_rel_name(sg.id)} & ingested)
+        if not certified:
+            required |= (touched & ingested) - staged
         # The metrics stage is independent of the file stages; it runs whenever the
         # destination sentinel is absent, and then needs the staged sentinel (which
         # stands in for the whole staged folder — NCI writes it last).
@@ -316,7 +324,7 @@ def assert_backfill_sources_staged(cohort: Cohort) -> None:
     )
     ingested = _rel_names_under(
         get_output_path,
-        (*_BACKFILL_DATA_PREFIXES, 'backfill_registration'),
+        (*_BACKFILL_DATA_PREFIXES, 'backfill_registration', 'backfill_delete', 'backfill_delete/journal'),
     ) | _metrics_folder_rel_names(get_output_path)
     missing, unexpected = missing_backfill_sources(cohort.get_sequencing_groups(), staged, ingested)
     if missing:
