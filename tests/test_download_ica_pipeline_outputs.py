@@ -19,6 +19,9 @@ _ICA_FILES = [
     ('SYN00001.qc.csv', 'fil.a'),
     ('SYN00001.metrics.csv', 'fil.b'),
     ('sv/results/variants/diploidSV.vcf.gz', 'fil.c'),
+    # DRAGEN leaves a same-named copy of the base gVCF md5 under supplemental/; it is a bulk
+    # output, only the top-level object belongs to the per-file stage.
+    ('supplemental/SYN00001.hard-filtered.gvcf.gz.md5sum', 'fil.supp'),
     ('SYN00001.cram', 'fil.cram'),
     ('SYN00001.cram.crai', 'fil.crai'),
     ('SYN00001.cram.md5sum', 'fil.cram_md5'),
@@ -30,7 +33,12 @@ _ICA_FILES = [
     ('SYN00001.hard-filtered.recal.gvcf.gz.md5', 'fil.recal_md5'),
     ('SYN00001.hard-filtered.recal.gvcf.gz.tbi.md5', 'fil.recal_tbi_md5'),
 ]
-_BULK = {'SYN00001.qc.csv', 'SYN00001.metrics.csv', 'sv/results/variants/diploidSV.vcf.gz'}
+_BULK = {
+    'SYN00001.qc.csv',
+    'SYN00001.metrics.csv',
+    'sv/results/variants/diploidSV.vcf.gz',
+    'supplemental/SYN00001.hard-filtered.gvcf.gz.md5sum',
+}
 
 
 @pytest.fixture
@@ -60,7 +68,12 @@ def patched_job(monkeypatch):
     monkeypatch.setattr('dragen_align_pa.gcs_utils.is_marked_complete', mocks.marked_complete)
     mocks.marked_complete.return_value = False
     monkeypatch.setattr('dragen_align_pa.gcs_utils.write_success_sentinel', mocks.sentinel)
-    mocks.mint.return_value = {'fil.a': 'https://u/a', 'fil.b': 'https://u/b', 'fil.c': 'https://u/c'}
+    mocks.mint.return_value = {
+        'fil.a': 'https://u/a',
+        'fil.b': 'https://u/b',
+        'fil.c': 'https://u/c',
+        'fil.supp': 'https://u/supp',
+    }
     return mocks
 
 
@@ -86,8 +99,8 @@ def test_downloads_everything_when_gcs_is_empty(patched_job):
 
     _run()
 
-    assert patched_job.mint.call_args.kwargs['file_ids'] == ['fil.a', 'fil.b', 'fil.c']
-    assert patched_job.stream.call_count == 3
+    assert patched_job.mint.call_args.kwargs['file_ids'] == ['fil.a', 'fil.b', 'fil.c', 'fil.supp']
+    assert patched_job.stream.call_count == 4
 
 
 def test_the_ica_folder_is_listed_recursively(patched_job):
@@ -110,15 +123,26 @@ def test_md5_companions_of_per_file_outputs_are_left_to_the_per_file_stages(patc
     _run()
 
     minted = set(patched_job.mint.call_args.kwargs['file_ids'])
-    assert minted == {'fil.a', 'fil.b', 'fil.c'}
+    assert minted == {'fil.a', 'fil.b', 'fil.c', 'fil.supp'}
     streamed = {call.kwargs['file_name'] for call in patched_job.stream.call_args_list}
     assert streamed == _BULK
+
+
+def test_exclusion_is_by_exact_path_so_subfolder_copies_of_per_file_names_are_kept(patched_job):
+    """Basename or suffix matching would drop DRAGEN's supplemental/ copy of the md5 too."""
+    _already_downloaded(patched_job, set())
+
+    _run()
+
+    streamed = [call.kwargs['file_name'] for call in patched_job.stream.call_args_list]
+    assert 'supplemental/SYN00001.hard-filtered.gvcf.gz.md5sum' in streamed
+    assert 'SYN00001.hard-filtered.gvcf.gz.md5sum' not in streamed
 
 
 def test_already_present_files_are_not_reminted_or_restreamed(patched_job):
     """The point of the pre-filter: a re-run after a part-way failure mints URLs for
     the missing file only, instead of re-minting all of them."""
-    _already_downloaded(patched_job, {'SYN00001.qc.csv', 'sv/results/variants/diploidSV.vcf.gz'})
+    _already_downloaded(patched_job, _BULK - {'SYN00001.metrics.csv'})
 
     _run()
 
@@ -144,7 +168,7 @@ def test_force_redownload_refetches_everything(patched_job):
 
     _run()
 
-    assert patched_job.stream.call_count == 3
+    assert patched_job.stream.call_count == 4
 
 
 def test_neither_the_outputs_nor_the_provenance_marker_are_namespaced_by_cohort(patched_job):
@@ -206,7 +230,12 @@ def test_only_the_missing_files_are_streamed(patched_job):
     _run()
 
     streamed = [call.kwargs['file_name'] for call in patched_job.stream.call_args_list]
-    assert streamed == ['SYN00001.qc.csv', 'SYN00001.metrics.csv', 'sv/results/variants/diploidSV.vcf.gz']
+    assert streamed == [
+        'SYN00001.qc.csv',
+        'SYN00001.metrics.csv',
+        'sv/results/variants/diploidSV.vcf.gz',
+        'supplemental/SYN00001.hard-filtered.gvcf.gz.md5sum',
+    ]
 
 
 def test_an_already_complete_sg_still_gets_its_sentinel(patched_job):
@@ -247,7 +276,7 @@ def test_a_forced_rerun_rebuilds_a_group_that_was_already_complete(patched_job):
 def test_a_normal_resume_is_not_treated_as_a_rebuild(patched_job):
     """No sentinel means the previous run did not finish, which is the case resuming exists
     for: it must keep what already landed."""
-    _already_downloaded(patched_job, {'SYN00001.qc.csv', 'sv/results/variants/diploidSV.vcf.gz'})
+    _already_downloaded(patched_job, _BULK - {'SYN00001.metrics.csv'})
 
     _run()
 

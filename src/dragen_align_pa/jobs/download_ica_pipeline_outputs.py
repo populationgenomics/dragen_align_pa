@@ -78,8 +78,8 @@ def run(
             recursive=True,
         )
         # The cram and gVCF data, index and md5 companions are the per-file stages' work:
-        # they land beside the data files, never in the metrics folder. Exact names, so
-        # the same-named copies DRAGEN leaves under `supplemental/` are kept.
+        # they land beside the data files, never in the metrics folder. Exact relative
+        # paths, so the same-named copies DRAGEN leaves under `supplemental/` are kept.
         owned_by_per_file_stages = frozenset().union(*(spec.ica_names(sg_name) for spec in PER_FILE_SPECS))
         wanted = [(name, fid) for name, fid in files if name not in owned_by_per_file_stages]
         files_to_download = [(name, fid) for name, fid in wanted if name not in already_downloaded]
