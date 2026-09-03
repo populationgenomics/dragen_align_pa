@@ -514,8 +514,8 @@ class DownloadMlrGvcfFromIca(SequencingGroupStage):
     ],
 )
 class DownloadDataFromIca(SequencingGroupStage):
-    """Download all ICA files for a realignment run except CRAM/GVCF, registering the
-    batch download (not individual files) in Metamist.
+    """Download every ICA output the per-file stages do not own (the DRAGEN metrics folder,
+    subfolders included), registering the batch download (not individual files) in Metamist.
     """
 
     # The declared output is the `_SUCCESS` sentinel, not the folder holding the downloads.

@@ -77,9 +77,10 @@ def run(
             base_ica_folder_path=ica_folder_path,
             recursive=True,
         )
-        # The cram and gVCF data, index and md5 companions are the per-file stages' work:
-        # they land beside the data files, never in the metrics folder. Exact relative
-        # paths, so the same-named copies DRAGEN leaves under `supplemental/` are kept.
+        # The top-level cram and gVCF data, index and md5 companions are the per-file
+        # stages' work: they land beside the data files, never in the metrics folder. Exact
+        # relative paths, so the same-named md5 copy DRAGEN leaves under `supplemental/` is
+        # kept (no nested data or index files exist in DRAGEN 3.7.8 output).
         owned_by_per_file_stages = frozenset().union(*(spec.ica_names(sg_name) for spec in PER_FILE_SPECS))
         wanted = [(name, fid) for name, fid in files if name not in owned_by_per_file_stages]
         files_to_download = [(name, fid) for name, fid in wanted if name not in already_downloaded]
@@ -90,10 +91,13 @@ def run(
             )
         if not wanted:
             # An empty ICA folder is not a completed download: claiming success here would
-            # write _SUCCESS over a sequencing group that produced nothing.
+            # write _SUCCESS over a sequencing group that produced nothing. A folder holding
+            # only the per-file stages' objects is just as incomplete, and the counts say
+            # which of the two it is.
             raise ValueError(
-                f'{sg_name}: ICA folder {ica_folder_path} lists no downloadable outputs. '
-                f'Check the analysis actually produced results before re-running.',
+                f'{sg_name}: ICA folder {ica_folder_path} lists {len(files)} objects, '
+                f'{len(files) - len(wanted)} of them owned by the per-file download stages, '
+                f'and no other outputs. Check the analysis actually produced results before re-running.',
             )
         if not files_to_download:
             logger.info(f'{sg_name}: all bulk ICA outputs already present in GCS; nothing to download.')

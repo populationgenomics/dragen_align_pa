@@ -249,13 +249,26 @@ def test_an_already_complete_sg_still_gets_its_sentinel(patched_job):
     patched_job.sentinel.assert_called_once()
 
 
+def test_a_folder_holding_only_per_file_objects_is_an_error_that_says_so(patched_job, monkeypatch):
+    """Everything listed belongs to the per-file stages: not an empty analysis, but not a
+    completed bulk download either. The message must let the operator tell the two apart."""
+    _already_downloaded(patched_job, set())
+    only_per_file = [(name, fid) for name, fid in _ICA_FILES if name not in _BULK]
+    monkeypatch.setattr('dragen_align_pa.ica_utils.list_ica_files', MagicMock(return_value=only_per_file))
+
+    with pytest.raises(ValueError, match=rf'lists {len(only_per_file)} objects, {len(only_per_file)} of them owned'):
+        _run()
+
+    patched_job.sentinel.assert_not_called()
+
+
 def test_an_empty_ica_folder_is_an_error_not_a_completed_download(patched_job, monkeypatch):
     """Listing nothing means the analysis produced nothing or the folder is wrong; writing
     _SUCCESS there would permanently mark an empty sequencing group as downloaded."""
     _already_downloaded(patched_job, set())
     monkeypatch.setattr('dragen_align_pa.ica_utils.list_ica_files', MagicMock(return_value=[]))
 
-    with pytest.raises(ValueError, match='no downloadable outputs'):
+    with pytest.raises(ValueError, match='lists 0 objects'):
         _run()
 
     patched_job.sentinel.assert_not_called()

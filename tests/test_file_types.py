@@ -7,12 +7,26 @@ data files only, MLR writes one for the recal gVCF data file and its index.
 
 from unittest.mock import MagicMock
 
-from dragen_align_pa.file_types import BASE_GVCF, CRAM, PER_FILE_SPECS, RECAL_GVCF
+import pytest
+
+from dragen_align_pa.file_types import BASE_GVCF, CRAM, PER_FILE_SPECS, RECAL_GVCF, FileTypeSpec
 from dragen_align_pa.jobs import download_specific_files_from_ica
 
 
-def test_the_three_per_file_specs_are_the_module_constants():
-    assert PER_FILE_SPECS == (CRAM, BASE_GVCF, RECAL_GVCF)
+def test_a_per_file_job_rejects_a_spec_the_bulk_download_does_not_know():
+    """A spec passed to a per-file stage but missing from PER_FILE_SPECS would have its files
+    copied by the bulk download as well; fail at graph build instead."""
+    stray = FileTypeSpec(data_suffix='sv.vcf.gz', index_suffix='sv.vcf.gz.tbi', md5_suffix='md5sum')
+
+    with pytest.raises(ValueError, match='PER_FILE_SPECS'):
+        download_specific_files_from_ica.make_download_job(
+            job_name='DownloadSvFromIca',
+            sequencing_group=MagicMock(),
+            file_spec=stray,
+            pipeline_id_arguid_path=MagicMock(),
+            cohort_name='COH0001',
+            gcs_output_dir=MagicMock(),
+        )
 
 
 def test_dragen_outputs_have_a_data_md5_but_no_index_md5():

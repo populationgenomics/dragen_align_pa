@@ -14,7 +14,7 @@ from loguru import logger
 
 from dragen_align_pa import ica_api_utils, ica_utils
 from dragen_align_pa.constants.constants_registry import ROLE_DRAGEN_ALIGN
-from dragen_align_pa.file_types import FileTypeSpec
+from dragen_align_pa.file_types import PER_FILE_SPECS, FileTypeSpec
 from dragen_align_pa.ica_utils import get_ica_sample_folder
 from dragen_align_pa.paths import gcs_bucket_and_key
 from dragen_align_pa.utils import download_job_timeout_seconds, initialise_python_job
@@ -182,7 +182,13 @@ def make_download_job(
     The three Download*FromIca stages share identical job-construction boilerplate
     (image, storage, memory, spot, then `resolve_and_run`); this is the single place
     that boilerplate lives.
+
+    Raises:
+        ValueError: If `file_spec` is not one of `PER_FILE_SPECS`, since the bulk download
+            excludes exactly those and would otherwise copy the new spec's files as well.
     """
+    if file_spec not in PER_FILE_SPECS:
+        raise ValueError(f'{job_name}: {file_spec} is not in file_types.PER_FILE_SPECS; add it there first')
     job = initialise_python_job(job_name=job_name, target=sequencing_group, tool_name='ICA-Python')
     job.storage('8Gi')
     job.memory('8Gi')
