@@ -78,6 +78,20 @@ def test_recal_gvcf_output_filenames_shape():
 # did not).
 
 _PAIR = ('gs://up/output/cram/SG1.cram', 'gs://main/ica/v/output/cram/SG1.cram')
+_DELETE_RECORD = 'gs://main/ica/v/output/backfill_delete/CPG_A.txt'
+_SOURCE_NOT_FOUND = (
+    "echo 'ERROR: (gcloud.storage.objects.describe) gs://up/output%2Fcram%2FSG1.cram not found: 404.' >&2; exit 1"
+)
+
+
+def _install_fake_delete_record(monkeypatch, lines: list[str] | None) -> None:
+    """Fake storage client serving only the delete record; `None` means no record object."""
+    blob = MagicMock()
+    blob.exists.return_value = lines is not None
+    blob.download_as_text.return_value = ''.join(f'{line}\n' for line in lines or [])
+    client = MagicMock()
+    client.bucket.return_value.blob.return_value = blob
+    monkeypatch.setattr(backfill_transfer, '_storage_client', lambda: client)
 
 
 def _install_fake_gcloud(tmp_path: Path, monkeypatch, describe_case_body: str) -> None:
@@ -113,7 +127,7 @@ def test_copy_files_succeeds_when_checksums_match(tmp_path, monkeypatch):
         '{destination}') echo 'abc123' ;;
 """)
 
-    backfill_transfer.copy_files([_PAIR])
+    backfill_transfer.copy_files([_PAIR], delete_record=_DELETE_RECORD)
 
     assert f'storage cp --no-clobber {source} {destination}' in _gcloud_calls(tmp_path)
 
@@ -128,7 +142,7 @@ def test_copy_files_fails_when_destination_checksum_differs(tmp_path, monkeypatc
 """)
 
     with pytest.raises(ValueError, match='mismatch'):
-        backfill_transfer.copy_files([_PAIR])
+        backfill_transfer.copy_files([_PAIR], delete_record=_DELETE_RECORD)
 
 
 def test_copy_files_fails_when_checksum_output_is_empty(tmp_path, monkeypatch):
@@ -139,7 +153,7 @@ def test_copy_files_fails_when_checksum_output_is_empty(tmp_path, monkeypatch):
 """)
 
     with pytest.raises(ValueError, match=r'[Ee]mpty'):
-        backfill_transfer.copy_files([_PAIR])
+        backfill_transfer.copy_files([_PAIR], delete_record=_DELETE_RECORD)
 
 
 def test_copy_files_passes_hostile_paths_verbatim(tmp_path, monkeypatch):
@@ -151,7 +165,7 @@ def test_copy_files_passes_hostile_paths_verbatim(tmp_path, monkeypatch):
         *) echo 'abc123' ;;
 """)
 
-    backfill_transfer.copy_files([(source, destination)])
+    backfill_transfer.copy_files([(source, destination)], delete_record=_DELETE_RECORD)
 
     assert not (tmp_path / 'pwned').exists()
     assert f'storage cp --no-clobber {source} {destination}' in _gcloud_calls(tmp_path)
@@ -164,7 +178,7 @@ def test_verify_files_passes_on_matching_checksums(tmp_path, monkeypatch):
         '{destination}') echo 'abc123' ;;
 """)
 
-    backfill_transfer.verify_files([_PAIR])
+    backfill_transfer.verify_files([_PAIR], delete_record=_DELETE_RECORD)
 
     # Verification never copies or deletes anything.
     assert 'storage cp' not in _gcloud_calls(tmp_path)
@@ -179,7 +193,103 @@ def test_verify_files_fails_on_checksum_mismatch(tmp_path, monkeypatch):
 """)
 
     with pytest.raises(ValueError, match='mismatch'):
-        backfill_transfer.verify_files([_PAIR])
+        backfill_transfer.verify_files([_PAIR], delete_record=_DELETE_RECORD)
+
+
+# --- Sources deleted by an earlier run ---------------------------------------------------
+#
+# Once DeleteBackfillUpload has removed a source, its destination can no longer be
+# certified against it. The delete record it wrote lists each source it removed after a
+# crc32c match, so that record is the certificate; a present destination with an absent
+# source and no such line is unexplained and fails.
+
+
+def test_copy_files_accepts_an_absent_source_the_delete_record_certifies(tmp_path, monkeypatch):
+    source, destination = _PAIR
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
+        '{source}') {_SOURCE_NOT_FOUND} ;;
+        '{destination}') echo 'abc123' ;;
+""")
+    _install_fake_delete_record(monkeypatch, [f'deleted {source}'])
+
+    backfill_transfer.copy_files([_PAIR], delete_record=_DELETE_RECORD)
+
+    assert 'storage cp' not in _gcloud_calls(tmp_path)
+
+
+def test_copy_files_fails_on_an_absent_source_with_no_delete_record(tmp_path, monkeypatch):
+    source, destination = _PAIR
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
+        '{source}') {_SOURCE_NOT_FOUND} ;;
+        '{destination}') echo 'abc123' ;;
+""")
+    _install_fake_delete_record(monkeypatch, None)
+
+    with pytest.raises(ValueError, match='does not record deleting'):
+        backfill_transfer.copy_files([_PAIR], delete_record=_DELETE_RECORD)
+
+
+def test_copy_files_fails_on_an_absent_source_the_record_only_saw_as_already_absent(tmp_path, monkeypatch):
+    # `already-absent` means a previous run found nothing to certify; only `deleted`
+    # lines follow a crc32c match.
+    source, destination = _PAIR
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
+        '{source}') {_SOURCE_NOT_FOUND} ;;
+        '{destination}') echo 'abc123' ;;
+""")
+    _install_fake_delete_record(monkeypatch, [f'already-absent {source}'])
+
+    with pytest.raises(ValueError, match='does not record deleting'):
+        backfill_transfer.copy_files([_PAIR], delete_record=_DELETE_RECORD)
+
+
+def test_copy_files_fails_when_a_certified_absent_source_has_no_destination_either(tmp_path, monkeypatch):
+    # The record says the copy existed at deletion time; if it is gone now, that is a
+    # missing output, not an ingested one.
+    source, destination = _PAIR
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
+        '{source}') {_SOURCE_NOT_FOUND} ;;
+        '{destination}') echo 'ERROR: {destination} not found: 404.' >&2; exit 1 ;;
+""")
+    _install_fake_delete_record(monkeypatch, [f'deleted {source}'])
+
+    with pytest.raises(subprocess.CalledProcessError):
+        backfill_transfer.copy_files([_PAIR], delete_record=_DELETE_RECORD)
+
+
+def test_copy_files_still_fails_on_a_transient_source_describe_error(tmp_path, monkeypatch):
+    source, destination = _PAIR
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
+        '{source}') echo 'ERROR: 503 backend error' >&2; exit 1 ;;
+        '{destination}') echo 'abc123' ;;
+""")
+    _install_fake_delete_record(monkeypatch, [f'deleted {source}'])
+
+    with pytest.raises(subprocess.CalledProcessError):
+        backfill_transfer.copy_files([_PAIR], delete_record=_DELETE_RECORD)
+
+
+def test_verify_files_accepts_an_absent_source_the_delete_record_certifies(tmp_path, monkeypatch):
+    source, destination = _PAIR
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
+        '{source}') {_SOURCE_NOT_FOUND} ;;
+        '{destination}') echo 'abc123' ;;
+""")
+    _install_fake_delete_record(monkeypatch, [f'deleted {source}'])
+
+    backfill_transfer.verify_files([_PAIR], delete_record=_DELETE_RECORD)
+
+
+def test_verify_files_fails_on_an_absent_source_with_no_delete_record(tmp_path, monkeypatch):
+    source, destination = _PAIR
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
+        '{source}') {_SOURCE_NOT_FOUND} ;;
+        '{destination}') echo 'abc123' ;;
+""")
+    _install_fake_delete_record(monkeypatch, None)
+
+    with pytest.raises(ValueError, match='does not record deleting'):
+        backfill_transfer.verify_files([_PAIR], delete_record=_DELETE_RECORD)
 
 
 def test_delete_files_removes_source_when_checksums_match(tmp_path, monkeypatch):
@@ -189,7 +299,9 @@ def test_delete_files_removes_source_when_checksums_match(tmp_path, monkeypatch)
         '{destination}') echo 'abc123' ;;
 """)
 
-    backfill_transfer.delete_files([_PAIR], trees=[], results_file=tmp_path / 'results.txt')
+    backfill_transfer.delete_files(
+        [_PAIR], trees=[], results_file=tmp_path / 'results.txt', delete_record=_DELETE_RECORD
+    )
 
     assert f'storage rm {source}' in _gcloud_calls(tmp_path)
     assert (tmp_path / 'results.txt').read_text() == f'deleted {source}\n'
@@ -203,7 +315,9 @@ def test_delete_files_aborts_before_rm_on_checksum_mismatch(tmp_path, monkeypatc
 """)
 
     with pytest.raises(ValueError, match='mismatch'):
-        backfill_transfer.delete_files([_PAIR], trees=[], results_file=tmp_path / 'results.txt')
+        backfill_transfer.delete_files(
+        [_PAIR], trees=[], results_file=tmp_path / 'results.txt', delete_record=_DELETE_RECORD
+    )
 
     assert 'storage rm' not in _gcloud_calls(tmp_path)
 
@@ -218,8 +332,11 @@ def test_delete_files_skips_source_that_is_genuinely_absent(tmp_path, monkeypatc
         '{source}') echo 'ERROR: (gcloud.storage.objects.describe) {encoded_source} not found: 404.' >&2; exit 1 ;;
         '{destination}') echo 'abc123' ;;
 """)
+    _install_fake_delete_record(monkeypatch, None)
 
-    backfill_transfer.delete_files([_PAIR], trees=[], results_file=tmp_path / 'results.txt')
+    backfill_transfer.delete_files(
+        [_PAIR], trees=[], results_file=tmp_path / 'results.txt', delete_record=_DELETE_RECORD
+    )
 
     assert 'storage rm' not in _gcloud_calls(tmp_path)
     assert (tmp_path / 'results.txt').read_text() == f'already-absent {source}\n'
@@ -232,10 +349,45 @@ def test_delete_files_also_accepts_an_unencoded_not_found_message(tmp_path, monk
         '{source}') echo 'ERROR: {source} not found: 404.' >&2; exit 1 ;;
         '{destination}') echo 'abc123' ;;
 """)
+    _install_fake_delete_record(monkeypatch, None)
 
-    backfill_transfer.delete_files([_PAIR], trees=[], results_file=tmp_path / 'results.txt')
+    backfill_transfer.delete_files(
+        [_PAIR], trees=[], results_file=tmp_path / 'results.txt', delete_record=_DELETE_RECORD
+    )
 
     assert (tmp_path / 'results.txt').read_text() == f'already-absent {source}\n'
+
+
+def test_delete_files_carries_an_earlier_certificate_forward(tmp_path, monkeypatch):
+    # A forced re-run rewrites the record; the `deleted` line an earlier run wrote is
+    # what lets copy/verify accept this destination without its source, so it must
+    # survive as `deleted-earlier` rather than degrade to `already-absent`.
+    source, destination = _PAIR
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
+        '{source}') {_SOURCE_NOT_FOUND} ;;
+        '{destination}') echo 'abc123' ;;
+""")
+    _install_fake_delete_record(monkeypatch, [f'deleted {source}'])
+
+    backfill_transfer.delete_files(
+        [_PAIR], trees=[], results_file=tmp_path / 'results.txt', delete_record=_DELETE_RECORD
+    )
+
+    assert 'storage rm' not in _gcloud_calls(tmp_path)
+    assert (tmp_path / 'results.txt').read_text() == f'deleted-earlier {source}\n'
+
+
+def test_copy_files_accepts_a_deleted_earlier_certificate(tmp_path, monkeypatch):
+    source, destination = _PAIR
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
+        '{source}') {_SOURCE_NOT_FOUND} ;;
+        '{destination}') echo 'abc123' ;;
+""")
+    _install_fake_delete_record(monkeypatch, [f'deleted-earlier {source}'])
+
+    backfill_transfer.copy_files([_PAIR], delete_record=_DELETE_RECORD)
+
+    assert 'storage cp' not in _gcloud_calls(tmp_path)
 
 
 def test_delete_files_fails_on_not_found_wording_that_lacks_the_source_url(tmp_path, monkeypatch):
@@ -248,7 +400,9 @@ def test_delete_files_fails_on_not_found_wording_that_lacks_the_source_url(tmp_p
 """)
 
     with pytest.raises(subprocess.CalledProcessError):
-        backfill_transfer.delete_files([_PAIR], trees=[], results_file=tmp_path / 'results.txt')
+        backfill_transfer.delete_files(
+        [_PAIR], trees=[], results_file=tmp_path / 'results.txt', delete_record=_DELETE_RECORD
+    )
 
     assert 'storage rm' not in _gcloud_calls(tmp_path)
 
@@ -263,7 +417,9 @@ def test_delete_files_fails_on_transient_describe_error(tmp_path, monkeypatch):
 """)
 
     with pytest.raises(subprocess.CalledProcessError):
-        backfill_transfer.delete_files([_PAIR], trees=[], results_file=tmp_path / 'results.txt')
+        backfill_transfer.delete_files(
+        [_PAIR], trees=[], results_file=tmp_path / 'results.txt', delete_record=_DELETE_RECORD
+    )
 
     assert 'storage rm' not in _gcloud_calls(tmp_path)
 
@@ -279,7 +435,9 @@ def test_delete_files_fails_when_gcloud_is_missing(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     with pytest.raises(FileNotFoundError):
-        backfill_transfer.delete_files([_PAIR], trees=[], results_file=tmp_path / 'results.txt')
+        backfill_transfer.delete_files(
+        [_PAIR], trees=[], results_file=tmp_path / 'results.txt', delete_record=_DELETE_RECORD
+    )
 
 
 def test_delete_files_fails_before_rm_when_checksum_output_is_empty(tmp_path, monkeypatch):
@@ -288,7 +446,9 @@ def test_delete_files_fails_before_rm_when_checksum_output_is_empty(tmp_path, mo
 """)
 
     with pytest.raises(ValueError, match=r'[Ee]mpty'):
-        backfill_transfer.delete_files([_PAIR], trees=[], results_file=tmp_path / 'results.txt')
+        backfill_transfer.delete_files(
+        [_PAIR], trees=[], results_file=tmp_path / 'results.txt', delete_record=_DELETE_RECORD
+    )
 
     assert 'storage rm' not in _gcloud_calls(tmp_path)
 
@@ -301,7 +461,9 @@ def test_delete_files_fails_when_destination_is_missing(tmp_path, monkeypatch):
 """)
 
     with pytest.raises(subprocess.CalledProcessError):
-        backfill_transfer.delete_files([_PAIR], trees=[], results_file=tmp_path / 'results.txt')
+        backfill_transfer.delete_files(
+        [_PAIR], trees=[], results_file=tmp_path / 'results.txt', delete_record=_DELETE_RECORD
+    )
 
     assert 'storage rm' not in _gcloud_calls(tmp_path)
 
@@ -314,7 +476,7 @@ def test_transfer_cli_parses_pairs_json(tmp_path, monkeypatch):
 """)
     monkeypatch.setattr(
         'sys.argv',
-        ['backfill_transfer', 'copy', '--pairs-json', json.dumps([list(_PAIR)])],
+        ['backfill_transfer', 'copy', '--pairs-json', json.dumps([list(_PAIR)]), '--delete-record', _DELETE_RECORD],
     )
 
     backfill_transfer.main()
@@ -620,6 +782,8 @@ def test_transfer_cli_delete_handles_pairs_and_trees_in_one_results_file(tmp_pat
             json.dumps([[_SRC_TREE, _DST_TREE]]),
             '--results-file',
             str(results),
+            '--delete-record',
+            _DELETE_RECORD,
         ],
     )
 
@@ -628,6 +792,88 @@ def test_transfer_cli_delete_handles_pairs_and_trees_in_one_results_file(tmp_pat
     lines = results.read_text().splitlines()
     assert f'deleted {source}' in lines
     assert f'deleted gs://up/{_SRC_PREFIX}/a.csv' in lines
+
+
+def test_transfer_cli_copy_passes_the_delete_record_through(tmp_path, monkeypatch):
+    source, destination = _PAIR
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
+        '{source}') {_SOURCE_NOT_FOUND} ;;
+        '{destination}') echo 'abc123' ;;
+""")
+    _install_fake_delete_record(monkeypatch, [f'deleted {source}'])
+    monkeypatch.setattr(
+        'sys.argv',
+        [
+            'backfill_transfer',
+            'copy',
+            '--pairs-json',
+            json.dumps([list(_PAIR)]),
+            '--delete-record',
+            _DELETE_RECORD,
+        ],
+    )
+
+    backfill_transfer.main()
+
+    assert 'storage cp' not in _gcloud_calls(tmp_path)
+
+
+def _patch_backfill_job_environment(monkeypatch) -> MagicMock:
+    job = MagicMock()
+    batch = MagicMock()
+    batch.new_bash_job.return_value = job
+    monkeypatch.setattr(backfill_jobs, 'get_batch', lambda: batch)
+    monkeypatch.setattr(backfill_jobs, 'get_driver_image', lambda: 'driver:latest')
+    monkeypatch.setattr(backfill_jobs, 'authenticate_cloud_credentials_in_job', lambda _job: None)
+    monkeypatch.setattr(backfill_jobs, 'copy_common_env', lambda _job: None)
+    monkeypatch.setattr(backfill_jobs, 'get_backfill_source_path', lambda rel: f'gs://up/output/{rel}')
+    monkeypatch.setattr(backfill_jobs, 'get_output_path', lambda rel: f'gs://main/ica/v/output/{rel}')
+    return job
+
+
+def test_copy_from_upload_job_names_the_delete_record_for_copy_and_verify(monkeypatch):
+    job = _patch_backfill_job_environment(monkeypatch)
+    sequencing_group = SimpleNamespace(id='CPG_A', name='SG1', get_job_attrs=lambda: {'sequencing_group': 'CPG_A'})
+
+    backfill_jobs.copy_from_upload_job(
+        'BackfillGvcfsFromUpload',
+        sequencing_group,  # type: ignore[arg-type]
+        rel_filenames=['base_gvcf/SG1.hard-filtered.gvcf.gz'],
+        verify_only_rel_filenames=['cram/SG1.cram'],
+    )
+
+    copy_command, verify_command = (call.args[0] for call in job.command.call_args_list)
+    copy_argv = shlex.split(copy_command.split('\n')[1])
+    verify_argv = shlex.split(verify_command)
+    assert copy_argv[:4] == ['python3', '-m', 'dragen_align_pa.backfill_transfer', 'copy']
+    assert verify_argv[:4] == ['python3', '-m', 'dragen_align_pa.backfill_transfer', 'verify']
+    for argv in (copy_argv, verify_argv):
+        assert argv[argv.index('--delete-record') + 1] == _DELETE_RECORD
+
+
+def test_delete_upload_job_passes_its_own_marker_as_the_existing_record(monkeypatch):
+    job = _patch_backfill_job_environment(monkeypatch)
+    job.ofile = '/io/results.txt'
+    sequencing_group = SimpleNamespace(id='CPG_A', name='SG1', get_job_attrs=lambda: {'sequencing_group': 'CPG_A'})
+
+    backfill_jobs.delete_upload_job(
+        sequencing_group,  # type: ignore[arg-type]
+        rel_filenames=['cram/SG1.cram'],
+        tree_rel_dirnames=['dragen_metrics/SG1'],
+        marker_path=_DELETE_RECORD,  # type: ignore[arg-type]
+    )
+
+    (command,), _ = job.command.call_args
+    argv = shlex.split(command.split('\n')[1])
+    assert argv[:4] == ['python3', '-m', 'dragen_align_pa.backfill_transfer', 'delete']
+    assert argv[argv.index('--results-file') + 1] == '/io/results.txt'
+    assert argv[argv.index('--delete-record') + 1] == _DELETE_RECORD
+
+
+def test_delete_record_path_keys_by_cpg_id(monkeypatch):
+    monkeypatch.setattr(backfill_jobs, 'get_output_path', lambda rel: f'gs://main/ica/v/output/{rel}')
+
+    assert backfill_jobs.delete_record_path(SimpleNamespace(id='CPG_A', name='SG1')) == _DELETE_RECORD  # type: ignore[arg-type]
 
 
 def test_copy_metrics_job_emits_copy_tree_command(monkeypatch):
@@ -1333,15 +1579,35 @@ def test_staging_check_allows_deleted_sources_for_a_fully_ingested_sg():
     assert unexpected == []
 
 
-def test_staging_check_requires_every_source_when_only_the_marker_is_missing():
-    # Copied but never registered: the gVCF stage re-runs, and its copy job also
-    # re-certifies the cram against its -upload source, so all ten files are
-    # required — but not the metrics folder, whose destination sentinel is ingested.
+def test_staging_check_requires_no_sources_when_only_the_marker_is_missing():
+    # Copied but never registered: the gVCF stage re-runs, but every destination it
+    # copies or re-certifies is already present, so no staged source is required at
+    # submit. The job certifies each present destination against its source if the
+    # source is still staged, or against the delete record if not.
     ingested = _all_rel_filenames('SG1')
 
     missing, _ = validator.missing_backfill_sources([_fake_sg('SG1', 'CPG_A')], staged=set(), ingested=ingested)  # type: ignore[arg-type]
 
-    assert missing == sorted(_file_rel_filenames('SG1'))
+    assert missing == []
+
+
+def test_staging_check_requires_only_the_sources_of_absent_destinations():
+    # The layout grew (PR #102 added the cram and base gVCF md5sums) after these
+    # sequencing groups were ingested and their sources deleted. Both file stages
+    # re-run, but only the new files need a staged source.
+    md5_rel = {'cram/SG1.cram.md5sum', 'base_gvcf/SG1.hard-filtered.gvcf.gz.md5sum'}
+    ingested = (_all_rel_filenames('SG1') - md5_rel) | {'backfill_registration/CPG_A.json'}
+
+    missing, unexpected = validator.missing_backfill_sources(
+        [_fake_sg('SG1', 'CPG_A')],  # type: ignore[arg-type]
+        staged=md5_rel,
+        ingested=ingested,
+    )
+    assert missing == []
+    assert unexpected == []
+
+    missing, _ = validator.missing_backfill_sources([_fake_sg('SG1', 'CPG_A')], staged=set(), ingested=ingested)  # type: ignore[arg-type]
+    assert missing == sorted(md5_rel)
 
 
 def test_staging_check_requires_the_metrics_sentinel_when_metrics_are_not_ingested():

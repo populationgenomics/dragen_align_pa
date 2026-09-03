@@ -29,6 +29,15 @@ def _source_dest_json(rel_names: list[str]) -> str:
     return json.dumps([[str(get_backfill_source_path(rel)), str(get_output_path(rel))] for rel in rel_names])
 
 
+def delete_record_path(sequencing_group: SequencingGroup) -> 'cpg_utils.Path':
+    """The per-file record of what `DeleteBackfillUpload` removed for this sequencing group.
+
+    Keyed by CPG id, which survives a sequencing-group rename, under the
+    cohort-independent output prefix like the files whose deletion it records.
+    """
+    return get_output_path(f'backfill_delete/{sequencing_group.id}.txt')
+
+
 def _new_backfill_job(job_name: str, sequencing_group: SequencingGroup, tool: str) -> 'BashJob':
     job: BashJob = get_batch().new_bash_job(
         name=f'{job_name} {sequencing_group.id}',
@@ -50,18 +59,23 @@ def copy_from_upload_job(
 
     `verify_only_rel_filenames` are certified (crc32c source == destination) without
     copying — for files owned by another stage that may have been reused without
-    running its copy job, e.g. a pre-existing -main CRAM.
+    running its copy job, e.g. a pre-existing -main CRAM. Both commands receive this
+    sequencing group's delete record, which certifies destinations whose source an
+    earlier run has already deleted (see `backfill_transfer.copy_files`).
     """
     job = _new_backfill_job(job_name, sequencing_group, tool='gcloud')
+    delete_record = shlex.quote(str(delete_record_path(sequencing_group)))
     job.command(
         'set -euo pipefail\n'
         f'python3 -m dragen_align_pa.backfill_transfer copy '
-        f'--pairs-json {shlex.quote(_source_dest_json(rel_filenames))}'
+        f'--pairs-json {shlex.quote(_source_dest_json(rel_filenames))} '
+        f'--delete-record {delete_record}'
     )
     if verify_only_rel_filenames:
         job.command(
             f'python3 -m dragen_align_pa.backfill_transfer verify '
-            f'--pairs-json {shlex.quote(_source_dest_json(verify_only_rel_filenames))}'
+            f'--pairs-json {shlex.quote(_source_dest_json(verify_only_rel_filenames))} '
+            f'--delete-record {delete_record}'
         )
     return job
 
@@ -127,8 +141,9 @@ def delete_upload_job(
 
     `tree_rel_dirnames` are whole staged folders (the DRAGEN metrics) deleted with
     the same verify-first semantics. The marker records each source's actual outcome
-    (`deleted` / `already-absent`) as the CLI handles it, never claims computed
-    ahead of execution.
+    (`deleted` / `deleted-earlier` / `already-absent`) as the CLI handles it, never
+    claims computed ahead of execution; the existing marker is passed in so a re-run
+    carries its earlier certificates forward.
     """
     b = get_batch()
     job = _new_backfill_job('DeleteBackfillUpload', sequencing_group, tool='gcloud+gcs-storage')
@@ -137,7 +152,8 @@ def delete_upload_job(
         f'python3 -m dragen_align_pa.backfill_transfer delete '
         f'--pairs-json {shlex.quote(_source_dest_json(rel_filenames))} '
         f'--trees-json {shlex.quote(_source_dest_json(tree_rel_dirnames))} '
-        f'--results-file {job.ofile}'
+        f'--results-file {job.ofile} '
+        f'--delete-record {shlex.quote(str(marker_path))}'
     )
     b.write_output(job.ofile, str(marker_path))
     return job

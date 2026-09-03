@@ -941,7 +941,7 @@ class DeleteBackfillUpload(SequencingGroupStage):
     """
 
     def expected_outputs(self, sequencing_group: SequencingGroup) -> cpg_utils.Path:
-        return get_output_path(filename=f'backfill_delete/{sequencing_group.id}.txt')
+        return backfill.delete_record_path(sequencing_group)
 
     def queue_jobs(self, sequencing_group: SequencingGroup, inputs: StageInput) -> StageOutput:  # noqa: ARG002
         marker_path: cpg_utils.Path = self.expected_outputs(sequencing_group=sequencing_group)

@@ -238,10 +238,13 @@ def _metrics_folder_rel_names(dir_for: Callable[[str], cpg_utils.Path]) -> set[s
     )
 
 
-# Mirrors cpg-flow's output-reuse rule per stage so a fully ingested sequencing group
-# (every destination and its registration marker present) doesn't demand sources that
-# DeleteBackfillUpload already removed: only copy stages that will actually run need
-# their -upload sources. Pure set logic over pre-listed names, so tests can cover the
+# Mirrors cpg-flow's output-reuse rule per stage, then the copy job's per-file rule
+# within a running stage: a destination already in -main is certified by the job
+# against its source if that is still staged, or against the delete record if an
+# earlier run removed it, so it never needs a staged source at submit. Only files
+# whose destination is absent do. Without the per-file rule, growing the layout (as
+# adding the md5sums did) would demand every long-deleted source of every ingested
+# sequencing group. Pure set logic over pre-listed names, so tests can cover the
 # reuse branches without GCS.
 def missing_backfill_sources(
     sequencing_groups: Sequence[SequencingGroup],
@@ -280,12 +283,13 @@ def missing_backfill_sources(
         cram_stage_runs = not cram_rel <= ingested
         gvcf_stage_runs = not (gvcf_rel | {f'backfill_registration/{sg.id}.json'}) <= ingested
         required: set[str] = set()
-        # The gVCF stage's copy job re-certifies the cram against its -upload source
-        # (the verify-only pairs), so a run of either stage needs the cram sources.
+        # The gVCF stage's copy job re-certifies the cram (the verify-only pairs), so
+        # a run of either stage touches the cram files; of those, only the ones not
+        # yet in -main need a staged source.
         if cram_stage_runs or gvcf_stage_runs:
-            required |= cram_rel
+            required |= cram_rel - ingested
         if gvcf_stage_runs:
-            required |= gvcf_rel
+            required |= gvcf_rel - ingested
         # The metrics stage is independent of the file stages; it runs whenever the
         # destination sentinel is absent, and then needs the staged sentinel (which
         # stands in for the whole staged folder — NCI writes it last).

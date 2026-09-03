@@ -46,10 +46,9 @@ def _describe_crc32c(url: str, log_failure: bool = True) -> str:
     return process.stdout.strip()
 
 
-def _assert_checksums_match(source: str, destination: str) -> None:
+def _assert_checksums_match(src_hash: str, source: str, destination: str) -> None:
     # An empty describe result (exit 0 but no value, e.g. after a gcloud field
     # rename) must not certify anything — least of all the delete path's rm.
-    src_hash = _describe_crc32c(source)
     dst_hash = _describe_crc32c(destination)
     if not src_hash or not dst_hash:
         raise ValueError(
@@ -60,31 +59,103 @@ def _assert_checksums_match(source: str, destination: str) -> None:
         raise ValueError(f'Checksum mismatch for {destination}: source {src_hash} vs destination {dst_hash}')
 
 
-def copy_files(pairs: Pairs) -> None:
+def _source_crc32c_or_none(source: str) -> str | None:
+    """The source's crc32c, or None if the object is genuinely absent.
+
+    Any other describe failure (429/503, auth, missing gcloud) propagates so the job
+    fails instead of treating the source as gone.
+    """
+    try:
+        return _describe_crc32c(source, log_failure=False)
+    except subprocess.CalledProcessError as e:
+        if not _source_is_absent(source, e):
+            logger.error(f'describe {source} failed and is not an absence: {e.stderr}')
+            raise
+        return None
+
+
+# A destination whose source is gone cannot be certified against it. The delete stage
+# removes a source only after its destination matched by crc32c and records that as a
+# `deleted` line, so the record stands in for the comparison. `already-absent` lines do
+# not: they mean a previous run found nothing to certify. A re-run of the delete stage
+# rewrites the record, so it carries earlier certificates forward as `deleted-earlier`
+# lines rather than dropping them.
+_CERTIFYING_OUTCOMES: tuple[str, ...] = ('deleted ', 'deleted-earlier ')
+
+
+class _DeleteRecord:
+    """The per-file outcomes `delete_files` wrote for one sequencing group, read on first use."""
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+        self._certified: frozenset[str] | None = None
+
+    def certifies(self, source: str) -> bool:
+        """Whether the record shows `source` was deleted after a crc32c match, by this or an earlier run."""
+        if self._certified is None:
+            bucket_name, key = _split_gs_url(self.url)
+            blob = _storage_client().bucket(bucket_name).blob(key)
+            lines = blob.download_as_text().splitlines() if blob.exists() else []
+            self._certified = frozenset(
+                line.removeprefix(prefix)
+                for line in lines
+                for prefix in _CERTIFYING_OUTCOMES
+                if line.startswith(prefix)
+            )
+        return source in self._certified
+
+
+def _assert_ingested_without_source(source: str, destination: str, record: _DeleteRecord) -> None:
+    if not record.certifies(source):
+        raise ValueError(
+            f'{source} is absent and {record.url} does not record deleting it after certification; '
+            f'cannot certify {destination}'
+        )
+    # A missing destination fails the describe: the record says the copy existed when the
+    # source was deleted, so its absence now is a lost output, not an ingested one.
+    if not _describe_crc32c(destination):
+        raise ValueError(f'Empty crc32c for {destination}; cannot confirm the ingested copy')
+    logger.info(f'Already ingested; source deleted after certification by an earlier run: {destination}')
+
+
+def copy_files(pairs: Pairs, delete_record: str) -> None:
     """Copy each (source, destination) pair server-side, then certify by crc32c.
 
     `--no-clobber` makes stage re-runs cheap: an existing destination object is
     skipped rather than re-copied. Because a skipped destination may be a stale
     pre-existing object rather than a prior copy of this source, the checksum
-    comparison is what actually certifies the copy — a mismatch fails the job.
+    comparison is what actually certifies the copy — a mismatch fails the job. A
+    source an earlier run deleted is accepted only if `delete_record` (the
+    sequencing group's `backfill_delete` outcomes) shows it was deleted after a match.
     """
+    record = _DeleteRecord(delete_record)
     for source, destination in pairs:
+        src_hash = _source_crc32c_or_none(source)
+        if src_hash is None:
+            _assert_ingested_without_source(source, destination, record)
+            continue
         run_subprocess_with_log(
             ['gcloud', 'storage', 'cp', '--no-clobber', source, destination],
             step_name=f'copy {source}',
         )
-        _assert_checksums_match(source, destination)
+        _assert_checksums_match(src_hash, source, destination)
 
 
-def verify_files(pairs: Pairs) -> None:
+def verify_files(pairs: Pairs, delete_record: str) -> None:
     """Certify each destination matches its source by crc32c, copying nothing.
 
     Used for files whose copy stage may have been reused without running (its
     outputs pre-existed), so the checksum comparison still happens exactly once
-    before registration.
+    before registration. Sources an earlier run deleted are certified through
+    `delete_record` as in `copy_files`.
     """
+    record = _DeleteRecord(delete_record)
     for source, destination in pairs:
-        _assert_checksums_match(source, destination)
+        src_hash = _source_crc32c_or_none(source)
+        if src_hash is None:
+            _assert_ingested_without_source(source, destination, record)
+            continue
+        _assert_checksums_match(src_hash, source, destination)
 
 
 def _encoded_gs_url(url: str) -> str:
@@ -225,28 +296,30 @@ def delete_tree(source_prefix: str, dest_prefix: str, outcomes: list[str]) -> No
         outcomes.append(f'deleted gs://{source_bucket_name}/{source_blob.name}')
 
 
-def delete_files(pairs: Pairs, trees: list[tuple[str, str]], results_file: Path | str) -> None:
+def delete_files(pairs: Pairs, trees: list[tuple[str, str]], results_file: Path | str, delete_record: str) -> None:
     """Delete each source only after its destination matches its crc32c checksum.
 
-    Each source's actual outcome (`deleted` / `already-absent`) is recorded in
-    `results_file` as it is handled. A genuinely absent source is skipped (a
-    re-run after a part-way failure must not fail on files deleted last time);
-    any other describe failure (429/503, auth, missing gcloud) propagates so the
-    stage re-runs instead of silently orphaning the -upload file. A present
-    source whose destination is missing, differs, or yields an empty checksum
-    raises before any rm. `trees` are (source, destination) folder prefixes
+    Each source's actual outcome (`deleted` / `deleted-earlier` / `already-absent`) is
+    recorded in `results_file` as it is handled. A genuinely absent source is skipped
+    (a re-run after a part-way failure must not fail on files deleted last time) and
+    recorded as `deleted-earlier` if the existing record at `delete_record` certifies
+    it, else `already-absent`; any other describe failure (429/503, auth, missing
+    gcloud) propagates so the stage re-runs instead of silently orphaning the -upload
+    file. A present source whose destination is missing, differs, or yields an empty
+    checksum raises before any rm. `trees` are (source, destination) folder prefixes
     handled by `delete_tree` after the per-file pairs, recorded per file too.
     """
+    record = _DeleteRecord(delete_record)
     outcomes: list[str] = []
     for source, destination in pairs:
-        try:
-            src_hash = _describe_crc32c(source, log_failure=False)
-        except subprocess.CalledProcessError as e:
-            if not _source_is_absent(source, e):
-                logger.error(f'describe {source} failed and is not an absence: {e.stderr}')
-                raise
-            logger.info(f'Source already absent, skipping: {source}')
-            outcomes.append(f'already-absent {source}')
+        src_hash = _source_crc32c_or_none(source)
+        if src_hash is None:
+            if record.certifies(source):
+                logger.info(f'Source deleted by an earlier run after certification: {source}')
+                outcomes.append(f'deleted-earlier {source}')
+            else:
+                logger.info(f'Source already absent, skipping: {source}')
+                outcomes.append(f'already-absent {source}')
             continue
 
         dst_hash = _describe_crc32c(destination)
@@ -278,6 +351,11 @@ def main() -> None:
     for action in ('copy', 'verify', 'delete'):
         subparser = subparsers.add_parser(action)
         subparser.add_argument('--pairs-json', required=True, help='JSON list of [source, destination] pairs')
+        subparser.add_argument(
+            '--delete-record',
+            required=True,
+            help="gs:// URL of this sequencing group's existing backfill_delete record (may not exist yet)",
+        )
         if action == 'delete':
             subparser.add_argument('--trees-json', required=True, help='JSON list of [source, dest] folder prefixes')
             subparser.add_argument('--results-file', required=True)
@@ -291,12 +369,12 @@ def main() -> None:
         return
     pairs: Pairs = [(source, destination) for source, destination in json.loads(args.pairs_json)]
     if args.action == 'copy':
-        copy_files(pairs)
+        copy_files(pairs, delete_record=args.delete_record)
     elif args.action == 'verify':
-        verify_files(pairs)
+        verify_files(pairs, delete_record=args.delete_record)
     else:
         trees = [(source, destination) for source, destination in json.loads(args.trees_json)]
-        delete_files(pairs, trees=trees, results_file=args.results_file)
+        delete_files(pairs, trees=trees, results_file=args.results_file, delete_record=args.delete_record)
 
 
 if __name__ == '__main__':
