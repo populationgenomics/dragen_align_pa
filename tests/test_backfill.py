@@ -90,11 +90,12 @@ def _install_fake_delete_record(
     monkeypatch,
     lines: list[str] | None,
     journal: list[str] | None = None,
+    journal_upload_error: Exception | None = None,
 ) -> list[str]:
     """Fake storage client serving the delete record and its journal; `None` means no object.
 
     Returns the journal contents uploaded, in order, so tests can see what was made
-    durable and when.
+    durable and when. `journal_upload_error` makes every upload raise it instead.
     """
     uploads: list[str] = []
     contents = {
@@ -102,12 +103,17 @@ def _install_fake_delete_record(
         _DELETE_JOURNAL.removeprefix('gs://main/'): journal,
     }
 
+    def upload(data: str, **_kwargs) -> None:
+        if journal_upload_error is not None:
+            raise journal_upload_error
+        uploads.append(data)
+
     def blob_for(key: str) -> MagicMock:
         blob = MagicMock()
         text = contents.get(key)
         blob.exists.return_value = text is not None
         blob.download_as_text.return_value = ''.join(f'{line}\n' for line in text or [])
-        blob.upload_from_string.side_effect = lambda data, **_kwargs: uploads.append(data)
+        blob.upload_from_string.side_effect = upload
         return blob
 
     client = MagicMock()
@@ -430,6 +436,25 @@ def test_delete_files_journals_each_certificate_before_its_rm(tmp_path, monkeypa
     assert f'storage rm {source}' in _gcloud_calls(tmp_path)
     assert not (tmp_path / 'results.txt').exists()
     assert uploads == [f'deleted {source} abc123\n']
+
+
+def test_delete_files_does_not_rm_when_its_journal_write_fails(tmp_path, monkeypatch):
+    # The order matters, not just that both happen: a source removed before its
+    # certificate is durable is unrecoverable if the job then dies.
+    source, destination = _PAIR
+    _install_fake_gcloud(tmp_path, monkeypatch, f"""
+        '{source}') echo 'abc123' ;;
+        '{destination}') echo 'abc123' ;;
+""")
+    _install_fake_delete_record(monkeypatch, None, journal_upload_error=RuntimeError('journal upload failed'))
+
+    with pytest.raises(RuntimeError, match='journal upload failed'):
+        backfill_transfer.delete_files(
+            [_PAIR], trees=[], results_file=tmp_path / 'results.txt', delete_record=_DELETE_RECORD, **_JOURNAL
+        )
+
+    assert 'storage rm' not in _gcloud_calls(tmp_path)
+    assert not (tmp_path / 'results.txt').exists()
 
 
 def test_copy_files_accepts_a_certificate_found_only_in_the_journal(tmp_path, monkeypatch):

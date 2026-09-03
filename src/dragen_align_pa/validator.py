@@ -312,7 +312,7 @@ def assert_backfill_sources_staged(cohort: Cohort) -> None:
 
     Without this, each missing or misnamed staged file surfaces as one failed copy
     job at a time, at job runtime. This lists the -upload and destination prefixes
-    once (seven flat list calls plus two server-filtered metrics listings per side)
+    once (nine flat list calls plus two server-filtered metrics listings per side)
     and raises a single error naming every missing source, plus any staged objects
     no sequencing group expects — which is how a misnamed file shows up.
 

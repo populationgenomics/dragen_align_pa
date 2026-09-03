@@ -315,7 +315,7 @@ without carrying them forward, and each per-file certificate is appended to
 cannot lose one (the journal is not a stage output, so a partial one never makes the
 stage look complete). Because the record is the stage's expected output, a later run
 that copies newly added files reuses the stage and leaves their sources in `-upload`;
-force `DeleteBackfillUpload` to remove them.
+set `[workflow].force_stages = ['DeleteBackfillUpload']` to remove them.
 
 Copies verify crc32c checksums end-to-end: a pre-existing `-main` object that doesn't
 match the staged source fails the run rather than being silently kept (the CRAM pair
