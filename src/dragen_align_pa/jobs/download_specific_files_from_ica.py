@@ -115,10 +115,10 @@ def run(
     download lands exactly where the stage promised.
     """
     sg_name: str = sequencing_group.name
-    main_file_name: str = f'{sg_name}.{file_spec.data_suffix}'
-    index_file_name: str = f'{sg_name}.{file_spec.index_suffix}'
-    md5_file_name: str = f'{sg_name}.{file_spec.data_suffix}.{file_spec.md5_suffix}'
-    md5_gcp_name: str = f'{sg_name}.{file_spec.data_suffix}.md5sum'  # Always save as .md5sum in GCS
+    main_file_name: str = file_spec.data_name(sg_name)
+    index_file_name: str = file_spec.index_name(sg_name)
+    md5_file_name: str = file_spec.data_md5_name(sg_name)
+    md5_gcp_name: str = f'{main_file_name}.md5sum'  # Always save as .md5sum in GCS
 
     # --- 3. Setup GCS Client ---
     gcs_output_bucket_name, gcs_output_path_prefix = gcs_bucket_and_key(gcs_output_dir)

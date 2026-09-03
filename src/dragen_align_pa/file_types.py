@@ -19,13 +19,30 @@ class FileTypeSpec:
     # decides where the data md5 lands (beside the data file, always as `.md5sum`). An
     # index md5, where the producer writes one, is not fetched by anything: the reheader
     # job recomputes it for the recal gVCF, and DRAGEN writes none for the cram or base gVCF.
+    def data_name(self, sg_name: str) -> str:
+        """The ICA object name of the data file, e.g. `SG1.cram`."""
+        return f'{sg_name}.{self.data_suffix}'
+
+    def index_name(self, sg_name: str) -> str:
+        """The ICA object name of the index, e.g. `SG1.cram.crai`."""
+        return f'{sg_name}.{self.index_suffix}'
+
+    def data_md5_name(self, sg_name: str) -> str:
+        """The ICA object name of the data file's md5 companion, e.g. `SG1.cram.md5sum`."""
+        return f'{self.data_name(sg_name)}.{self.md5_suffix}'
+
+    def index_md5_name(self, sg_name: str) -> str | None:
+        """The ICA object name of the index's md5 companion, or None when the producer writes none."""
+        if self.index_md5_suffix is None:
+            return None
+        return f'{self.index_name(sg_name)}.{self.index_md5_suffix}'
+
     def ica_names(self, sg_name: str) -> frozenset[str]:
-        """The ICA object names this file type owns: data, index, the data md5 and any index md5."""
-        data = f'{sg_name}.{self.data_suffix}'
-        index = f'{sg_name}.{self.index_suffix}'
-        names = {data, index, f'{data}.{self.md5_suffix}'}
-        if self.index_md5_suffix is not None:
-            names.add(f'{index}.{self.index_md5_suffix}')
+        """Every ICA object name this file type owns: data, index, the data md5 and any index md5."""
+        names = {self.data_name(sg_name), self.index_name(sg_name), self.data_md5_name(sg_name)}
+        index_md5 = self.index_md5_name(sg_name)
+        if index_md5 is not None:
+            names.add(index_md5)
         return frozenset(names)
 
 
