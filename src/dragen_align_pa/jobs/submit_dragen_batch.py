@@ -34,17 +34,18 @@ from dragen_align_pa.utils import get_bed_names_for_seqtype
 # DRAGEN flags that don't depend on input type (CRAM vs FASTQ) or sequencing type (WGS vs WES).
 # Sourced from the production CRAM-mode preset in the legacy submitter — anything WGS/WES-divergent
 # is instead carried in [dragen_align_pa.manage_dragen_pipeline.presets.{genome,exome}] in config.
+# Values must not be quoted: the string is not shell-parsed, so DRAGEN receives quotes verbatim
+# (issue #105 — base gVCFs were labelled `'DRAGENHardQUAL`).
 _COMMON_ADDITIONAL_ARGS = (
     '--read-trimmers polyg '
     '--soft-read-trimmers none '
-    "--vc-hard-filter 'DRAGENHardQUAL:all:QUAL<5.0;LowDepth:all:DP<=1' "
+    '--vc-hard-filter DRAGENHardQUAL:all:QUAL<5.0;LowDepth:all:DP<=1 '
     '--vc-frd-max-effective-depth 40 '
     '--vc-enable-joint-detection true '
     '--qc-coverage-ignore-overlaps true '
     '--qc-coverage-count-soft-clipped-bases true '
     '--qc-coverage-reports-1 cov_report '
     '--qc-coverage-reports-2 cov_report '
-    "--qc-coverage-filters-1 'mapq<1,bq<0,mapq<1,bq<0' "
     '--vc-gvcf-gq-bands 10 20 30 40 '
     '--vc-emit-ref-confidence GVCF '
     '--vc-enable-vcf-output false '

@@ -98,6 +98,7 @@ def test_build_additional_args_includes_hardcoded_common(monkeypatch):
     for required_flag in (
         '--read-trimmers polyg',
         '--soft-read-trimmers none',
+        '--vc-hard-filter DRAGENHardQUAL:all:QUAL<5.0;LowDepth:all:DP<=1',
         '--vc-frd-max-effective-depth 40',
         '--vc-enable-joint-detection true',
         '--qc-coverage-ignore-overlaps true',
@@ -110,6 +111,21 @@ def test_build_additional_args_includes_hardcoded_common(monkeypatch):
         '--repeat-genotype-enable true',
     ):
         assert required_flag in result, f'Missing required hardcoded flag: {required_flag!r}'
+
+
+def test_build_additional_args_has_no_quote_characters(monkeypatch):
+    """The args string is not shell-parsed, so DRAGEN receives any quote verbatim
+    as part of the option value (issue #105: FILTER labelled `'DRAGENHardQUAL`)."""
+    monkeypatch.setattr(submit_dragen_batch, 'config_retrieve', _config_factory())
+    result = submit_dragen_batch._build_additional_args()
+    assert "'" not in result
+    assert '"' not in result
+
+
+def test_build_additional_args_omits_coverage_filters(monkeypatch):
+    """--qc-coverage-filters-1 only repeated DRAGEN's defaults and was malformed (issue #105)."""
+    monkeypatch.setattr(submit_dragen_batch, 'config_retrieve', _config_factory())
+    assert '--qc-coverage-filters' not in submit_dragen_batch._build_additional_args()
 
 
 def test_build_additional_args_cyp2d6_default_on(monkeypatch):
